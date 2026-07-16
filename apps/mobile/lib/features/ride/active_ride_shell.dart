@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../controllers/foreground_location_controller.dart';
+import '../../controllers/marker_assistance_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/situational_awareness_controller.dart';
@@ -18,6 +19,7 @@ import '../../relay/relay_engine.dart';
 import '../../relay/sqlite_relay_queue.dart';
 import '../../services/device_location_source.dart';
 import '../../services/external_hazard_provider.dart';
+import '../../services/route_decision_point_extractor.dart';
 import '../map/ride_map.dart';
 import '../situational_awareness/situational_awareness_screen.dart';
 import 'ride_dashboard.dart';
@@ -49,6 +51,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
 
   SituationalAwarenessController? _awarenessController;
   ForegroundLocationController? _locationController;
+  MarkerAssistanceController? _markerAssistanceController;
   NearbyRelayController? _relayController;
   StreamSubscription<RideEvent>? _receivedEventSubscription;
   Future<void> _publishChain = Future.value();
@@ -172,9 +175,36 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       return;
     }
 
+    final markerRoute = _markerRouteFor(route);
+    final decisionPoints = const RouteDecisionPointExtractor().extract(
+      route: markerRoute,
+      explicitPoints:
+          route?.waypoints
+              .map(
+                (waypoint) => ExplicitDecisionPoint(
+                  position: awareness_geo.GeoPoint(
+                    latitude: waypoint.point.latitude,
+                    longitude: waypoint.point.longitude,
+                  ),
+                  label: waypoint.name,
+                ),
+              )
+              .toList(growable: false) ??
+          const [],
+    );
+    final markerController = MarkerAssistanceController(
+      widget.rideController,
+      controller,
+      route: markerRoute,
+      decisionPoints: decisionPoints,
+    )..initialize();
+
     final previous = _awarenessController;
+    final previousMarker = _markerAssistanceController;
     previous?.removeListener(_onAwarenessChanged);
+    previousMarker?.dispose();
     _awarenessController = controller;
+    _markerAssistanceController = markerController;
     _routeFingerprint = fingerprint;
     controller.addListener(_onAwarenessChanged);
     previous?.dispose();
@@ -261,6 +291,24 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     HazardSeverity.critical => const Color(0xFFFF5D73),
   };
 
+  static List<awareness_geo.GeoPoint> _markerRouteFor(
+    route_domain.ImportedRoute? route,
+  ) {
+    if (route == null || route.paths.isEmpty) return const [];
+    final longestPath = route.paths.reduce(
+      (current, candidate) =>
+          candidate.points.length > current.points.length ? candidate : current,
+    );
+    return longestPath.points
+        .map(
+          (point) => awareness_geo.GeoPoint(
+            latitude: point.latitude,
+            longitude: point.longitude,
+          ),
+        )
+        .toList(growable: false);
+  }
+
   Future<void> _onReceivedEvent(RideEvent event) async {
     if (_isSituationalEvent(event.type)) {
       try {
@@ -317,6 +365,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       0 => RideDashboard(
         controller: widget.rideController,
         relayController: _relayController,
+        markerAssistanceController: _markerAssistanceController,
         serviceWarning: _warnings.isEmpty ? null : _warnings.join('\n'),
       ),
       1 => RideMapFeature.fromEnvironment(
@@ -371,6 +420,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   void dispose() {
     widget.rideController.removeListener(_onRideControllerChanged);
     _awarenessController?.removeListener(_onAwarenessChanged);
+    _markerAssistanceController?.dispose();
     _awarenessController?.dispose();
     unawaited(_receivedEventSubscription?.cancel());
     _locationController?.dispose();

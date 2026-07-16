@@ -41,7 +41,51 @@ abstract final class GeoCalculations {
     return nearest;
   }
 
+  static PolylineProjection projectOntoPolyline(
+    GeoPoint point,
+    List<GeoPoint> polyline,
+  ) {
+    if (polyline.isEmpty) {
+      return const PolylineProjection(
+        distanceFromRouteMeters: double.infinity,
+        distanceAlongRouteMeters: 0,
+      );
+    }
+    if (polyline.length == 1) {
+      return PolylineProjection(
+        distanceFromRouteMeters: distanceMeters(point, polyline.single),
+        distanceAlongRouteMeters: 0,
+      );
+    }
+
+    var travelled = 0.0;
+    var nearestDistance = double.infinity;
+    var nearestProgress = 0.0;
+    for (var index = 0; index < polyline.length - 1; index += 1) {
+      final start = polyline[index];
+      final end = polyline[index + 1];
+      final segment = _projectOntoSegment(point, start, end);
+      if (segment.distanceMeters < nearestDistance) {
+        nearestDistance = segment.distanceMeters;
+        nearestProgress = travelled + segment.progressMeters;
+      }
+      travelled += distanceMeters(start, end);
+    }
+    return PolylineProjection(
+      distanceFromRouteMeters: nearestDistance,
+      distanceAlongRouteMeters: nearestProgress,
+    );
+  }
+
   static double _distanceToSegmentMeters(
+    GeoPoint point,
+    GeoPoint start,
+    GeoPoint end,
+  ) {
+    return _projectOntoSegment(point, start, end).distanceMeters;
+  }
+
+  static _SegmentProjection _projectOntoSegment(
     GeoPoint point,
     GeoPoint start,
     GeoPoint end,
@@ -63,17 +107,43 @@ abstract final class GeoCalculations {
     final deltaY = endY - startY;
     final lengthSquared = deltaX * deltaX + deltaY * deltaY;
     if (lengthSquared == 0) {
-      return math.sqrt(startX * startX + startY * startY);
+      return _SegmentProjection(
+        distanceMeters: math.sqrt(startX * startX + startY * startY),
+        progressMeters: 0,
+      );
     }
     final projection = (-(startX * deltaX + startY * deltaY) / lengthSquared)
         .clamp(0.0, 1.0);
     final nearestX = startX + projection * deltaX;
     final nearestY = startY + projection * deltaY;
-    return math.sqrt(nearestX * nearestX + nearestY * nearestY);
+    return _SegmentProjection(
+      distanceMeters: math.sqrt(nearestX * nearestX + nearestY * nearestY),
+      progressMeters: math.sqrt(lengthSquared) * projection,
+    );
   }
 
   static double _radians(double degrees) => degrees * math.pi / 180;
 
   static double _normaliseLongitudeDelta(double delta) =>
       ((delta + 540) % 360) - 180;
+}
+
+class PolylineProjection {
+  const PolylineProjection({
+    required this.distanceFromRouteMeters,
+    required this.distanceAlongRouteMeters,
+  });
+
+  final double distanceFromRouteMeters;
+  final double distanceAlongRouteMeters;
+}
+
+class _SegmentProjection {
+  const _SegmentProjection({
+    required this.distanceMeters,
+    required this.progressMeters,
+  });
+
+  final double distanceMeters;
+  final double progressMeters;
 }

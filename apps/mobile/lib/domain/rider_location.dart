@@ -80,3 +80,17 @@ class RiderLocation {
     receivedAt: DateTime.parse(json['receivedAt']! as String).toLocal(),
   );
 }
+
+class RiderLocationEvidence {
+  const RiderLocationEvidence({
+    required this.location,
+    required this.eventId,
+    required this.eventCreatedAt,
+    required this.authenticated,
+  });
+
+  final RiderLocation location;
+  final String eventId;
+  final DateTime eventCreatedAt;
+  final bool authenticated;
+}

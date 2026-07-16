@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/app/ride_relay_app.dart';
 import 'package:ride_relay/controllers/ride_controller.dart';
@@ -28,11 +29,15 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Oliver'), findsOneWidget);
-    expect(find.text('QUICK MESSAGES'), findsOneWidget);
     expect(find.text('Marker mode'), findsOneWidget);
     expect(find.byTooltip('Share ride summary'), findsOneWidget);
+    expect(find.text('MARKING STATS'), findsOneWidget);
     expect(find.text('Map'), findsOneWidget);
     expect(find.text('Awareness'), findsOneWidget);
+
+    await tester.drag(find.byType(ListView).first, const Offset(0, -500));
+    await tester.pumpAndSettle();
+    expect(find.text('QUICK MESSAGES'), findsOneWidget);
 
     await tester.tap(find.text('Awareness'));
     await tester.pumpAndSettle();
@@ -40,6 +45,27 @@ void main() {
     expect(find.text('Ride awareness'), findsOneWidget);
     expect(find.text('ACTIVE HAZARDS'), findsOneWidget);
 
+    controller.dispose();
+  });
+
+  testWidgets('end ride confirmation includes marking summary', (tester) async {
+    final controller = await _controller();
+    await controller.createRide('Oliver');
+    await controller.startMarker();
+    await controller.recordMarkerPass('rider-a');
+    await tester.pumpWidget(
+      RideRelayApp(controller: controller, enableNativeServices: false),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('End ride'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('end-ride-marking-summary')), findsOneWidget);
+    expect(find.textContaining('1 session'), findsOneWidget);
+
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
     controller.dispose();
   });
 }

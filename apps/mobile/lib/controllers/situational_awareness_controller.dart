@@ -47,6 +47,7 @@ class SituationalAwarenessController extends ChangeNotifier {
   late final SituationEventFactory _eventFactory;
 
   final Map<String, RiderLocation> _locations = {};
+  final Map<String, RiderLocationEvidence> _locationEvidence = {};
   final Map<String, HazardReport> _hazards = {};
   final Map<String, RiderRouteAlert> _alerts = {};
   final Map<String, RouteDeviationDetector> _detectors = {};
@@ -94,6 +95,14 @@ class SituationalAwarenessController extends ChangeNotifier {
   List<ExternalHazardProvider> get externalProviders => _externalProviders;
 
   RiderLocation? get localLocation => _locations[_session.localRiderId];
+
+  List<RiderLocationEvidence> get authenticatedLocationEvidence =>
+      List.unmodifiable(
+        _locationEvidence.values.where((evidence) => evidence.authenticated),
+      );
+
+  RiderLocationEvidence? locationEvidenceFor(String riderId) =>
+      _locationEvidence[riderId];
 
   RiderRouteAlert? alertFor(String riderId) => _alerts[riderId];
 
@@ -305,6 +314,14 @@ class SituationalAwarenessController extends ChangeNotifier {
         if (previous == null ||
             !location.sample.recordedAt.isBefore(previous.sample.recordedAt)) {
           _locations[location.riderId] = location;
+          _locationEvidence[location.riderId] = RiderLocationEvidence(
+            location: location,
+            eventId: event.id,
+            eventCreatedAt: event.createdAt,
+            authenticated:
+                event.deviceId == location.riderId &&
+                SituationEventFactory.verify(event, _session.inviteSecret),
+          );
           _evaluateLocation(location);
         }
         break;

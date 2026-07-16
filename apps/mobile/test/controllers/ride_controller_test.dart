@@ -5,9 +5,14 @@ import 'package:ride_relay/controllers/ride_controller.dart';
 import 'package:ride_relay/data/in_memory_event_store.dart';
 import 'package:ride_relay/data/in_memory_session_store.dart';
 import 'package:ride_relay/domain/quick_message.dart';
+import 'package:ride_relay/domain/marker_assistance.dart';
+import 'package:ride_relay/domain/geo_point.dart';
 import 'package:ride_relay/domain/ride_event.dart';
 import 'package:ride_relay/domain/ride_role.dart';
+import 'package:ride_relay/domain/ride_session.dart';
+import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/services/nearby_bridge.dart';
+import 'package:ride_relay/services/situation_event_factory.dart';
 
 void main() {
   late InMemoryEventStore eventStore;
@@ -79,6 +84,147 @@ void main() {
       hasLength(2),
     );
   });
+
+  test('marker uniqueness is scoped to each marker session', () async {
+    await controller.createRide('Oliver');
+    await controller.startMarker();
+    await controller.recordMarkerPass('rider-a');
+    await controller.endMarker();
+    await controller.startMarker();
+    await controller.recordMarkerPass('rider-a');
+
+    expect(controller.markerPassCount, 1);
+    expect(controller.markingSummary.sessions, hasLength(2));
+    expect(
+      controller.events.where(
+        (event) => event.type == RideEventType.markerPass,
+      ),
+      hasLength(2),
+    );
+  });
+
+  test(
+    'another device marker session does not change local marker state',
+    () async {
+      await controller.createRide('Oliver');
+      await eventStore.append(
+        RideEvent(
+          id: 'remote-marker',
+          rideId: controller.session!.rideId,
+          deviceId: 'remote-device',
+          type: RideEventType.markerStarted,
+          priority: EventPriority.important,
+          createdAt: DateTime.utc(2026, 7, 16, 12),
+          payload: const {
+            'markerSessionId': 'remote-session',
+            'mode': 'manual',
+          },
+          signature: 'relay-test',
+        ),
+      );
+      await controller.reloadEvents();
+
+      expect(controller.markerActive, isFalse);
+      expect(controller.markingSummary.sessions, isEmpty);
+    },
+  );
+
+  test(
+    'authenticated TEC evidence is reflected in marker statistics',
+    () async {
+      await controller.createRide('Oliver');
+      await controller.startMarker();
+      await _appendLocationEvidence(
+        eventStore: eventStore,
+        controller: controller,
+        riderId: 'tec',
+        role: RideRole.tailEndCharlie,
+        eventId: 'location-event',
+      );
+      await controller.recordMarkerPass(
+        'tec',
+        evidenceEventId: 'location-event',
+        riderRole: RideRole.tailEndCharlie,
+        observedAt: DateTime.utc(2026, 7, 16, 12),
+      );
+
+      expect(controller.verifiedMarkerPassCount, 1);
+      expect(controller.tecPassedCurrentMarker, isTrue);
+    },
+  );
+
+  test('ride-ended event persists the marking summary', () async {
+    await controller.createRide('Oliver');
+    final rideId = controller.session!.rideId;
+    await controller.startMarker();
+    await _appendLocationEvidence(
+      eventStore: eventStore,
+      controller: controller,
+      riderId: 'rider-a',
+      role: RideRole.rider,
+      eventId: 'location-event',
+    );
+    await controller.recordMarkerPass(
+      'rider-a',
+      evidenceEventId: 'location-event',
+      riderRole: RideRole.rider,
+    );
+
+    await controller.endRide();
+
+    final events = await eventStore.eventsForRide(rideId);
+    final ended = events.singleWhere(
+      (event) => event.type == RideEventType.rideEnded,
+    );
+    final summary = RideMarkingSummary.fromJson(
+      Map<String, Object?>.from(ended.payload['markingSummary']! as Map),
+    );
+    expect(summary.sessions, hasLength(1));
+    expect(summary.sessions.single.completed, isTrue);
+    expect(summary.verifiedPassCount, 1);
+  });
+}
+
+Future<void> _appendLocationEvidence({
+  required InMemoryEventStore eventStore,
+  required RideController controller,
+  required String riderId,
+  required RideRole role,
+  required String eventId,
+}) async {
+  final session = controller.session!;
+  final now = DateTime.utc(2026, 7, 16, 12);
+  final remoteSession = RideSession(
+    rideId: session.rideId,
+    rideCode: session.rideCode,
+    inviteSecret: session.inviteSecret,
+    localRiderId: riderId,
+    displayName: riderId,
+    role: role,
+    joinedAt: now,
+  );
+  final location = RiderLocation(
+    riderId: riderId,
+    displayName: riderId,
+    role: role,
+    sample: LocationSample(
+      position: const GeoPoint(latitude: 51, longitude: -1),
+      recordedAt: now,
+      accuracyMeters: 4,
+    ),
+    receivedAt: now,
+  );
+  final event =
+      SituationEventFactory(
+        session: remoteSession,
+        clock: () => now,
+        idFactory: () => eventId,
+      ).create(
+        type: RideEventType.riderLocationUpdated,
+        payload: {'location': location.toJson()},
+      );
+  await eventStore.append(event);
+  await controller.reloadEvents();
 }
 
 class _FakeNearbyBridge extends NearbyBridge {

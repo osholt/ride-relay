@@ -5,23 +5,27 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../controllers/ride_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
+import '../../controllers/marker_assistance_controller.dart';
 import '../../domain/quick_message.dart';
 import '../../domain/ride_event.dart';
 import '../../domain/ride_role.dart';
 import '../../services/ride_summary_exporter.dart';
 import '../nearby/relay_status_card.dart';
+import 'marker_assistance_widgets.dart';
 
 class RideDashboard extends StatelessWidget {
   const RideDashboard({
     super.key,
     required this.controller,
     this.relayController,
+    this.markerAssistanceController,
     this.serviceWarning,
     this.summarySharer,
   });
 
   final RideController controller;
   final NearbyRelayController? relayController;
+  final MarkerAssistanceController? markerAssistanceController;
   final String? serviceWarning;
   final RideSummarySharer? summarySharer;
 
@@ -48,7 +52,7 @@ class RideDashboard extends StatelessWidget {
         ],
       ),
       body: AnimatedBuilder(
-        animation: controller,
+        animation: Listenable.merge([controller, ?markerAssistanceController]),
         builder: (context, _) => Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 760),
@@ -72,7 +76,13 @@ class RideDashboard extends StatelessWidget {
                   _ServiceWarning(message: warning),
                 ],
                 const SizedBox(height: 14),
+                if (markerAssistanceController case final assistance?) ...[
+                  MarkerAssistancePrompt(controller: assistance),
+                  if (assistance.hasSuggestion) const SizedBox(height: 14),
+                ],
                 _MarkerCard(controller: controller),
+                const SizedBox(height: 14),
+                MarkerStatisticsCard(summary: controller.markingSummary),
                 const SizedBox(height: 22),
                 Text(
                   'QUICK MESSAGES',
@@ -96,14 +106,23 @@ class RideDashboard extends StatelessWidget {
   }
 
   Future<void> _confirmEndRide(BuildContext context) async {
+    final summary = controller.markingSummary;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('End this ride?'),
-        content: const Text(
-          'Live sharing will stop on this phone. Queued development events remain '
-          'locally for recovery testing. Share the ride summary now if you want '
-          'a copy of marker times and pass counts.',
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Live sharing will stop on this phone. Queued development events '
+              'remain locally for recovery testing. Share the ride summary now '
+              'if you want a copy of marker times and pass counts.',
+            ),
+            const SizedBox(height: 14),
+            EndRideMarkingSummary(summary: summary),
+          ],
         ),
         actions: [
           TextButton.icon(
@@ -360,8 +379,12 @@ class _MarkerCard extends StatelessWidget {
                 const SizedBox(height: 3),
                 Text(
                   active
-                      ? '${controller.markerPassCount} unique riders confirmed'
-                      : 'Manual fallback now; auto-detection follows field tests',
+                      ? controller.tecPassedCurrentMarker
+                            ? 'TEC passed · ${controller.verifiedMarkerPassCount} '
+                                  'verified riders'
+                            : '${controller.verifiedMarkerPassCount} verified · '
+                                  '${controller.markerPassCount} total riders'
+                      : 'Assistance only suggests; you always confirm marker mode',
                   style: const TextStyle(
                     color: Color(0xFF9CA7B5),
                     fontSize: 12,

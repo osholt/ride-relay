@@ -6,12 +6,15 @@ import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
 import '../domain/event_store.dart';
+import '../domain/marker_assistance.dart';
 import '../domain/quick_message.dart';
 import '../domain/ride_event.dart';
 import '../domain/ride_role.dart';
 import '../domain/ride_session.dart';
 import '../domain/session_store.dart';
 import '../services/nearby_bridge.dart';
+import '../services/marker_statistics.dart';
+import '../services/situation_event_factory.dart';
 
 typedef Clock = DateTime Function();
 typedef IdFactory = String Function();
@@ -54,8 +57,11 @@ class RideController extends ChangeNotifier {
   bool get hasActiveRide => _session != null;
 
   bool get markerActive {
+    final localDeviceId = _session?.localRiderId;
+    if (localDeviceId == null) return false;
     var active = false;
     for (final event in _events) {
+      if (event.deviceId != localDeviceId) continue;
       if (event.type == RideEventType.markerStarted) {
         active = true;
       } else if (event.type == RideEventType.markerEnded) {
@@ -65,21 +71,45 @@ class RideController extends ChangeNotifier {
     return active;
   }
 
-  int get markerPassCount {
-    final uniqueRiders = <String>{};
-    if (!markerActive) {
-      return 0;
-    }
-    for (final event in _events.where(
-      (event) => event.type == RideEventType.markerPass,
-    )) {
-      final riderId = event.payload['riderId'];
-      if (riderId is String) {
-        uniqueRiders.add(riderId);
+  RideMarkingSummary get markingSummary => MarkerStatistics.fromEvents(
+    _events,
+    asOf: _clock(),
+    markerDeviceId: _session?.localRiderId,
+    authenticatedLocationEvidence: _authenticatedLocationEvidence,
+  );
+
+  Map<String, String> get _authenticatedLocationEvidence {
+    final activeSession = _session;
+    if (activeSession == null) return const {};
+    final result = <String, String>{};
+    for (final event in _events) {
+      if (event.type != RideEventType.riderLocationUpdated ||
+          !SituationEventFactory.verify(event, activeSession.inviteSecret)) {
+        continue;
+      }
+      final rawLocation = event.payload['location'];
+      if (rawLocation is! Map) continue;
+      final riderId = rawLocation['riderId'];
+      if (riderId is String && riderId == event.deviceId) {
+        result[event.id] = riderId;
       }
     }
-    return uniqueRiders.length;
+    return result;
   }
+
+  MarkerSessionSummary? get currentMarkerSession =>
+      markingSummary.activeSession;
+
+  String? get currentMarkerSessionId => currentMarkerSession?.sessionId;
+
+  int get markerPassCount {
+    return currentMarkerSession?.uniquePassCount ?? 0;
+  }
+
+  int get verifiedMarkerPassCount =>
+      currentMarkerSession?.verifiedPassCount ?? 0;
+
+  bool get tecPassedCurrentMarker => currentMarkerSession?.tecPassedAt != null;
 
   int get pendingEventCount =>
       _events.where((event) => !event.acknowledged).length;
@@ -196,37 +226,55 @@ class RideController extends ChangeNotifier {
     });
   }
 
-  Future<void> startMarker() async {
+  Future<void> startMarker({
+    String mode = 'manual',
+    String? decisionPointId,
+  }) async {
     if (markerActive) {
       return;
     }
     await _run(() async {
       final activeSession = _requireSession();
       _roleBeforeMarker = activeSession.role;
+      final markerSessionId = _idFactory();
       final updated = activeSession.copyWith(role: RideRole.marker);
       _session = updated;
       await _sessionStore.save(updated);
       await _record(
         type: RideEventType.markerStarted,
         priority: EventPriority.important,
-        payload: {'mode': 'manual'},
+        payload: {
+          'mode': mode,
+          'markerSessionId': markerSessionId,
+          'decisionPointId': ?decisionPointId,
+        },
       );
     });
   }
 
-  Future<void> recordMarkerPass(String riderId) async {
+  Future<void> recordMarkerPass(
+    String riderId, {
+    String? evidenceEventId,
+    RideRole? riderRole,
+    DateTime? observedAt,
+  }) async {
+    final markerSession = currentMarkerSession;
     if (!markerActive ||
-        _events.any(
-          (event) =>
-              event.type == RideEventType.markerPass &&
-              event.payload['riderId'] == riderId,
-        )) {
+        markerSession == null ||
+        markerSession.uniqueRiderIds.contains(riderId)) {
       return;
     }
     await _run(() async {
       await _record(
         type: RideEventType.markerPass,
-        payload: {'riderId': riderId},
+        payload: {
+          'riderId': riderId,
+          'markerSessionId': markerSession.sessionId,
+          'authenticated': evidenceEventId != null,
+          'evidenceEventId': ?evidenceEventId,
+          'role': ?riderRole?.name,
+          'observedAt': ?observedAt?.toUtc().toIso8601String(),
+        },
       );
     });
   }
@@ -236,10 +284,16 @@ class RideController extends ChangeNotifier {
       return;
     }
     await _run(() async {
+      final current = currentMarkerSession;
       await _record(
         type: RideEventType.markerEnded,
         priority: EventPriority.important,
-        payload: {'uniquePasses': markerPassCount},
+        payload: {
+          'markerSessionId': current?.sessionId,
+          'uniquePasses': current?.uniquePassCount ?? 0,
+          'verifiedPasses': current?.verifiedPassCount ?? 0,
+          'tecPassed': current?.tecPassedAt != null,
+        },
       );
       final activeSession = _requireSession();
       final updated = activeSession.copyWith(
@@ -253,10 +307,25 @@ class RideController extends ChangeNotifier {
 
   Future<void> endRide() async {
     await _run(() async {
+      if (markerActive) {
+        final current = currentMarkerSession;
+        await _record(
+          type: RideEventType.markerEnded,
+          priority: EventPriority.important,
+          payload: {
+            'markerSessionId': current?.sessionId,
+            'uniquePasses': current?.uniquePassCount ?? 0,
+            'verifiedPasses': current?.verifiedPassCount ?? 0,
+            'tecPassed': current?.tecPassedAt != null,
+            'reason': 'ride-ended',
+          },
+        );
+      }
+      final summary = markingSummary;
       await _record(
         type: RideEventType.rideEnded,
         priority: EventPriority.important,
-        payload: const {},
+        payload: {'markingSummary': summary.toJson()},
       );
       await _sessionStore.clear();
       _session = null;
