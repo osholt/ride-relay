@@ -30,6 +30,8 @@
 	<string>Ride Relay uses nearby connections to exchange ride safety updates when mobile coverage is unavailable.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Ride Relay uses nearby devices and local networks to keep your ride group coordinated.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Ride Relay uses your location while the ride screen is open to show your group position and warn about route deviations.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

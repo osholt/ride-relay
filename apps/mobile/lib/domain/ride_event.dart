@@ -6,6 +6,11 @@ enum RideEventType {
   markerPass,
   markerEnded,
   statusMessage,
+  riderLocationUpdated,
+  hazardReported,
+  hazardCleared,
+  routeDeviationChanged,
+  routeAlertAcknowledged,
   rideEnded,
 }
 
