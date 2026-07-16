@@ -64,7 +64,7 @@ class InternetRelayWorker {
     required EventStore eventStore,
     required InternetCursorStore cursorStore,
     InternetRetryPolicy retryPolicy = const InternetRetryPolicy(),
-    Duration pollInterval = const Duration(seconds: 15),
+    Duration pollInterval = const Duration(seconds: 4),
     DateTime Function()? clock,
     double Function()? randomValue,
   }) => InternetRelayWorker._(
@@ -102,7 +102,6 @@ class InternetRelayWorker {
   Timer? _timer;
   bool _running = false;
   bool _syncing = false;
-  bool _wakePending = false;
   bool _closed = false;
   int _failureCount = 0;
   int _generation = 0;
@@ -117,7 +116,6 @@ class InternetRelayWorker {
     _session = session;
     _status = const InternetRelayStatus.stopped();
     _failureCount = 0;
-    _wakePending = false;
     final configurationError = _api.configuration.configurationError;
     if (configurationError != null) {
       _emit(
@@ -145,14 +143,10 @@ class InternetRelayWorker {
     final session = _session;
     final generation = _generation;
     if (!_running || session == null || _closed) return;
-    if (_syncing) {
-      _wakePending = true;
-      return;
-    }
+    if (_syncing) return;
     _timer?.cancel();
     _timer = null;
     _syncing = true;
-    _wakePending = false;
     var nextDelay = _pollInterval;
     try {
       final pending = await _eventStore.pendingEvents(session.rideId);
@@ -253,11 +247,7 @@ class InternetRelayWorker {
     } finally {
       _syncing = false;
       if (_running && !_closed) {
-        _schedule(
-          generation == _generation && !_wakePending
-              ? nextDelay
-              : Duration.zero,
-        );
+        _schedule(generation == _generation ? nextDelay : Duration.zero);
       }
     }
   }
@@ -272,12 +262,7 @@ class InternetRelayWorker {
 
   void wake() {
     if (!_running || _closed) return;
-    if (_syncing) {
-      _wakePending = true;
-      return;
-    }
-    _timer?.cancel();
-    _timer = null;
+    if (_syncing || _timer != null) return;
     unawaited(synchronizeNow());
   }
 

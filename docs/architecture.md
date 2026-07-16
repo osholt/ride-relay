@@ -48,9 +48,10 @@ ACK-driven store-and-forward exchange. Its native adapter links Google Nearby
 Connections cluster transport on Android and iOS. Physical cross-platform
 offline validation is still a release gate; see `nearby-relay.md`.
 
-The development-alpha HTTPS worker batches pending journal events and pulls
-missing events by opaque cursor. It is disabled unless an HTTPS endpoint is
-configured, and the server contract is documented in `internet-relay.md`.
+The HTTPS worker batches pending journal events and pulls missing events by
+opaque cursor. It is disabled unless an HTTPS endpoint is configured. The
+reference FastAPI/PostgreSQL relay, contract, retention, and trust boundaries
+are documented in `internet-relay.md` and `server-architecture.md`.
 Retries are automatic, bounded, and jittered. Request, response, event, and
 timeout limits are enforced on the client.
 
@@ -71,7 +72,7 @@ another rider has received an event.
 
 ## Deliberately absent
 
-- No production server or cloud credentials.
+- No public deployment, production cloud credentials, or basemap dataset/style.
 - No background location tracking or background relay modes; foreground
   positioning is implemented and requires explicit permission.
 - No claim that the linked Nearby SDK has passed the physical-device matrix.

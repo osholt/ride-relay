@@ -1,0 +1,32 @@
+{$RIDE_RELAY_DOMAIN} {
+	encode zstd gzip
+
+	@metrics path /metrics
+	respond @metrics 404
+
+	handle /api/* {
+		request_body {
+			max_size 64KB
+		}
+		reverse_proxy server:8080
+	}
+
+	handle /health/live {
+		reverse_proxy server:8080
+	}
+
+	@private_health path /health/*
+	respond @private_health 404
+
+	handle_path /maps/styles/* {
+		root * /srv/maps/styles
+		header Cache-Control "public, max-age=300"
+		file_server
+	}
+
+	handle_path /maps/tiles/* {
+		reverse_proxy martin:3000
+	}
+
+	respond 404
+}

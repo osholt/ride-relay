@@ -1,0 +1,81 @@
+name: Server CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SERVER_DIR: apps/server
+
+jobs:
+  quality:
+    name: Lint and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ${{ env.SERVER_DIR }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          working-directory: ${{ env.SERVER_DIR }}
+          python-version: '3.12'
+          enable-cache: true
+      - run: uv sync --frozen --extra dev
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run pytest --cov=ride_relay_server --cov-report=term-missing --cov-fail-under=80
+
+  postgres-migration:
+    name: PostgreSQL migration smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: ride_relay
+          POSTGRES_USER: ride_relay
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ride_relay -d ride_relay"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: ${{ env.SERVER_DIR }}
+    env:
+      RIDE_RELAY_DATABASE_URL: postgresql+psycopg://ride_relay:ci-only-password@127.0.0.1:5432/ride_relay
+      RIDE_RELAY_DATA_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc
+      RIDE_RELAY_CURSOR_SIGNING_KEY: CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          working-directory: ${{ env.SERVER_DIR }}
+          python-version: '3.12'
+          enable-cache: true
+      - run: uv sync --frozen --no-dev
+      - run: uv run alembic upgrade head
+      - run: uv run python -c "from sqlalchemy import create_engine, inspect; from ride_relay_server.config import get_settings; assert {'rides', 'ride_events', 'idempotency_replays'} <= set(inspect(create_engine(get_settings().database_url)).get_table_names())"
+
+  container:
+    name: Container build
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build --tag ride-relay-server:ci apps/server

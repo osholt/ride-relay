@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/widgets.dart';
@@ -15,10 +16,16 @@ typedef TileDownloadProgressCallback =
 
 class TileDownloadCancellationToken {
   bool _cancelled = false;
+  final Completer<void> _cancelledCompleter = Completer<void>();
 
   bool get isCancelled => _cancelled;
+  Future<void> get whenCancelled => _cancelledCompleter.future;
 
-  void cancel() => _cancelled = true;
+  void cancel() {
+    if (_cancelled) return;
+    _cancelled = true;
+    _cancelledCompleter.complete();
+  }
 }
 
 class TileDownloadProgress {
@@ -104,7 +111,7 @@ class OfflineTileCache {
     TileDownloadProgressCallback? onProgress,
     TileDownloadCancellationToken? cancellationToken,
   }) async {
-    if (!configuration.canDownloadOffline) {
+    if (!configuration.canDownloadOffline || !configuration.usesLegacyRaster) {
       throw const OfflineTileConfigurationException(
         'A licensed provider with explicit cache permission is required.',
       );
@@ -220,12 +227,22 @@ class OfflineTileCache {
   }
 
   Future<void> clear() async {
-    if (!configuration.canDownloadOffline) return;
+    if (!RegExp(
+      r'^[a-zA-Z0-9._-]{1,64}$',
+    ).hasMatch(configuration.cacheNamespace)) {
+      return;
+    }
     final providerDirectory = Directory(
       path.join(rootDirectory.path, configuration.cacheNamespace),
     );
     if (await providerDirectory.exists()) {
       await providerDirectory.delete(recursive: true);
+    }
+  }
+
+  Future<void> clearAll() async {
+    if (await rootDirectory.exists()) {
+      await rootDirectory.delete(recursive: true);
     }
   }
 

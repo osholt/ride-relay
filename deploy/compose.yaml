@@ -1,0 +1,89 @@
+name: ride-relay
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ride_relay
+      POSTGRES_USER: ride_relay
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U ride_relay -d ride_relay]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  server:
+    build:
+      context: ../apps/server
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment: &server-environment
+      RIDE_RELAY_ENVIRONMENT: production
+      RIDE_RELAY_DATABASE_URL: postgresql+psycopg://ride_relay:${POSTGRES_PASSWORD}@db:5432/ride_relay
+      RIDE_RELAY_DATA_ENCRYPTION_KEY: ${RIDE_RELAY_DATA_ENCRYPTION_KEY:?set RIDE_RELAY_DATA_ENCRYPTION_KEY}
+      RIDE_RELAY_CURSOR_SIGNING_KEY: ${RIDE_RELAY_CURSOR_SIGNING_KEY:?set RIDE_RELAY_CURSOR_SIGNING_KEY}
+      RIDE_RELAY_TRUSTED_HOSTS: '["${RIDE_RELAY_DOMAIN}","127.0.0.1","localhost"]'
+      RIDE_RELAY_FORWARDED_ALLOW_IPS: '*'
+      RIDE_RELAY_AUTO_CREATE_SCHEMA: 'false'
+      RIDE_RELAY_RIDE_RETENTION_HOURS: ${RIDE_RELAY_RIDE_RETENTION_HOURS:-72}
+      RIDE_RELAY_ENDED_RIDE_GRACE_HOURS: ${RIDE_RELAY_ENDED_RIDE_GRACE_HOURS:-24}
+      RIDE_RELAY_MAXIMUM_ACTIVE_RIDES: ${RIDE_RELAY_MAXIMUM_ACTIVE_RIDES:-100}
+      RIDE_RELAY_MAXIMUM_EVENTS_PER_RIDE: ${RIDE_RELAY_MAXIMUM_EVENTS_PER_RIDE:-5000}
+      RIDE_RELAY_MAXIMUM_STORED_BYTES_PER_RIDE: ${RIDE_RELAY_MAXIMUM_STORED_BYTES_PER_RIDE:-26214400}
+      RIDE_RELAY_MAXIMUM_REPLAYS_PER_RIDE: ${RIDE_RELAY_MAXIMUM_REPLAYS_PER_RIDE:-5000}
+      RIDE_RELAY_MAXIMUM_REPLAY_BYTES_PER_RIDE: ${RIDE_RELAY_MAXIMUM_REPLAY_BYTES_PER_RIDE:-26214400}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  cleanup:
+    build:
+      context: ../apps/server
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment: *server-environment
+    command:
+      - sh
+      - -c
+      - while true; do .venv/bin/ride-relay-cleanup; sleep 3600; done
+    depends_on:
+      db:
+        condition: service_healthy
+
+  martin:
+    image: ghcr.io/maplibre/martin:1.11.0
+    restart: unless-stopped
+    profiles: [maps]
+    command: [/data]
+    volumes:
+      - ./maps/data:/data:ro
+
+  caddy:
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    ports:
+      - 80:80
+      - 443:443
+      - 443:443/udp
+    environment:
+      RIDE_RELAY_DOMAIN: ${RIDE_RELAY_DOMAIN:?set RIDE_RELAY_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./maps/styles:/srv/maps/styles:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - server
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:

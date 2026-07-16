@@ -14,12 +14,14 @@ class EndedRideScreen extends StatelessWidget {
     this.nearbyRelayController,
     this.internetRelayController,
     this.summarySharer,
+    this.onRemoveRide,
   });
 
   final RideController controller;
   final NearbyRelayController? nearbyRelayController;
   final InternetRelayController? internetRelayController;
   final RideSummarySharer? summarySharer;
+  final Future<void> Function()? onRemoveRide;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -102,6 +104,8 @@ class EndedRideScreen extends StatelessWidget {
         ],
       ),
     );
-    if (confirmed ?? false) await controller.clearEndedRide();
+    if (confirmed ?? false) {
+      await (onRemoveRide?.call() ?? controller.clearEndedRide());
+    }
   }
 }

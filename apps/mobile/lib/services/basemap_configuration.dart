@@ -1,5 +1,6 @@
 class BasemapConfiguration {
   const BasemapConfiguration({
+    this.styleUrl = '',
     this.urlTemplate = '',
     this.attribution = '',
     this.cacheNamespace = '',
@@ -8,6 +9,7 @@ class BasemapConfiguration {
   });
 
   factory BasemapConfiguration.fromEnvironment() => BasemapConfiguration(
+    styleUrl: const String.fromEnvironment('RIDE_RELAY_MAP_STYLE_URL'),
     urlTemplate: const String.fromEnvironment('RIDE_RELAY_TILE_URL'),
     attribution: const String.fromEnvironment('RIDE_RELAY_TILE_ATTRIBUTION'),
     cacheNamespace: const String.fromEnvironment(
@@ -22,19 +24,32 @@ class BasemapConfiguration {
     ),
   );
 
+  /// HTTPS MapLibre style document used by the production vector-map path.
+  final String styleUrl;
+
+  /// Legacy raster XYZ template retained as a route-only development fallback.
   final String urlTemplate;
   final String attribution;
   final String cacheNamespace;
   final bool persistentCachingAllowed;
   final int maximumNativeZoom;
 
-  bool get isConfigured =>
+  bool get usesMapLibre =>
+      styleUrl.trim().isNotEmpty &&
+      attribution.trim().isNotEmpty &&
+      _isSecureHttpUrl(styleUrl) &&
+      maximumNativeZoom >= 0 &&
+      maximumNativeZoom <= 22;
+
+  bool get usesLegacyRaster =>
       urlTemplate.trim().isNotEmpty &&
       attribution.trim().isNotEmpty &&
       _hasRequiredPlaceholders(urlTemplate) &&
       _isSecureHttpTemplate(urlTemplate) &&
       maximumNativeZoom >= 0 &&
       maximumNativeZoom <= 22;
+
+  bool get isConfigured => usesMapLibre || usesLegacyRaster;
 
   bool get canDownloadOffline =>
       isConfigured &&
@@ -43,7 +58,7 @@ class BasemapConfiguration {
 
   String get statusMessage {
     if (!isConfigured) {
-      return 'No licensed tile provider is configured. Route geometry still works offline.';
+      return 'No MapLibre style is configured. Route geometry still works offline.';
     }
     if (!persistentCachingAllowed) {
       return 'Online basemap configured; its licence has not been approved for offline caching.';
@@ -51,7 +66,10 @@ class BasemapConfiguration {
     if (!RegExp(r'^[a-zA-Z0-9._-]{1,64}$').hasMatch(cacheNamespace)) {
       return 'Offline caching needs a safe provider cache namespace.';
     }
-    return 'Licensed basemap configured. Downloaded route corridors are available offline.';
+    if (usesMapLibre) {
+      return 'MapLibre vector map configured. Downloaded route regions are available offline.';
+    }
+    return 'Legacy raster basemap configured. Downloaded route corridors are available offline.';
   }
 
   static bool _hasRequiredPlaceholders(String template) =>
@@ -66,6 +84,11 @@ class BasemapConfiguration {
           .replaceAll('{x}', '0')
           .replaceAll('{y}', '0'),
     );
+    return uri != null && uri.scheme == 'https' && uri.host.isNotEmpty;
+  }
+
+  static bool _isSecureHttpUrl(String value) {
+    final uri = Uri.tryParse(value);
     return uri != null && uri.scheme == 'https' && uri.host.isNotEmpty;
   }
 }

@@ -61,6 +61,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   MarkerAssistanceController? _markerAssistanceController;
   NearbyRelayController? _relayController;
   InternetRelayController? _internetRelayController;
+  SharedPreferencesInternetCursorStore? _internetCursorStore;
   StreamSubscription<RideEvent>? _receivedEventSubscription;
   StreamSubscription<RideEvent>? _internetReceivedEventSubscription;
   Timer? _stalenessTimer;
@@ -117,6 +118,8 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
 
       final session = widget.rideController.session;
       if (session != null) {
+        final cursorStore = SharedPreferencesInternetCursorStore();
+        _internetCursorStore = cursorStore;
         final internetRelayController = InternetRelayController(
           InternetRelayWorker(
             api: HttpInternetRelayClient(
@@ -124,7 +127,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
               client: http.Client(),
             ),
             eventStore: widget.eventStore,
-            cursorStore: SharedPreferencesInternetCursorStore(),
+            cursorStore: cursorStore,
           ),
         );
         _internetRelayController = internetRelayController;
@@ -429,6 +432,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         controller: widget.rideController,
         nearbyRelayController: _relayController,
         internetRelayController: _internetRelayController,
+        onRemoveRide: _removeEndedRide,
       );
     }
     final body = switch (_selectedIndex) {
@@ -485,6 +489,12 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
           ? _locationController
           : null,
     );
+  }
+
+  Future<void> _removeEndedRide() async {
+    final rideId = widget.rideController.session?.rideId;
+    if (rideId != null) await _internetCursorStore?.clear(rideId);
+    await widget.rideController.clearEndedRide();
   }
 
   @override

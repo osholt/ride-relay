@@ -1,8 +1,12 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:uuid/uuid.dart';
 
 import '../../data/json_file_route_store.dart';
@@ -11,6 +15,9 @@ import '../../domain/route_store.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/gpx_import_source.dart';
 import '../../services/gpx_parser.dart';
+import '../../services/map_geojson.dart';
+import '../../services/map_style_repository.dart';
+import '../../services/maplibre_offline_manager.dart';
 import '../../services/navigation_export.dart';
 import '../../services/offline_tile_cache.dart';
 import '../../services/route_importer.dart';
@@ -64,10 +71,23 @@ class _RideMapFeatureState extends State<RideMapFeature> {
     _dependencies = _openDependencies();
   }
 
-  Future<_MapDependencies> _openDependencies() async => _MapDependencies(
-    store: await JsonFileRouteStore.openDefault(),
-    cache: await OfflineTileCache.openDefault(widget.basemapConfiguration),
-  );
+  Future<_MapDependencies> _openDependencies() async {
+    final styleRepository = await MapStyleRepository.openDefault(
+      widget.basemapConfiguration,
+    );
+    try {
+      return _MapDependencies(
+        store: await JsonFileRouteStore.openDefault(),
+        cache: await OfflineTileCache.openDefault(widget.basemapConfiguration),
+        mapLibreOfflineManager: MapLibreOfflineManager(
+          configuration: widget.basemapConfiguration,
+        ),
+        mapStyleString: await styleRepository.resolve(),
+      );
+    } finally {
+      styleRepository.dispose();
+    }
+  }
 
   @override
   Widget build(BuildContext context) => FutureBuilder<_MapDependencies>(
@@ -92,6 +112,8 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         routeStore: dependencies.store,
         routeImporter: RouteImporter(source: const SystemGpxImportSource()),
         offlineTileCache: dependencies.cache,
+        mapLibreOfflineManager: dependencies.mapLibreOfflineManager,
+        mapStyleString: dependencies.mapStyleString,
         disposeOfflineTileCache: true,
         currentPosition: widget.currentPosition,
         overlayMarkers: widget.overlayMarkers,
@@ -103,10 +125,17 @@ class _RideMapFeatureState extends State<RideMapFeature> {
 }
 
 class _MapDependencies {
-  const _MapDependencies({required this.store, required this.cache});
+  const _MapDependencies({
+    required this.store,
+    required this.cache,
+    required this.mapLibreOfflineManager,
+    required this.mapStyleString,
+  });
 
   final RouteStore store;
   final OfflineTileCache cache;
+  final MapLibreOfflineManager mapLibreOfflineManager;
+  final String mapStyleString;
 }
 
 /// Injectable map screen used by app integration and focused tests.
@@ -116,6 +145,8 @@ class RideMapScreen extends StatefulWidget {
     required this.routeStore,
     required this.routeImporter,
     required this.offlineTileCache,
+    this.mapLibreOfflineManager,
+    this.mapStyleString = MapStyleRepository.fallbackStyle,
     this.currentPosition,
     this.overlayMarkers,
     this.onRouteChanged,
@@ -127,6 +158,8 @@ class RideMapScreen extends StatefulWidget {
   final RouteStore routeStore;
   final RouteImporter routeImporter;
   final OfflineTileCache offlineTileCache;
+  final MapLibreOfflineManager? mapLibreOfflineManager;
+  final String mapStyleString;
   final ValueListenable<GeoPoint?>? currentPosition;
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
@@ -139,7 +172,15 @@ class RideMapScreen extends StatefulWidget {
 }
 
 class _RideMapScreenState extends State<RideMapScreen> {
+  static const _routeSource = 'ride-relay-route';
+  static const _waypointSource = 'ride-relay-waypoints';
+  static const _positionSource = 'ride-relay-position';
+  static const _overlaySource = 'ride-relay-overlays';
+
   final MapController _mapController = MapController();
+  ml.MapLibreMapController? _mapLibreController;
+  late final MapLibreOfflineManager _mapLibreOfflineManager;
+  bool _mapLibreStyleReady = false;
   ImportedRoute? _route;
   Object? _loadError;
   bool _loading = true;
@@ -153,12 +194,33 @@ class _RideMapScreenState extends State<RideMapScreen> {
   @override
   void initState() {
     super.initState();
+    _mapLibreOfflineManager =
+        widget.mapLibreOfflineManager ??
+        MapLibreOfflineManager(configuration: _basemap);
+    widget.currentPosition?.addListener(_onMapDataChanged);
+    widget.overlayMarkers?.addListener(_onMapDataChanged);
     _loadPersistedRoute();
+  }
+
+  @override
+  void didUpdateWidget(RideMapScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.currentPosition != widget.currentPosition) {
+      oldWidget.currentPosition?.removeListener(_onMapDataChanged);
+      widget.currentPosition?.addListener(_onMapDataChanged);
+    }
+    if (oldWidget.overlayMarkers != widget.overlayMarkers) {
+      oldWidget.overlayMarkers?.removeListener(_onMapDataChanged);
+      widget.overlayMarkers?.addListener(_onMapDataChanged);
+    }
   }
 
   @override
   void dispose() {
     _downloadCancellation?.cancel();
+    widget.currentPosition?.removeListener(_onMapDataChanged);
+    widget.overlayMarkers?.removeListener(_onMapDataChanged);
+    _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
     _mapController.dispose();
     if (widget.disposeOfflineTileCache) widget.offlineTileCache.dispose();
     super.dispose();
@@ -211,11 +273,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 value: _MapAction.loadDemo,
                 child: Text('Load demo route'),
               ),
-              if (_basemap.canDownloadOffline)
-                const PopupMenuItem(
-                  value: _MapAction.clearOfflineTiles,
-                  child: Text('Clear offline map tiles'),
-                ),
+              const PopupMenuItem(
+                value: _MapAction.clearOfflineTiles,
+                child: Text('Clear downloaded map data'),
+              ),
               if (_route != null)
                 const PopupMenuItem(
                   value: _MapAction.removeRoute,
@@ -258,6 +319,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 
   Widget _buildMap() {
+    if (_basemap.usesMapLibre) return _buildMapLibreMap();
+
     final route = _route;
     final points = route?.allPoints.map(_latLng).toList(growable: false) ?? [];
     final options = points.length > 1
@@ -278,7 +341,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       mapController: _mapController,
       options: options,
       children: [
-        if (_basemap.isConfigured)
+        if (_basemap.usesLegacyRaster)
           TileLayer(
             urlTemplate: _basemap.urlTemplate,
             userAgentPackageName: 'me.osholt.ride_relay',
@@ -363,7 +426,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                   .toList(growable: false),
             ),
           ),
-        if (_basemap.isConfigured)
+        if (_basemap.usesLegacyRaster)
           SimpleAttributionWidget(
             source: Text(
               _basemap.attribution,
@@ -402,6 +465,212 @@ class _RideMapScreenState extends State<RideMapScreen> {
           ),
       ],
     );
+  }
+
+  Widget _buildMapLibreMap() {
+    final routePoints = _route?.allPoints.toList(growable: false) ?? const [];
+    final initial = routePoints.isEmpty
+        ? const ml.CameraPosition(target: ml.LatLng(54.5, -3.2), zoom: 5)
+        : ml.CameraPosition(
+            target: ml.LatLng(
+              routePoints.first.latitude,
+              routePoints.first.longitude,
+            ),
+            zoom: routePoints.length == 1 ? 14 : 11,
+          );
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: ml.MapLibreMap(
+            styleString: widget.mapStyleString,
+            initialCameraPosition: initial,
+            onMapCreated: _onMapLibreCreated,
+            onStyleLoadedCallback: () => unawaited(_prepareMapLibreStyle()),
+            logoEnabled: false,
+            compassEnabled: true,
+            minMaxZoomPreference: ml.MinMaxZoomPreference(
+              3,
+              _basemap.maximumNativeZoom.toDouble(),
+            ),
+          ),
+        ),
+        Positioned(
+          left: 8,
+          bottom: 8,
+          child: _MapAttributionBadge(text: _basemap.attribution),
+        ),
+        if (_route == null)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Center(
+                child: Container(
+                  margin: const EdgeInsets.all(24),
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: const Color(0xE8171D25),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: const Text(
+                    'Import a GPX file or load the demo route.\nMap regions can be saved before the ride.',
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  void _onMapLibreCreated(ml.MapLibreMapController controller) {
+    _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
+    _mapLibreController = controller;
+    controller.onFeatureTapped.add(_onMapLibreFeatureTapped);
+  }
+
+  Future<void> _prepareMapLibreStyle() async {
+    final controller = _mapLibreController;
+    if (controller == null) return;
+    _mapLibreStyleReady = false;
+    try {
+      await controller.addGeoJsonSource(_routeSource, MapGeoJson.route(_route));
+      await controller.addLineLayer(
+        _routeSource,
+        'ride-relay-route-border',
+        const ml.LineLayerProperties(
+          lineColor: '#10151C',
+          lineWidth: 9,
+          lineCap: 'round',
+          lineJoin: 'round',
+        ),
+        enableInteraction: false,
+      );
+      await controller.addLineLayer(
+        _routeSource,
+        'ride-relay-route-line',
+        const ml.LineLayerProperties(
+          lineColor: '#FF7A1A',
+          lineWidth: 5,
+          lineCap: 'round',
+          lineJoin: 'round',
+        ),
+        enableInteraction: false,
+      );
+      await controller.addGeoJsonSource(_waypointSource, _waypointGeoJson());
+      await controller.addCircleLayer(
+        _waypointSource,
+        'ride-relay-waypoint-circles',
+        const ml.CircleLayerProperties(
+          circleRadius: 7,
+          circleColor: '#FFC857',
+          circleStrokeWidth: 2,
+          circleStrokeColor: '#10151C',
+        ),
+      );
+      await controller.addGeoJsonSource(_positionSource, _positionGeoJson());
+      await controller.addCircleLayer(
+        _positionSource,
+        'ride-relay-position-circle',
+        const ml.CircleLayerProperties(
+          circleRadius: 8,
+          circleColor: '#FFFFFF',
+          circleStrokeWidth: 4,
+          circleStrokeColor: '#2F80ED',
+        ),
+        enableInteraction: false,
+      );
+      await controller.addGeoJsonSource(_overlaySource, _overlayGeoJson());
+      await controller.addCircleLayer(
+        _overlaySource,
+        'ride-relay-overlay-circles',
+        const ml.CircleLayerProperties(
+          circleRadius: 9,
+          circleColor: ['get', 'color'],
+          circleStrokeWidth: 2,
+          circleStrokeColor: '#10151C',
+        ),
+      );
+      _mapLibreStyleReady = true;
+      await _syncMapLibreSources();
+      _fitRoute();
+    } on Object catch (error, stackTrace) {
+      debugPrint('Could not prepare MapLibre ride layers: $error\n$stackTrace');
+    }
+  }
+
+  void _onMapDataChanged() => unawaited(_syncMapLibreSources());
+
+  Future<void> _syncMapLibreSources() async {
+    final controller = _mapLibreController;
+    if (!_mapLibreStyleReady || controller == null) return;
+    try {
+      await controller.setGeoJsonSource(_routeSource, MapGeoJson.route(_route));
+      await controller.setGeoJsonSource(_waypointSource, _waypointGeoJson());
+      await controller.setGeoJsonSource(_positionSource, _positionGeoJson());
+      await controller.setGeoJsonSource(_overlaySource, _overlayGeoJson());
+    } on Object catch (error) {
+      debugPrint('Could not refresh MapLibre ride layers: $error');
+    }
+  }
+
+  Map<String, dynamic> _waypointGeoJson() => MapGeoJson.points(
+    _route?.waypoints
+            .take(500)
+            .indexed
+            .map(
+              (entry) => MapGeoJsonPoint(
+                id: 'waypoint-${entry.$1}',
+                point: entry.$2.point,
+                properties: {'label': entry.$2.name ?? 'GPX waypoint'},
+              ),
+            ) ??
+        const <MapGeoJsonPoint>[],
+  );
+
+  Map<String, dynamic> _positionGeoJson() {
+    final point = widget.currentPosition?.value;
+    return MapGeoJson.points(
+      point == null
+          ? const <MapGeoJsonPoint>[]
+          : [MapGeoJsonPoint(id: 'current-position', point: point)],
+    );
+  }
+
+  Map<String, dynamic> _overlayGeoJson() => MapGeoJson.points(
+    (widget.overlayMarkers?.value ?? const <MapOverlayMarker>[])
+        .take(1000)
+        .map(
+          (overlay) => MapGeoJsonPoint(
+            id: overlay.id,
+            point: overlay.point,
+            properties: {
+              'label': overlay.label,
+              'color': _hexColor(overlay.color),
+            },
+          ),
+        ),
+  );
+
+  void _onMapLibreFeatureTapped(
+    math.Point<double> point,
+    ml.LatLng coordinates,
+    String id,
+    String layerId,
+    ml.Annotation? annotation,
+  ) {
+    if (layerId != 'ride-relay-overlay-circles' &&
+        layerId != 'ride-relay-waypoint-circles') {
+      return;
+    }
+    final overlay = (widget.overlayMarkers?.value ?? const <MapOverlayMarker>[])
+        .where((item) => item.id == id)
+        .firstOrNull;
+    final waypoint = _route?.waypoints.indexed
+        .where((entry) => 'waypoint-${entry.$1}' == id)
+        .map((entry) => entry.$2)
+        .firstOrNull;
+    final label = overlay?.label ?? waypoint?.name ?? 'GPX waypoint';
+    _showMessage(label);
   }
 
   Future<void> _importGpx() async {
@@ -443,6 +712,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
     await widget.routeStore.saveActiveRoute(route);
     if (!mounted) return;
     setState(() => _route = route);
+    await _syncMapLibreSources();
+    _fitRoute();
     widget.onRouteChanged?.call(route);
     _showMessage(
       '${route.name}: ${route.pathPointCount} route points stored offline.',
@@ -462,16 +733,26 @@ class _RideMapScreenState extends State<RideMapScreen> {
       );
     });
     try {
-      final summary = await widget.offlineTileCache.downloadRouteCorridor(
-        route,
-        cancellationToken: cancellation,
-        onProgress: (progress) {
-          if (mounted) setState(() => _downloadProgress = progress);
-        },
-      );
+      final summary = _basemap.usesMapLibre
+          ? await _mapLibreOfflineManager.downloadRouteRegion(
+              route,
+              cancellationToken: cancellation,
+              onProgress: (progress) {
+                if (mounted) setState(() => _downloadProgress = progress);
+              },
+            )
+          : await widget.offlineTileCache.downloadRouteCorridor(
+              route,
+              cancellationToken: cancellation,
+              onProgress: (progress) {
+                if (mounted) setState(() => _downloadProgress = progress);
+              },
+            );
       _showMessage(
         summary.cancelled
-            ? 'Offline map download cancelled; completed tiles were kept.'
+            ? 'Offline map download cancelled.'
+            : _basemap.usesMapLibre
+            ? '${summary.totalTiles} offline map resources ready.'
             : '${summary.totalTiles} offline tiles ready (${summary.reusedTiles} already cached).',
       );
       if (mounted) setState(() {});
@@ -511,7 +792,39 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 
   void _fitRoute() {
-    final points = _route?.allPoints.map(_latLng).toList(growable: false) ?? [];
+    final routePoints = _route?.allPoints.toList(growable: false) ?? [];
+    if (_basemap.usesMapLibre) {
+      final controller = _mapLibreController;
+      if (controller == null || routePoints.isEmpty) return;
+      if (routePoints.length == 1) {
+        unawaited(
+          controller.animateCamera(
+            ml.CameraUpdate.newLatLngZoom(
+              ml.LatLng(
+                routePoints.single.latitude,
+                routePoints.single.longitude,
+              ),
+              14,
+            ),
+          ),
+        );
+        return;
+      }
+      final bounds = _mapLibreBounds(routePoints);
+      unawaited(
+        controller.animateCamera(
+          ml.CameraUpdate.newLatLngBounds(
+            bounds,
+            left: 42,
+            top: 42,
+            right: 42,
+            bottom: 42,
+          ),
+        ),
+      );
+      return;
+    }
+    final points = routePoints.map(_latLng).toList(growable: false);
     if (points.isEmpty) return;
     if (points.length == 1) {
       _mapController.move(points.single, 14);
@@ -533,11 +846,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
         await widget.routeStore.clearActiveRoute();
         if (mounted) {
           setState(() => _route = null);
+          await _syncMapLibreSources();
           widget.onRouteChanged?.call(null);
         }
       case _MapAction.clearOfflineTiles:
-        await widget.offlineTileCache.clear();
-        _showMessage('Offline map tiles cleared.');
+        await _mapLibreOfflineManager.clearAll();
+        await widget.offlineTileCache.clearAll();
+        _showMessage('Offline map data cleared.');
     }
   }
 
@@ -570,6 +885,26 @@ class MapOverlayMarker {
 }
 
 LatLng _latLng(GeoPoint point) => LatLng(point.latitude, point.longitude);
+
+ml.LatLngBounds _mapLibreBounds(List<GeoPoint> points) {
+  var south = points.first.latitude;
+  var north = points.first.latitude;
+  var west = points.first.longitude;
+  var east = points.first.longitude;
+  for (final point in points.skip(1)) {
+    south = math.min(south, point.latitude);
+    north = math.max(north, point.latitude);
+    west = math.min(west, point.longitude);
+    east = math.max(east, point.longitude);
+  }
+  return ml.LatLngBounds(
+    southwest: ml.LatLng(south, west),
+    northeast: ml.LatLng(north, east),
+  );
+}
+
+String _hexColor(Color color) =>
+    '#${color.toARGB32().toRadixString(16).padLeft(8, '0').substring(2)}';
 
 class _RouteToolbar extends StatelessWidget {
   const _RouteToolbar({
@@ -683,7 +1018,7 @@ class _OfflineDownloadBar extends StatelessWidget {
           child: FilledButton.icon(
             onPressed: enabled ? onDownload : null,
             icon: const Icon(Icons.download_for_offline),
-            label: const Text('Download route corridor for offline use'),
+            label: const Text('Download map for offline use'),
           ),
         ),
       ),
@@ -736,6 +1071,23 @@ class _RouteOnlyBadge extends StatelessWidget {
       borderRadius: BorderRadius.circular(9),
     ),
     child: const Text('ROUTE-ONLY OFFLINE MAP', style: TextStyle(fontSize: 10)),
+  );
+}
+
+class _MapAttributionBadge extends StatelessWidget {
+  const _MapAttributionBadge({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    constraints: const BoxConstraints(maxWidth: 260),
+    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+    decoration: BoxDecoration(
+      color: const Color(0xCC171D25),
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Text(text, style: const TextStyle(fontSize: 9)),
   );
 }
 

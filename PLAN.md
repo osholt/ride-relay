@@ -16,27 +16,29 @@ The repository now contains an integrated development alpha:
 - authenticated private invitation sharing and paste-to-join, QR display, and a
   gloves-oriented development UI;
 - GPX 1.1 import, persistent route geometry, offline route display, and a
-  provider/licence-gated map-corridor tile cache;
+  provider/licence-gated MapLibre native offline-region cache;
 - foreground position capture, group/hazard overlays, rider-created hazard
   events, stale-GPS handling, and hysteresis-based route-deviation alerts;
 - an authenticated, bounded, durable store-and-forward relay protocol with
   ACKs, expiry, deduplication, reconnect backoff, and native Google Nearby
   Connections implementations for Android and iOS;
-- a disabled-by-default HTTPS sync client with bounded idempotent batches,
-  opaque cursors, authenticated downloads, and automatic retry;
+- a disabled-by-default HTTPS sync client plus deployable FastAPI/PostgreSQL
+  relay with encrypted bodies, signed cursors, retention cleanup, and automatic retry;
 - conservative marker suggestions requiring explicit confirmation,
   authenticated unique-pass/TEC evidence, and marking-time summaries;
 - GPX sharing, documented Google Maps/Waze handoffs, share-sheet handoff for
   Calimoto/MyRoute/Garmin/BMW, and CSV/text ride summaries;
 - an active-ride shell joining Ride, Map, and Awareness around the same event
   journal; and
-- CI definitions for analysis, tests, Android debug APKs, and unsigned iOS apps.
+- CI definitions for mobile/server analysis and tests, container builds,
+  PostgreSQL migrations, Android debug APKs, and unsigned iOS apps.
 
-The remaining P0 gates require evidence or external systems rather than more UI
-claims: physical Android/iPhone radio and background testing, foreground-route
-alert calibration, battery testing, production identity/encryption and
-retention, a provisioned production relay server, and field-tested marker/pass
-detection. A licensed basemap/traffic provider is not configured. Waze is
+The remaining P0 gates require physical evidence, deployment ownership, or
+external data rather than more UI claims: Android/iPhone radio and background
+testing, foreground-route alert calibration, battery testing, per-device
+identity/application-layer encryption review, deployment of the included relay,
+and field-tested marker/pass detection. A basemap archive/style and licensed
+traffic provider are not configured. Waze is
 explicitly unavailable as a general hazard-read source. Manual six-character
 joining cannot start authenticated nearby or internet relay because it does not
 carry the high-entropy invitation secret; sharing and pasting the private invite

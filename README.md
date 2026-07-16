@@ -24,15 +24,17 @@ phones when mobile coverage disappears.
   marker passes, marking-time statistics, and priority quick messages.
 - Generate and share a private invitation link, paste it to join, and display it
   as a QR code. OS link handling and in-app QR scanning remain release work.
-- Import and persist GPX 1.1 routes, render them offline, and optionally cache a
-  bounded map corridor when a licensed tile provider is configured.
+- Import and persist GPX 1.1 routes, render them with MapLibre on both platforms,
+  and download bounded native offline regions when an approved style is configured.
 - Record foreground position, report/expire/deduplicate hazards, show rider and
   hazard overlays, and detect sustained route deviation with stale-GPS handling.
 - Queue authenticated events for store-and-forward delivery over native Google
   Nearby Connections transports with reconnect, expiry, ACK, and replay safety.
 - Batch authenticated events through an optional HTTPS relay with durable
   cursors, strict size/time limits, idempotent server acknowledgement, and
-  automatic bounded reconnect. It remains disabled until an endpoint is set.
+  automatic bounded reconnect.
+- Deploy the included FastAPI/PostgreSQL relay behind Caddy TLS, with encrypted
+  event storage, signed cursors, rate limits, retention cleanup, and health metrics.
 - Export GPX through the native share sheet, hand destinations/previews to
   supported navigation apps, and share ride/marker summaries as text and CSV.
 - Navigate between Ride, Map, and Awareness from an active ride.
@@ -45,8 +47,10 @@ See [PLAN.md](./PLAN.md) for product requirements and delivery gates, and
 
 ```text
 apps/mobile/                 Flutter application and native iOS/Android shells
+apps/server/                 FastAPI/PostgreSQL internet relay
+deploy/                      Caddy, PostgreSQL, cleanup, and optional map service
 docs/                        Architecture, field testing, and release notes
-.github/workflows/mobile.yml Reproducible quality and mobile build pipeline
+.github/workflows/           Reproducible mobile and server pipelines
 ```
 
 ## Local development
@@ -71,10 +75,11 @@ Navigation handoff behavior is documented in
 [docs/navigation-export.md](./docs/navigation-export.md); exact GPX geometry is
 shared where a target does not provide a documented full-route link.
 
-The optional development internet relay and its server contract are documented
-in [docs/internet-relay.md](./docs/internet-relay.md). It has no default backend
-and sends no server traffic unless `RIDE_RELAY_API_BASE_URL` is supplied as an
-HTTPS `--dart-define`.
+The deployable internet relay and its contract are documented in
+[docs/internet-relay.md](./docs/internet-relay.md). The app sends no server
+traffic unless `RIDE_RELAY_API_BASE_URL` is supplied as an HTTPS
+`--dart-define`. Deployment is covered by
+[docs/server-runbook.md](./docs/server-runbook.md).
 
 Android requires JDK 17 and a current Android SDK. iOS requires Xcode. No Apple
 Developer signing identity is required for the development build:
@@ -90,9 +95,10 @@ signing and all private key material are intentionally absent from the repo.
 
 Do not use the current preview for real emergency coordination. See
 [SECURITY.md](./SECURITY.md) for vulnerability reporting. Location events are
-ride-scoped and locally persisted. The optional HTTPS sync client is an
-integration alpha; a production server, device identity, encryption, data
-compaction, and retention/deletion enforcement remain release gates.
+ride-scoped and locally persisted. The reference server encrypts retained event
+bodies and enforces bounded deletion, but group-scoped credentials are not
+per-device identity or end-to-end payload encryption. Security/privacy review
+and physical-device evidence remain release gates.
 
 ## License
 
