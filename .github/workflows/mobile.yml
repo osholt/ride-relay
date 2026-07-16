@@ -35,7 +35,7 @@ jobs:
       - run: dart format --output=none --set-exit-if-changed lib test
       - run: flutter analyze
       - run: flutter test --coverage
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: flutter-coverage
           path: ${{ env.MOBILE_DIR }}/coverage/lcov.info
@@ -63,7 +63,7 @@ jobs:
           cache: true
       - run: flutter pub get
       - run: flutter build apk --debug
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ride-relay-android-debug
           path: ${{ env.MOBILE_DIR }}/build/app/outputs/flutter-apk/app-debug.apk
@@ -86,7 +86,7 @@ jobs:
           cache: true
       - run: flutter pub get
       - run: flutter build ios --debug --no-codesign
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ride-relay-ios-unsigned-debug
           path: ${{ env.MOBILE_DIR }}/build/ios/iphoneos/Runner.app
