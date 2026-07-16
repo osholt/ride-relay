@@ -9,9 +9,15 @@ class BasemapConfiguration {
   });
 
   factory BasemapConfiguration.fromEnvironment() => BasemapConfiguration(
-    styleUrl: const String.fromEnvironment('RIDE_RELAY_MAP_STYLE_URL'),
+    styleUrl: const String.fromEnvironment(
+      'RIDE_RELAY_MAP_STYLE_URL',
+      defaultValue: 'https://tiles.openfreemap.org/styles/liberty',
+    ),
     urlTemplate: const String.fromEnvironment('RIDE_RELAY_TILE_URL'),
-    attribution: const String.fromEnvironment('RIDE_RELAY_TILE_ATTRIBUTION'),
+    attribution: const String.fromEnvironment(
+      'RIDE_RELAY_TILE_ATTRIBUTION',
+      defaultValue: 'OpenFreeMap © OpenMapTiles Data from OpenStreetMap',
+    ),
     cacheNamespace: const String.fromEnvironment(
       'RIDE_RELAY_TILE_CACHE_NAMESPACE',
     ),

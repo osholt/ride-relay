@@ -188,13 +188,17 @@ class RideController extends ChangeNotifier {
   Future<void> joinRide(String codeOrInvite, String displayName) async {
     await _run(() async {
       final invite = RideInvite.tryParse(codeOrInvite);
-      if (invite == null && codeOrInvite.toLowerCase().contains('riderelay:')) {
+      if (invite == null) {
+        if (codeOrInvite.toLowerCase().contains('riderelay:')) {
+          throw const FormatException(
+            'That private invite is incomplete or invalid. Ask the ride lead to share it again.',
+          );
+        }
         throw const FormatException(
-          'That private invite is incomplete or invalid. Ask the ride lead to share it again.',
+          'Paste the complete private invite link from the ride lead. A six-character code alone cannot authenticate shared relay.',
         );
       }
-      final normalisedCode =
-          invite?.rideCode ?? codeOrInvite.trim().toUpperCase();
+      final normalisedCode = invite.rideCode;
       if (normalisedCode.length != 6 ||
           normalisedCode
               .split('')
@@ -203,9 +207,9 @@ class RideController extends ChangeNotifier {
       }
       final now = _clock();
       final session = RideSession(
-        rideId: invite?.rideId ?? 'pending-$normalisedCode',
+        rideId: invite.rideId,
         rideCode: normalisedCode,
-        inviteSecret: invite?.secret ?? '',
+        inviteSecret: invite.secret,
         localRiderId: _idFactory(),
         displayName: _normaliseName(displayName),
         role: RideRole.rider,
@@ -356,6 +360,17 @@ class RideController extends ChangeNotifier {
 
   Future<void> clearEndedRide() async {
     if (!rideEnded) return;
+    await _run(() async {
+      final rideId = _requireSession().rideId;
+      await _eventStore.deleteRide(rideId);
+      await _sessionStore.clear();
+      _session = null;
+      _events = const [];
+      _roleBeforeMarker = null;
+    });
+  }
+
+  Future<void> leaveRide() async {
     await _run(() async {
       final rideId = _requireSession().rideId;
       await _eventStore.deleteRide(rideId);

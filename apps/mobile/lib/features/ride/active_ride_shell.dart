@@ -438,6 +438,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     final body = switch (_selectedIndex) {
       0 => RideDashboard(
         controller: widget.rideController,
+        onLeaveRide: _leaveRide,
         relayController: _relayController,
         markerAssistanceController: _markerAssistanceController,
         internetRelayController: _internetRelayController,
@@ -495,6 +496,12 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     final rideId = widget.rideController.session?.rideId;
     if (rideId != null) await _internetCursorStore?.clear(rideId);
     await widget.rideController.clearEndedRide();
+  }
+
+  Future<void> _leaveRide() async {
+    final rideId = widget.rideController.session?.rideId;
+    if (rideId != null) await _internetCursorStore?.clear(rideId);
+    await widget.rideController.leaveRide();
   }
 
   @override

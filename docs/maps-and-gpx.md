@@ -16,6 +16,12 @@ not bulk-download from the public OpenStreetMap tile servers.
 
 ## MapLibre provider configuration
 
+Development-alpha builds default to OpenFreeMap's public Liberty style for an
+online, no-key basemap. Its public service has no availability guarantee, so it
+is an alpha convenience rather than the production dependency. Persistent
+offline caching stays disabled. Override the provider for production or a
+self-hosted deployment with the settings below.
+
 Supply an HTTPS MapLibre style whose tile, sprite, and glyph licences permit
 mobile display and, if enabled, offline downloads:
 
@@ -83,6 +89,8 @@ and coverage edges remain part of the field-test matrix.
 
 ## Primary references
 
+- [OpenFreeMap quick start](https://openfreemap.org/quick_start/)
+- [OpenFreeMap terms of service](https://openfreemap.org/tos/)
 - [MapLibre Flutter SDK](https://github.com/maplibre/flutter-maplibre-gl)
 - [MapLibre Martin tile server](https://maplibre.org/martin/)
 - [OpenStreetMap tile usage policy](https://operations.osmfoundation.org/policies/tiles/)

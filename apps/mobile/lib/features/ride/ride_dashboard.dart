@@ -19,6 +19,7 @@ class RideDashboard extends StatelessWidget {
   const RideDashboard({
     super.key,
     required this.controller,
+    required this.onLeaveRide,
     this.relayController,
     this.markerAssistanceController,
     this.internetRelayController,
@@ -27,6 +28,7 @@ class RideDashboard extends StatelessWidget {
   });
 
   final RideController controller;
+  final Future<void> Function() onLeaveRide;
   final NearbyRelayController? relayController;
   final MarkerAssistanceController? markerAssistanceController;
   final InternetRelayController? internetRelayController;
@@ -42,6 +44,11 @@ class RideDashboard extends StatelessWidget {
         title: const Text('Ride Relay'),
         backgroundColor: Colors.transparent,
         actions: [
+          IconButton(
+            tooltip: 'Leave or switch ride',
+            onPressed: () => _confirmLeaveRide(context),
+            icon: const Icon(Icons.swap_horiz),
+          ),
           IconButton(
             tooltip: 'Share ride summary',
             onPressed: () => _shareRideSummary(context),
@@ -112,6 +119,32 @@ class RideDashboard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _confirmLeaveRide(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Leave this ride?'),
+        content: const Text(
+          'This removes the ride and its locally queued events from this phone. '
+          'The ride continues for everyone else, and you can then create or join another ride.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Leave and choose another'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed ?? false) {
+      await onLeaveRide();
+    }
   }
 
   Future<void> _confirmEndRide(BuildContext context) async {

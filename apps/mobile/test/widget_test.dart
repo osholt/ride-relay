@@ -30,6 +30,7 @@ void main() {
 
     expect(find.text('Oliver'), findsOneWidget);
     expect(find.text('Marker mode'), findsOneWidget);
+    expect(find.byTooltip('Leave or switch ride'), findsOneWidget);
     expect(find.byTooltip('Share ride summary'), findsOneWidget);
     expect(find.text('MARKING STATS'), findsOneWidget);
     expect(find.text('Map'), findsOneWidget);
@@ -44,6 +45,28 @@ void main() {
 
     expect(find.text('Ride awareness'), findsOneWidget);
     expect(find.text('ACTIVE HAZARDS'), findsOneWidget);
+
+    controller.dispose();
+  });
+
+  testWidgets('active ride can be left to choose another ride', (tester) async {
+    final controller = await _controller();
+    await controller.createRide('Oliver');
+    await tester.pumpWidget(
+      RideRelayApp(controller: controller, enableNativeServices: false),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Leave or switch ride'));
+    await tester.pumpAndSettle();
+    expect(find.text('Leave this ride?'), findsOneWidget);
+
+    await tester.tap(find.text('Leave and choose another'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Create a ride'), findsOneWidget);
+    expect(find.text('Join a ride'), findsOneWidget);
+    expect(controller.hasActiveRide, isFalse);
 
     controller.dispose();
   });

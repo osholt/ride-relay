@@ -207,7 +207,7 @@ class _RideFormState extends State<_RideForm> {
             Text(
               widget.creating
                   ? 'You will become the ride lead and get a private invite code.'
-                  : 'Paste the private invite for authenticated relay. A six-character code joins local-only.',
+                  : 'Paste the complete private invite shared by the ride lead. It identifies the ride and authenticates relay traffic.',
               style: const TextStyle(color: Color(0xFFABB5C1)),
             ),
             const SizedBox(height: 24),
@@ -231,8 +231,8 @@ class _RideFormState extends State<_RideForm> {
                 minLines: 1,
                 maxLines: 3,
                 decoration: InputDecoration(
-                  labelText: 'Private invite or ride code',
-                  hintText: 'Paste invite or enter ABC234',
+                  labelText: 'Private ride invite',
+                  hintText: 'riderelay://join?ride=…',
                   suffixIcon: IconButton(
                     tooltip: 'Paste private invite',
                     onPressed: _pasteInvite,

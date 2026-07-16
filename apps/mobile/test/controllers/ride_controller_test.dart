@@ -55,8 +55,18 @@ void main() {
     await controller.joinRide('123', 'Oliver');
 
     expect(controller.hasActiveRide, isFalse);
-    expect(controller.errorMessage, contains('six-character'));
+    expect(controller.errorMessage, contains('complete private invite'));
   });
+
+  test(
+    'ride code alone is rejected because it cannot authenticate relay',
+    () async {
+      await controller.joinRide('ABC234', 'Oliver');
+
+      expect(controller.hasActiveRide, isFalse);
+      expect(controller.errorMessage, contains('code alone'));
+    },
+  );
 
   test('private invite joins the leader ride with its relay secret', () async {
     await controller.createRide('Lead');
@@ -258,6 +268,17 @@ void main() {
     await controller.endRide();
 
     await controller.clearEndedRide();
+
+    expect(controller.hasActiveRide, isFalse);
+    expect(await sessionStore.load(), isNull);
+    expect(await eventStore.eventsForRide(rideId), isEmpty);
+  });
+
+  test('leaving an active ride clears its local session and events', () async {
+    await controller.createRide('Oliver');
+    final rideId = controller.session!.rideId;
+
+    await controller.leaveRide();
 
     expect(controller.hasActiveRide, isFalse);
     expect(await sessionStore.load(), isNull);

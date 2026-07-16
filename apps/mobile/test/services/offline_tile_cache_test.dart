@@ -20,6 +20,14 @@ void main() {
     expect(onlineOnly.canDownloadOffline, isFalse);
   });
 
+  test('app environment defaults to an online MapLibre basemap', () {
+    final configuration = BasemapConfiguration.fromEnvironment();
+
+    expect(configuration.usesMapLibre, isTrue);
+    expect(configuration.styleUrl, contains('openfreemap.org'));
+    expect(configuration.canDownloadOffline, isFalse);
+  });
+
   test('downloads a licensed route corridor and reuses stored tiles', () async {
     final directory = await Directory.systemTemp.createTemp('tile-cache-test');
     addTearDown(() => directory.delete(recursive: true));
