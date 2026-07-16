@@ -6,9 +6,11 @@ The app is a Flutter client with thin Swift and Kotlin platform bridges. The
 domain model does not depend on a particular network transport.
 
 ```text
-UI -> RideController -> local event journal -> transport outboxes (next phase)
+UI -> RideController -> local event journal
                             |
-                            +-> materialised ride/marker status
+                            +-> NearbyRelayController -> durable relay queue
+                                                           |
+                                                           +-> PeerTransport
 
 Flutter -> method channel -> Swift / Kotlin nearby transport adapters
 ```
@@ -35,12 +37,16 @@ is not the final security design. Before external sync ships, each device will
 have an asymmetric identity and signed events; sensitive payloads will also use
 application-layer encryption.
 
-## Planned transports
+## Relay transport
 
-1. HTTPS/WebSocket service when internet is available.
-2. Google Nearby Connections cluster transport on Android and iOS.
-3. Store-and-forward relay: peers exchange missing priority events, not an
-   unbounded raw location history.
+The transport-neutral relay engine implements bounded, HMAC-authenticated,
+ACK-driven store-and-forward exchange. Its native adapter links Google Nearby
+Connections cluster transport on Android and iOS. Physical cross-platform
+offline validation is still a release gate; see `nearby-relay.md`.
+
+An HTTPS/WebSocket peer transport can be added later without changing the relay
+protocol or event journal. Peers exchange missing priority events, not an
+unbounded raw location history.
 
 The event journal is the source of truth. Neither a WebSocket nor a nearby
 session is assumed to remain connected.
@@ -55,6 +61,6 @@ another rider has received an event.
 
 - No production server or cloud credentials.
 - No real location tracking or background modes.
-- No Google Nearby SDK dependency yet.
+- No claim that the linked Nearby SDK has passed the physical-device matrix.
 - No distribution signing configuration.
 - No claim that an app force-quit by the user can continue relaying on iOS.

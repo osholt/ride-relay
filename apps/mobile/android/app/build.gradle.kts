@@ -40,3 +40,7 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    implementation("com.google.android.gms:play-services-nearby:19.3.0")
+}

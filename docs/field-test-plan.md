@@ -19,15 +19,18 @@ and whether Wi-Fi/Bluetooth were enabled. Do not record a public precise route.
 
 ## Test sequence
 
-1. Bench discovery and authentication across every platform pairing.
-2. Disable mobile data and exchange 1 KB priority events for 30 minutes.
-3. Lock every screen and repeat.
-4. Background the app without force-quitting and repeat.
-5. Separate peers, create events, reunite them, and verify convergence.
-6. Carry an event A -> B -> C where A and C never meet.
-7. Ride/walk past at 20, 40, and 60 mph using safe test conditions.
-8. Run four hours with GPS sampling and radio activity to measure battery use.
-9. Force-quit each platform separately and document loss/recovery honestly.
+1. Bench discovery and authentication across Android↔Android, iPhone↔iPhone,
+   Android→iPhone and iPhone→Android pairings.
+2. Repeat every cross-platform pairing with mobile data disabled, Wi-Fi not
+   associated to a common access point, and no personal hotspot.
+3. Exchange 1 KB priority events for 30 minutes.
+4. Lock every screen and repeat.
+5. Background the app without force-quitting and repeat.
+6. Separate peers, create events, reunite them, and verify convergence.
+7. Carry an event A -> B -> C where A and C never meet.
+8. Ride/walk past at 20, 40, and 60 mph using safe test conditions.
+9. Run four hours with GPS sampling and radio activity to measure battery use.
+10. Force-quit each platform separately and document loss/recovery honestly.
 
 ## Pass gates
 

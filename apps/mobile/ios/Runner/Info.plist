@@ -28,6 +28,10 @@
 	<true/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Ride Relay uses nearby connections to exchange ride safety updates when mobile coverage is unavailable.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_90AAE9C4995F._tcp</string>
+	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Ride Relay uses nearby devices and local networks to keep your ride group coordinated.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
