@@ -48,8 +48,8 @@ shown as a prompt to finish when safe; it does not automatically end marker mode
 per-marker-session summaries. Session identifiers prevent interleaved relay
 events from different markers absorbing or closing each other. The local
 dashboard shows local-device marking time, sessions, verified passes and verified
-TEC passages. `rideEnded` persists the summary before the in-memory ride is
-cleared.
+TEC passages. `rideEnded` persists the summary and keeps the durable ride session
+available for final relay recovery until the user explicitly removes it.
 
 ## Field-calibration gates
 

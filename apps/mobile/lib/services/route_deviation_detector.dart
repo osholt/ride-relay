@@ -33,9 +33,14 @@ class RouteDeviationDetector {
   RouteDeviationDetector(
     List<GeoPoint> route, {
     this.config = const RouteDeviationConfig(),
-  }) : _route = List.unmodifiable(route);
+    List<List<GeoPoint>>? routeSegments,
+  }) : _routeSegments = List.unmodifiable(
+         (routeSegments ?? [route]).map(
+           (segment) => List<GeoPoint>.unmodifiable(segment),
+         ),
+       );
 
-  final List<GeoPoint> _route;
+  final List<List<GeoPoint>> _routeSegments;
   final RouteDeviationConfig config;
 
   RouteTrackingState _stableState = RouteTrackingState.onRoute;
@@ -44,7 +49,10 @@ class RouteDeviationDetector {
   DateTime? _offRouteSince;
 
   RouteDeviationAssessment evaluate(LocationSample sample, DateTime now) {
-    if (_route.length < 2) {
+    final usableSegments = _routeSegments
+        .where((segment) => segment.length >= 2)
+        .toList(growable: false);
+    if (usableSegments.isEmpty) {
       return RouteDeviationAssessment(
         state: RouteTrackingState.unavailable,
         alertLevel: RouteAlertLevel.none,
@@ -74,10 +82,14 @@ class RouteDeviationDetector {
       );
     }
 
-    final distance = GeoCalculations.distanceToPolylineMeters(
-      sample.position,
-      _route,
-    );
+    final distance = usableSegments
+        .map(
+          (segment) => GeoCalculations.distanceToPolylineMeters(
+            sample.position,
+            segment,
+          ),
+        )
+        .reduce(math.min);
     final confidentlyOutside =
         math.max(0, distance - sample.accuracyMeters) >
         config.enterOffRouteMeters;

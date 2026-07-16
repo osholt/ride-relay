@@ -13,7 +13,8 @@ The repository now contains an integrated development alpha:
 - persistent anonymous ride sessions;
 - an idempotent SQLite event journal and versioned event envelope;
 - HMAC-tagged ride, role, marker, and priority-message events;
-- QR/deep-link invitations and a gloves-oriented development UI;
+- authenticated private invitation sharing and paste-to-join, QR display, and a
+  gloves-oriented development UI;
 - GPX 1.1 import, persistent route geometry, offline route display, and a
   provider/licence-gated map-corridor tile cache;
 - foreground position capture, group/hazard overlays, rider-created hazard
@@ -38,8 +39,9 @@ retention, a provisioned production relay server, and field-tested marker/pass
 detection. A licensed basemap/traffic provider is not configured. Waze is
 explicitly unavailable as a general hazard-read source. Manual six-character
 joining cannot start authenticated nearby or internet relay because it does not
-carry the high-entropy invitation secret; QR/deep-link joining is the supported
-alpha path.
+carry the high-entropy invitation secret; sharing and pasting the private invite
+is the supported alpha path. OS deep-link registration and an in-app QR scanner
+remain open release work.
 
 ## 1. Product summary
 

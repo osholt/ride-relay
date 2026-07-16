@@ -14,7 +14,7 @@ void main() {
     );
 
     expect(find.text('Create a ride'), findsOneWidget);
-    expect(find.text('Join with a code'), findsOneWidget);
+    expect(find.text('Join a ride'), findsOneWidget);
     expect(find.textContaining('still connected'), findsOneWidget);
 
     controller.dispose();
@@ -66,6 +66,29 @@ void main() {
 
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
+    controller.dispose();
+  });
+
+  testWidgets('ended ride retains relay recovery until removal', (
+    tester,
+  ) async {
+    final controller = await _controller();
+    await controller.createRide('Oliver');
+    await tester.pumpWidget(
+      RideRelayApp(controller: controller, enableNativeServices: false),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('End ride'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'End ride'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ride summary ready'), findsOneWidget);
+    expect(find.text('Remove ride from this phone'), findsOneWidget);
+    expect(controller.rideEnded, isTrue);
+    expect(controller.hasActiveRide, isTrue);
+
     controller.dispose();
   });
 }

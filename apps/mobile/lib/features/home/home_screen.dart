@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../controllers/ride_controller.dart';
 
@@ -68,12 +69,11 @@ class HomeScreen extends StatelessWidget {
                         ? null
                         : () => _showRideSheet(context, creating: false),
                     icon: const Icon(Icons.group_add_outlined),
-                    label: const Text('Join with a code'),
+                    label: const Text('Join a ride'),
                   ),
                   const SizedBox(height: 20),
                   const Text(
-                    'Development preview · nearby radio exchange is scaffolded '
-                    'but not yet enabled',
+                    'Development alpha · physical-device relay validation pending',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Color(0xFF7F8A98), fontSize: 12),
                   ),
@@ -207,7 +207,7 @@ class _RideFormState extends State<_RideForm> {
             Text(
               widget.creating
                   ? 'You will become the ride lead and get a private invite code.'
-                  : 'Ask the ride lead for the six-character code.',
+                  : 'Paste the private invite for authenticated relay. A six-character code joins local-only.',
               style: const TextStyle(color: Color(0xFFABB5C1)),
             ),
             const SizedBox(height: 24),
@@ -226,13 +226,18 @@ class _RideFormState extends State<_RideForm> {
               const SizedBox(height: 12),
               TextField(
                 controller: _codeController,
-                maxLength: 6,
                 textCapitalization: TextCapitalization.characters,
                 autocorrect: false,
-                decoration: const InputDecoration(
-                  labelText: 'Ride code',
-                  hintText: 'ABC234',
-                  counterText: '',
+                minLines: 1,
+                maxLines: 3,
+                decoration: InputDecoration(
+                  labelText: 'Private invite or ride code',
+                  hintText: 'Paste invite or enter ABC234',
+                  suffixIcon: IconButton(
+                    tooltip: 'Paste private invite',
+                    onPressed: _pasteInvite,
+                    icon: const Icon(Icons.content_paste),
+                  ),
                 ),
               ),
             ],
@@ -271,5 +276,13 @@ class _RideFormState extends State<_RideForm> {
     if (widget.controller.hasActiveRide && mounted) {
       widget.onComplete();
     }
+  }
+
+  Future<void> _pasteInvite() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text?.trim();
+    if (text == null || text.isEmpty || !mounted) return;
+    _codeController.text = text;
+    _codeController.selection = TextSelection.collapsed(offset: text.length);
   }
 }

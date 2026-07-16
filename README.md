@@ -16,12 +16,14 @@ phones when mobile coverage disappears.
 
 ## Current vertical slice
 
-- Create a private ride or join with a six-character code.
+- Create a private ride, share its authenticated invitation, or join local-only
+  with a six-character code.
 - Resume the active ride after restarting the app.
 - Store immutable, HMAC-tagged ride events in an idempotent SQLite journal.
 - Record roles, confirmation-based marker suggestions, authenticated unique
   marker passes, marking-time statistics, and priority quick messages.
-- Generate and share a QR/deep-link invitation.
+- Generate and share a private invitation link, paste it to join, and display it
+  as a QR code. OS link handling and in-app QR scanning remain release work.
 - Import and persist GPX 1.1 routes, render them offline, and optionally cache a
   bounded map corridor when a licensed tile provider is configured.
 - Record foreground position, report/expire/deduplicate hazards, show rider and

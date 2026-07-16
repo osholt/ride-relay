@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -13,6 +14,7 @@ import '../domain/session_store.dart';
 import '../services/nearby_bridge.dart';
 import '../services/marker_statistics.dart';
 import '../services/ride_event_authenticator.dart';
+import '../services/ride_invite.dart';
 import '../services/situation_event_factory.dart';
 
 typedef Clock = DateTime Function();
@@ -54,6 +56,16 @@ class RideController extends ChangeNotifier {
   bool get busy => _busy;
   String? get errorMessage => _errorMessage;
   bool get hasActiveRide => _session != null;
+
+  bool get rideEnded {
+    final localDeviceId = _session?.localRiderId;
+    return localDeviceId != null &&
+        _events.any(
+          (event) =>
+              event.deviceId == localDeviceId &&
+              event.type == RideEventType.rideEnded,
+        );
+  }
 
   bool get markerActive {
     final localDeviceId = _session?.localRiderId;
@@ -115,16 +127,18 @@ class RideController extends ChangeNotifier {
 
   String get inviteText {
     final activeSession = _requireSession();
-    final uri = Uri(
-      scheme: 'riderelay',
-      host: 'join',
-      queryParameters: {
-        'code': activeSession.rideCode,
-        'secret': activeSession.inviteSecret,
-      },
-    );
+    final uri = inviteUri;
     return 'Join my Ride Relay group with code '
         '${activeSession.rideCode}\n$uri';
+  }
+
+  Uri get inviteUri {
+    final activeSession = _requireSession();
+    return RideInvite(
+      rideId: activeSession.rideId,
+      rideCode: activeSession.rideCode,
+      secret: activeSession.inviteSecret,
+    ).uri;
   }
 
   Future<void> initialize() async {
@@ -133,6 +147,7 @@ class RideController extends ChangeNotifier {
     final activeSession = _session;
     if (activeSession != null) {
       _events = await _eventStore.eventsForRide(activeSession.rideId);
+      _roleBeforeMarker = _activeMarkerPreviousRole();
     }
     notifyListeners();
   }
@@ -152,7 +167,7 @@ class RideController extends ChangeNotifier {
       final session = RideSession(
         rideId: _idFactory(),
         rideCode: _generateCode(),
-        inviteSecret: '${_idFactory()}${_idFactory()}',
+        inviteSecret: _generateInviteSecret(),
         localRiderId: _idFactory(),
         displayName: _normaliseName(displayName),
         role: RideRole.lead,
@@ -170,9 +185,16 @@ class RideController extends ChangeNotifier {
     });
   }
 
-  Future<void> joinRide(String code, String displayName) async {
+  Future<void> joinRide(String codeOrInvite, String displayName) async {
     await _run(() async {
-      final normalisedCode = code.trim().toUpperCase();
+      final invite = RideInvite.tryParse(codeOrInvite);
+      if (invite == null && codeOrInvite.toLowerCase().contains('riderelay:')) {
+        throw const FormatException(
+          'That private invite is incomplete or invalid. Ask the ride lead to share it again.',
+        );
+      }
+      final normalisedCode =
+          invite?.rideCode ?? codeOrInvite.trim().toUpperCase();
       if (normalisedCode.length != 6 ||
           normalisedCode
               .split('')
@@ -181,9 +203,9 @@ class RideController extends ChangeNotifier {
       }
       final now = _clock();
       final session = RideSession(
-        rideId: 'pending-$normalisedCode',
+        rideId: invite?.rideId ?? 'pending-$normalisedCode',
         rideCode: normalisedCode,
-        inviteSecret: '',
+        inviteSecret: invite?.secret ?? '',
         localRiderId: _idFactory(),
         displayName: _normaliseName(displayName),
         role: RideRole.rider,
@@ -246,6 +268,7 @@ class RideController extends ChangeNotifier {
           'mode': mode,
           'markerSessionId': markerSessionId,
           'decisionPointId': ?decisionPointId,
+          'previousRole': activeSession.role.name,
         },
       );
     });
@@ -284,6 +307,8 @@ class RideController extends ChangeNotifier {
     }
     await _run(() async {
       final current = currentMarkerSession;
+      final roleAfterMarker =
+          _roleBeforeMarker ?? _activeMarkerPreviousRole() ?? RideRole.rider;
       await _record(
         type: RideEventType.markerEnded,
         priority: EventPriority.important,
@@ -295,9 +320,7 @@ class RideController extends ChangeNotifier {
         },
       );
       final activeSession = _requireSession();
-      final updated = activeSession.copyWith(
-        role: _roleBeforeMarker ?? RideRole.rider,
-      );
+      final updated = activeSession.copyWith(role: roleAfterMarker);
       _session = updated;
       _roleBeforeMarker = null;
       await _sessionStore.save(updated);
@@ -305,6 +328,7 @@ class RideController extends ChangeNotifier {
   }
 
   Future<void> endRide() async {
+    if (rideEnded) return;
     await _run(() async {
       if (markerActive) {
         final current = currentMarkerSession;
@@ -326,6 +350,15 @@ class RideController extends ChangeNotifier {
         priority: EventPriority.important,
         payload: {'markingSummary': summary.toJson()},
       );
+      _roleBeforeMarker = null;
+    });
+  }
+
+  Future<void> clearEndedRide() async {
+    if (!rideEnded) return;
+    await _run(() async {
+      final rideId = _requireSession().rideId;
+      await _eventStore.deleteRide(rideId);
       await _sessionStore.clear();
       _session = null;
       _events = const [];
@@ -416,6 +449,29 @@ class RideController extends ChangeNotifier {
     6,
     (_) => _codeAlphabet[_random.nextInt(_codeAlphabet.length)],
   ).join();
+
+  String _generateInviteSecret() => base64Url
+      .encode(List<int>.generate(32, (_) => _random.nextInt(256)))
+      .replaceAll('=', '');
+
+  RideRole? _activeMarkerPreviousRole() {
+    final localDeviceId = _session?.localRiderId;
+    if (localDeviceId == null || !markerActive) return null;
+    for (final event in _events.reversed) {
+      if (event.deviceId != localDeviceId ||
+          event.type != RideEventType.markerStarted) {
+        continue;
+      }
+      final value = event.payload['previousRole'];
+      if (value is! String) return null;
+      try {
+        return RideRole.values.byName(value);
+      } on ArgumentError {
+        return null;
+      }
+    }
+    return null;
+  }
 
   @override
   void dispose() {

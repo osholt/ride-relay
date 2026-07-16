@@ -58,6 +58,50 @@ void main() {
     expect(controller.errorMessage, contains('six-character'));
   });
 
+  test('private invite joins the leader ride with its relay secret', () async {
+    await controller.createRide('Lead');
+    final leaderSession = controller.session!;
+    final invitation = controller.inviteText;
+    expect(controller.inviteUri.queryParameters['ride'], leaderSession.rideId);
+
+    final follower = RideController(
+      InMemoryEventStore(),
+      InMemorySessionStore(),
+      const _FakeNearbyBridge(),
+      clock: () => DateTime.utc(2026, 7, 16, 12),
+      idFactory: () => 'follower-id',
+      random: Random(7),
+    );
+    await follower.initialize();
+    await follower.joinRide(invitation, 'Follower');
+
+    expect(follower.session?.rideId, leaderSession.rideId);
+    expect(follower.session?.rideCode, leaderSession.rideCode);
+    expect(follower.session?.inviteSecret, leaderSession.inviteSecret);
+    expect(follower.session?.role, RideRole.rider);
+    expect(
+      SituationEventFactory.verify(
+        follower.events.single,
+        leaderSession.inviteSecret,
+      ),
+      isTrue,
+    );
+    follower.dispose();
+  });
+
+  test(
+    'invalid private invite never falls back to code-only joining',
+    () async {
+      await controller.joinRide(
+        'riderelay://join?ride=ride-1&code=ABC234&secret=short',
+        'Oliver',
+      );
+
+      expect(controller.hasActiveRide, isFalse);
+      expect(controller.errorMessage, contains('private invite'));
+    },
+  );
+
   test('quick messages are durable, prioritised events', () async {
     await controller.createRide('Oliver');
     await controller.sendQuickMessage(QuickMessage.emergencyStop);
@@ -101,6 +145,27 @@ void main() {
       ),
       hasLength(2),
     );
+  });
+
+  test('restoring an active marker preserves the previous lead role', () async {
+    await controller.createRide('Oliver');
+    await controller.startMarker();
+
+    final restored = RideController(
+      eventStore,
+      sessionStore,
+      const _FakeNearbyBridge(),
+      clock: () => DateTime.utc(2026, 7, 16, 12),
+      idFactory: () => 'restored-id',
+      random: Random(9),
+    );
+    await restored.initialize();
+    expect(restored.markerActive, isTrue);
+
+    await restored.endMarker();
+
+    expect(restored.session?.role, RideRole.lead);
+    restored.dispose();
   });
 
   test(
@@ -182,6 +247,21 @@ void main() {
     expect(summary.sessions, hasLength(1));
     expect(summary.sessions.single.completed, isTrue);
     expect(summary.verifiedPassCount, 1);
+    expect(controller.hasActiveRide, isTrue);
+    expect(controller.rideEnded, isTrue);
+    expect((await sessionStore.load())?.rideId, rideId);
+  });
+
+  test('ended ride is removed only after explicit clearing', () async {
+    await controller.createRide('Oliver');
+    final rideId = controller.session!.rideId;
+    await controller.endRide();
+
+    await controller.clearEndedRide();
+
+    expect(controller.hasActiveRide, isFalse);
+    expect(await sessionStore.load(), isNull);
+    expect(await eventStore.eventsForRide(rideId), isEmpty);
   });
 }
 

@@ -28,6 +28,7 @@ import '../../services/external_hazard_provider.dart';
 import '../../services/route_decision_point_extractor.dart';
 import '../map/ride_map.dart';
 import '../situational_awareness/situational_awareness_screen.dart';
+import 'ended_ride_screen.dart';
 import 'ride_dashboard.dart';
 
 /// Owns the active-ride feature lifecycle and keeps each feature independently
@@ -62,6 +63,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   InternetRelayController? _internetRelayController;
   StreamSubscription<RideEvent>? _receivedEventSubscription;
   StreamSubscription<RideEvent>? _internetReceivedEventSubscription;
+  Timer? _stalenessTimer;
   Future<void> _publishChain = Future.value();
   String? _routeFingerprint;
   int _routeGeneration = 0;
@@ -69,6 +71,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   bool _loading = true;
   bool _relayConfigured = false;
   bool _refreshingRideEvents = false;
+  bool _rideEndHandled = false;
 
   @override
   void initState() {
@@ -92,6 +95,10 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     if (!mounted) return;
 
     if (widget.enableNativeServices) {
+      _stalenessTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+        final awareness = _awarenessController;
+        if (awareness != null) unawaited(awareness.refreshStaleness());
+      });
       final locationController = ForegroundLocationController(
         DeviceLocationSource(),
         (sample) async {
@@ -146,13 +153,16 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         }
       } else {
         _warnings.add(
-          'Nearby relay needs an authenticated QR/deep-link invitation; a '
+          'Nearby relay needs the shared private invitation; a '
           'manually entered ride code cannot establish the shared secret.',
         );
       }
     }
 
     if (!mounted) return;
+    if (widget.rideController.rideEnded) {
+      await _handleRideEnded();
+    }
     setState(() => _loading = false);
     _schedulePublish();
   }
@@ -172,19 +182,26 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     final session = widget.rideController.session;
     if (session == null) return;
 
+    final routeSegments =
+        route?.paths
+            .where((path) => path.points.length >= 2)
+            .map(
+              (path) => path.points
+                  .map(
+                    (point) => awareness_geo.GeoPoint(
+                      latitude: point.latitude,
+                      longitude: point.longitude,
+                    ),
+                  )
+                  .toList(growable: false),
+            )
+            .toList(growable: false) ??
+        const <List<awareness_geo.GeoPoint>>[];
     final controller = SituationalAwarenessController(
       widget.eventStore,
       session,
-      route:
-          route?.allPoints
-              .map(
-                (point) => awareness_geo.GeoPoint(
-                  latitude: point.latitude,
-                  longitude: point.longitude,
-                ),
-              )
-              .toList(growable: false) ??
-          const [],
+      route: routeSegments.expand((segment) => segment).toList(growable: false),
+      routeSegments: routeSegments,
       externalProviders: const [
         WazeReadHazardProvider(),
         UnconfiguredExternalHazardProvider(
@@ -354,7 +371,24 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     _ => false,
   };
 
-  void _onRideControllerChanged() => _schedulePublish();
+  void _onRideControllerChanged() {
+    final session = widget.rideController.session;
+    if (session != null) {
+      _awarenessController?.updateLocalSession(session);
+    }
+    if (widget.rideController.rideEnded && !_rideEndHandled) {
+      unawaited(_handleRideEnded());
+    }
+    _schedulePublish();
+  }
+
+  Future<void> _handleRideEnded() async {
+    if (_rideEndHandled) return;
+    _rideEndHandled = true;
+    _stalenessTimer?.cancel();
+    _stalenessTimer = null;
+    await _locationController?.stop();
+  }
 
   void _schedulePublish() {
     final previous = _publishChain;
@@ -390,6 +424,13 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.rideController.rideEnded) {
+      return EndedRideScreen(
+        controller: widget.rideController,
+        nearbyRelayController: _relayController,
+        internetRelayController: _internetRelayController,
+      );
+    }
     final body = switch (_selectedIndex) {
       0 => RideDashboard(
         controller: widget.rideController,
@@ -454,6 +495,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     _awarenessController?.dispose();
     unawaited(_receivedEventSubscription?.cancel());
     unawaited(_internetReceivedEventSubscription?.cancel());
+    _stalenessTimer?.cancel();
     _locationController?.dispose();
     unawaited(_relayController?.close());
     unawaited(_internetRelayController?.close());

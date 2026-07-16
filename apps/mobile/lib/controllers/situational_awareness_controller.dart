@@ -18,6 +18,7 @@ class SituationalAwarenessController extends ChangeNotifier {
     this._eventStore,
     this._session, {
     required List<GeoPoint> route,
+    List<List<GeoPoint>>? routeSegments,
     List<ExternalHazardProvider> externalProviders = const [],
     SituationClock? clock,
     SituationIdFactory? idFactory,
@@ -25,6 +26,11 @@ class SituationalAwarenessController extends ChangeNotifier {
     this.deduplicator = const HazardDeduplicator(),
     this.routeConfig = const RouteDeviationConfig(),
   }) : _route = List.unmodifiable(route),
+       _routeSegments = List.unmodifiable(
+         (routeSegments ?? [route]).map(
+           (segment) => List<GeoPoint>.unmodifiable(segment),
+         ),
+       ),
        _externalProviders = List.unmodifiable(externalProviders),
        _clock = clock ?? DateTime.now,
        _idFactory = idFactory ?? const Uuid().v7 {
@@ -36,15 +42,16 @@ class SituationalAwarenessController extends ChangeNotifier {
   }
 
   final EventStore _eventStore;
-  final RideSession _session;
+  RideSession _session;
   final List<GeoPoint> _route;
+  final List<List<GeoPoint>> _routeSegments;
   final List<ExternalHazardProvider> _externalProviders;
   final SituationClock _clock;
   final SituationIdFactory _idFactory;
   final HazardExpiryPolicy expiryPolicy;
   final HazardDeduplicator deduplicator;
   final RouteDeviationConfig routeConfig;
-  late final SituationEventFactory _eventFactory;
+  late SituationEventFactory _eventFactory;
 
   final Map<String, RiderLocation> _locations = {};
   final Map<String, RiderLocationEvidence> _locationEvidence = {};
@@ -52,6 +59,7 @@ class SituationalAwarenessController extends ChangeNotifier {
   final Map<String, RiderRouteAlert> _alerts = {};
   final Map<String, RouteDeviationDetector> _detectors = {};
   bool _busy = false;
+  bool _refreshingStaleness = false;
   String? _errorMessage;
 
   bool get busy => _busy;
@@ -105,6 +113,19 @@ class SituationalAwarenessController extends ChangeNotifier {
       _locationEvidence[riderId];
 
   RiderRouteAlert? alertFor(String riderId) => _alerts[riderId];
+
+  void updateLocalSession(RideSession session) {
+    if (session.rideId != _session.rideId ||
+        session.localRiderId != _session.localRiderId) {
+      throw ArgumentError('Cannot replace awareness with another ride session');
+    }
+    _session = session;
+    _eventFactory = SituationEventFactory(
+      session: session,
+      clock: _clock,
+      idFactory: _idFactory,
+    );
+  }
 
   Future<void> initialize() async {
     final events = await _eventStore.eventsForRide(_session.rideId);
@@ -269,12 +290,26 @@ class SituationalAwarenessController extends ChangeNotifier {
     });
   }
 
-  void refreshStaleness() {
-    _removeExpiredHazards();
-    for (final location in _locations.values) {
-      _evaluateLocation(location);
+  Future<void> refreshStaleness() async {
+    if (_refreshingStaleness) return;
+    _refreshingStaleness = true;
+    try {
+      _removeExpiredHazards();
+      final locations = List<RiderLocation>.of(_locations.values);
+      for (final location in locations) {
+        final previous = _alerts[location.riderId]?.assessment;
+        _evaluateLocation(location);
+        final current = _alerts[location.riderId]?.assessment;
+        if (previous?.state != current?.state ||
+            previous?.alertLevel != current?.alertLevel ||
+            previous?.audience != current?.audience) {
+          await _persistAlertTransition(location.riderId);
+        }
+      }
+      notifyListeners();
+    } finally {
+      _refreshingStaleness = false;
     }
-    notifyListeners();
   }
 
   void clearError() {
@@ -367,7 +402,11 @@ class SituationalAwarenessController extends ChangeNotifier {
   void _evaluateLocation(RiderLocation location) {
     final detector = _detectors.putIfAbsent(
       location.riderId,
-      () => RouteDeviationDetector(_route, config: routeConfig),
+      () => RouteDeviationDetector(
+        _route,
+        config: routeConfig,
+        routeSegments: _routeSegments,
+      ),
     );
     final assessment = detector.evaluate(location.sample, _clock());
     final previous = _alerts[location.riderId];

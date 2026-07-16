@@ -141,6 +141,35 @@ void main() {
     );
   });
 
+  test('updated local role is used by subsequent location beacons', () async {
+    controller.updateLocalSession(
+      _session.copyWith(role: RideRole.tailEndCharlie),
+    );
+
+    await controller.recordLocalLocation(_sample(latitude: 51, at: now));
+
+    expect(controller.localLocation?.role, RideRole.tailEndCharlie);
+  });
+
+  test('refreshing staleness escalates a rider who stops reporting', () async {
+    await controller.recordLocalLocation(_sample(latitude: 51, at: now));
+    expect(
+      controller.alertFor(_session.localRiderId)?.assessment.state,
+      RouteTrackingState.onRoute,
+    );
+
+    now = now.add(const Duration(seconds: 91));
+    await controller.refreshStaleness();
+
+    final assessment = controller.alertFor(_session.localRiderId)?.assessment;
+    expect(assessment?.state, RouteTrackingState.gpsStale);
+    expect(assessment?.alertLevel, RouteAlertLevel.urgent);
+    expect(
+      (await store.eventsForRide(_session.rideId)).last.type,
+      RideEventType.routeDeviationChanged,
+    );
+  });
+
   test('unavailable Waze adapter remains explicit and is never fetched', () {
     final provider = controller.externalProviders.single;
 

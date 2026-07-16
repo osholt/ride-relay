@@ -125,9 +125,10 @@ class RideDashboard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const Text(
-              'Live sharing will stop on this phone. Queued development events '
-              'remain locally for recovery testing. Share the ride summary now '
-              'if you want a copy of marker times and pass counts.',
+              'Location sharing will stop on this phone. Relay recovery stays '
+              'available for final queued events until you remove the ended '
+              'ride. Share the summary if you want a copy of marker times and '
+              'pass counts.',
             ),
             const SizedBox(height: 14),
             EndRideMarkingSummary(summary: summary),
@@ -493,7 +494,7 @@ class _InviteCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(12),
               ),
               child: QrImageView(
-                data: controller.inviteText.split('\n').last,
+                data: controller.inviteUri.toString(),
                 padding: EdgeInsets.zero,
                 eyeStyle: const QrEyeStyle(color: Colors.black),
                 dataModuleStyle: const QrDataModuleStyle(color: Colors.black),

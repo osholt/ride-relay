@@ -131,6 +131,35 @@ void main() {
     expect(assessment.state, RouteTrackingState.unavailable);
     expect(assessment.alertLevel, RouteAlertLevel.none);
   });
+
+  test('separate GPX segments never create a synthetic connecting road', () {
+    final now = DateTime.utc(2026, 7, 16, 12);
+    final detector = RouteDeviationDetector(
+      const [],
+      routeSegments: const [
+        [
+          GeoPoint(latitude: 51, longitude: -1),
+          GeoPoint(latitude: 51, longitude: -0.99),
+        ],
+        [
+          GeoPoint(latitude: 51, longitude: 1),
+          GeoPoint(latitude: 51, longitude: 1.01),
+        ],
+      ],
+      config: const RouteDeviationConfig(samplesToConfirmOffRoute: 1),
+    );
+
+    final assessment = detector.evaluate(
+      LocationSample(
+        position: const GeoPoint(latitude: 51, longitude: 0),
+        recordedAt: now,
+        accuracyMeters: 5,
+      ),
+      now,
+    );
+
+    expect(assessment.state, RouteTrackingState.offRoute);
+  });
 }
 
 LocationSample _sample(double latitude, DateTime at) => LocationSample(
