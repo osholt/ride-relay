@@ -11,8 +11,10 @@ import '../../domain/route_store.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/gpx_import_source.dart';
 import '../../services/gpx_parser.dart';
+import '../../services/navigation_export.dart';
 import '../../services/offline_tile_cache.dart';
 import '../../services/route_importer.dart';
+import 'navigation_export_sheet.dart';
 
 /// Self-contained production entry point for the map/GPX feature.
 ///
@@ -26,6 +28,7 @@ class RideMapFeature extends StatefulWidget {
     this.currentPosition,
     this.overlayMarkers,
     this.onRouteChanged,
+    this.navigationExportCoordinator,
     this.basemapConfiguration = const BasemapConfiguration(),
   });
 
@@ -45,6 +48,7 @@ class RideMapFeature extends StatefulWidget {
   final ValueListenable<GeoPoint?>? currentPosition;
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
+  final NavigationExportCoordinator? navigationExportCoordinator;
   final BasemapConfiguration basemapConfiguration;
 
   @override
@@ -92,6 +96,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         currentPosition: widget.currentPosition,
         overlayMarkers: widget.overlayMarkers,
         onRouteChanged: widget.onRouteChanged,
+        navigationExportCoordinator: widget.navigationExportCoordinator,
       );
     },
   );
@@ -114,6 +119,7 @@ class RideMapScreen extends StatefulWidget {
     this.currentPosition,
     this.overlayMarkers,
     this.onRouteChanged,
+    this.navigationExportCoordinator,
     this.demoRouteLoader,
     this.disposeOfflineTileCache = false,
   });
@@ -124,6 +130,7 @@ class RideMapScreen extends StatefulWidget {
   final ValueListenable<GeoPoint?>? currentPosition;
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
+  final NavigationExportCoordinator? navigationExportCoordinator;
   final Future<ImportedRoute> Function()? demoRouteLoader;
   final bool disposeOfflineTileCache;
 
@@ -137,6 +144,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   Object? _loadError;
   bool _loading = true;
   bool _importing = false;
+  bool _exporting = false;
   TileDownloadProgress? _downloadProgress;
   TileDownloadCancellationToken? _downloadCancellation;
 
@@ -180,6 +188,17 @@ class _RideMapScreenState extends State<RideMapScreen> {
       appBar: AppBar(
         title: const Text('Route map'),
         actions: [
+          if (_route != null)
+            IconButton(
+              tooltip: 'Navigate or export route',
+              onPressed: _exporting ? null : _openNavigationExport,
+              icon: _exporting
+                  ? const SizedBox.square(
+                      dimension: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.alt_route),
+            ),
           IconButton(
             tooltip: 'Fit route',
             onPressed: _route == null ? null : _fitRoute,
@@ -465,6 +484,29 @@ class _RideMapScreenState extends State<RideMapScreen> {
           _downloadProgress = null;
         });
       }
+    }
+  }
+
+  Future<void> _openNavigationExport() async {
+    final route = _route;
+    if (route == null) return;
+    final target = await NavigationExportSheet.show(context);
+    if (target == null || !mounted) return;
+    setState(() => _exporting = true);
+    try {
+      final renderObject = context.findRenderObject();
+      final origin = renderObject is RenderBox && renderObject.hasSize
+          ? renderObject.localToGlobal(Offset.zero) & renderObject.size
+          : null;
+      final result =
+          await (widget.navigationExportCoordinator ??
+                  const NavigationExportCoordinator())
+              .export(target, route, sharePositionOrigin: origin);
+      _showMessage(result.message);
+    } catch (error) {
+      _showMessage('Could not export route: $error');
+    } finally {
+      if (mounted) setState(() => _exporting = false);
     }
   }
 

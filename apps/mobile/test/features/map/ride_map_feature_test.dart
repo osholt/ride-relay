@@ -58,6 +58,7 @@ void main() {
     expect(find.text('Peak District demo loop'), findsOneWidget);
     expect(find.text('7 route points · 2 waypoints'), findsOneWidget);
     expect(find.text('Replace'), findsOneWidget);
+    expect(find.byTooltip('Navigate or export route'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();

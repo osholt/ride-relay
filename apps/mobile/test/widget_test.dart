@@ -30,6 +30,7 @@ void main() {
     expect(find.text('Oliver'), findsOneWidget);
     expect(find.text('QUICK MESSAGES'), findsOneWidget);
     expect(find.text('Marker mode'), findsOneWidget);
+    expect(find.byTooltip('Share ride summary'), findsOneWidget);
     expect(find.text('Map'), findsOneWidget);
     expect(find.text('Awareness'), findsOneWidget);
 

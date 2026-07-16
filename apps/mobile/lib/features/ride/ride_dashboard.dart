@@ -8,6 +8,7 @@ import '../../controllers/nearby_relay_controller.dart';
 import '../../domain/quick_message.dart';
 import '../../domain/ride_event.dart';
 import '../../domain/ride_role.dart';
+import '../../services/ride_summary_exporter.dart';
 import '../nearby/relay_status_card.dart';
 
 class RideDashboard extends StatelessWidget {
@@ -16,11 +17,13 @@ class RideDashboard extends StatelessWidget {
     required this.controller,
     this.relayController,
     this.serviceWarning,
+    this.summarySharer,
   });
 
   final RideController controller;
   final NearbyRelayController? relayController;
   final String? serviceWarning;
+  final RideSummarySharer? summarySharer;
 
   @override
   Widget build(BuildContext context) {
@@ -31,6 +34,11 @@ class RideDashboard extends StatelessWidget {
         title: const Text('Ride Relay'),
         backgroundColor: Colors.transparent,
         actions: [
+          IconButton(
+            tooltip: 'Share ride summary',
+            onPressed: () => _shareRideSummary(context),
+            icon: const Icon(Icons.summarize_outlined),
+          ),
           IconButton(
             tooltip: 'End ride',
             onPressed: () => _confirmEndRide(context),
@@ -94,9 +102,15 @@ class RideDashboard extends StatelessWidget {
         title: const Text('End this ride?'),
         content: const Text(
           'Live sharing will stop on this phone. Queued development events remain '
-          'locally for recovery testing.',
+          'locally for recovery testing. Share the ride summary now if you want '
+          'a copy of marker times and pass counts.',
         ),
         actions: [
+          TextButton.icon(
+            onPressed: () => _shareRideSummary(dialogContext),
+            icon: const Icon(Icons.summarize_outlined),
+            label: const Text('Share summary'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
             child: const Text('Cancel'),
@@ -110,6 +124,25 @@ class RideDashboard extends StatelessWidget {
     );
     if (confirmed ?? false) {
       await controller.endRide();
+    }
+  }
+
+  Future<void> _shareRideSummary(BuildContext context) async {
+    try {
+      final renderObject = context.findRenderObject();
+      final origin = renderObject is RenderBox && renderObject.hasSize
+          ? renderObject.localToGlobal(Offset.zero) & renderObject.size
+          : null;
+      await (summarySharer ?? const SystemRideSummarySharer()).share(
+        controller.session!,
+        controller.events,
+        sharePositionOrigin: origin,
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not share ride summary: $error')),
+      );
     }
   }
 }
