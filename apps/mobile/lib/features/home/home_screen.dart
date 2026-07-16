@@ -21,41 +21,21 @@ class HomeScreen extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const _BrandMark(),
-                  const SizedBox(height: 44),
+                  const SizedBox(height: 56),
                   Text(
-                    'Your group, still connected when the network isn’t.',
+                    'Ready to ride?',
                     style: Theme.of(context).textTheme.displaySmall,
                   ),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 12),
                   Text(
-                    'Ride Relay stores every important update on your phone and '
-                    'is being built to pass it through nearby riders when mobile '
-                    'coverage disappears.',
+                    'Create a group or join with a private invite. You will go '
+                    'straight to the navigation map.',
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                       color: const Color(0xFFB7C0CC),
                       height: 1.5,
                     ),
                   ),
-                  const SizedBox(height: 28),
-                  const Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      _FeatureChip(
-                        icon: Icons.bluetooth_connected,
-                        label: 'Nearby relay',
-                      ),
-                      _FeatureChip(
-                        icon: Icons.route_outlined,
-                        label: 'Offline routes',
-                      ),
-                      _FeatureChip(
-                        icon: Icons.signpost_outlined,
-                        label: 'Smart markers',
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 42),
+                  const SizedBox(height: 40),
                   FilledButton.icon(
                     onPressed: controller.busy
                         ? null
@@ -73,7 +53,7 @@ class HomeScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 20),
                   const Text(
-                    'Development alpha · physical-device relay validation pending',
+                    'No account required · location is shared only during a ride',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Color(0xFF7F8A98), fontSize: 12),
                   ),
@@ -127,33 +107,6 @@ class _BrandMark extends StatelessWidget {
           style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
         ),
       ],
-    );
-  }
-}
-
-class _FeatureChip extends StatelessWidget {
-  const _FeatureChip({required this.icon, required this.label});
-
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-      decoration: BoxDecoration(
-        color: const Color(0xFF171D25),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFF2B3542)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 17, color: Theme.of(context).colorScheme.primary),
-          const SizedBox(width: 7),
-          Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
-        ],
-      ),
     );
   }
 }

@@ -15,7 +15,7 @@ void main() {
 
     expect(find.text('Create a ride'), findsOneWidget);
     expect(find.text('Join a ride'), findsOneWidget);
-    expect(find.textContaining('still connected'), findsOneWidget);
+    expect(find.text('Ready to ride?'), findsOneWidget);
 
     controller.dispose();
   });
@@ -28,19 +28,26 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(find.text('Navigation'), findsOneWidget);
+    expect(find.text('Navigation map'), findsOneWidget);
+    expect(find.text('Map'), findsOneWidget);
+    expect(find.text('Details'), findsOneWidget);
+    expect(find.text('Safety'), findsOneWidget);
+
+    await tester.tap(find.text('Details'));
+    await tester.pumpAndSettle();
+
     expect(find.text('Oliver'), findsOneWidget);
     expect(find.text('Marker mode'), findsOneWidget);
     expect(find.byTooltip('Leave or switch ride'), findsOneWidget);
     expect(find.byTooltip('Share ride summary'), findsOneWidget);
     expect(find.text('MARKING STATS'), findsOneWidget);
-    expect(find.text('Map'), findsOneWidget);
-    expect(find.text('Awareness'), findsOneWidget);
 
     await tester.drag(find.byType(ListView).first, const Offset(0, -500));
     await tester.pumpAndSettle();
     expect(find.text('QUICK MESSAGES'), findsOneWidget);
 
-    await tester.tap(find.text('Awareness'));
+    await tester.tap(find.text('Safety'));
     await tester.pumpAndSettle();
 
     expect(find.text('Ride awareness'), findsOneWidget);
@@ -57,6 +64,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await tester.tap(find.text('Details'));
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Leave or switch ride'));
     await tester.pumpAndSettle();
     expect(find.text('Leave this ride?'), findsOneWidget);
@@ -81,6 +90,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await tester.tap(find.text('Details'));
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('End ride'));
     await tester.pumpAndSettle();
 
@@ -102,6 +113,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await tester.tap(find.text('Details'));
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('End ride'));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'End ride'));

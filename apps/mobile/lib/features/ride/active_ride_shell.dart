@@ -436,18 +436,14 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       );
     }
     final body = switch (_selectedIndex) {
-      0 => RideDashboard(
+      0 => _buildMap(),
+      1 => RideDashboard(
         controller: widget.rideController,
         onLeaveRide: _leaveRide,
         relayController: _relayController,
         markerAssistanceController: _markerAssistanceController,
         internetRelayController: _internetRelayController,
         serviceWarning: _warnings.isEmpty ? null : _warnings.join('\n'),
-      ),
-      1 => RideMapFeature.fromEnvironment(
-        currentPosition: _mapPosition,
-        overlayMarkers: _mapOverlays,
-        onRouteChanged: _onRouteChanged,
       ),
       _ => _buildAwareness(),
     };
@@ -460,22 +456,36 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
             setState(() => _selectedIndex = index),
         destinations: const [
           NavigationDestination(
-            icon: Icon(Icons.groups_outlined),
-            selectedIcon: Icon(Icons.groups),
-            label: 'Ride',
-          ),
-          NavigationDestination(
             icon: Icon(Icons.map_outlined),
             selectedIcon: Icon(Icons.map),
             label: 'Map',
           ),
           NavigationDestination(
+            icon: Icon(Icons.tune_outlined),
+            selectedIcon: Icon(Icons.tune),
+            label: 'Details',
+          ),
+          NavigationDestination(
             icon: Icon(Icons.health_and_safety_outlined),
             selectedIcon: Icon(Icons.health_and_safety),
-            label: 'Awareness',
+            label: 'Safety',
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildMap() {
+    if (!widget.enableNativeServices) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Navigation')),
+        body: const Center(child: Text('Navigation map')),
+      );
+    }
+    return RideMapFeature.fromEnvironment(
+      currentPosition: _mapPosition,
+      overlayMarkers: _mapOverlays,
+      onRouteChanged: _onRouteChanged,
     );
   }
 

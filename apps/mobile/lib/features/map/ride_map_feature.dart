@@ -248,8 +248,23 @@ class _RideMapScreenState extends State<RideMapScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Route map'),
+        title: Text(
+          _route?.name ?? 'Navigation',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         actions: [
+          if (_route == null)
+            IconButton(
+              tooltip: 'Import GPX route',
+              onPressed: _importing ? null : _importGpx,
+              icon: _importing
+                  ? const SizedBox.square(
+                      dimension: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.upload_file),
+            ),
           if (_route != null)
             IconButton(
               tooltip: 'Navigate or export route',
@@ -269,10 +284,27 @@ class _RideMapScreenState extends State<RideMapScreen> {
           PopupMenuButton<_MapAction>(
             onSelected: _handleMenuAction,
             itemBuilder: (context) => [
+              PopupMenuItem(
+                value: _MapAction.importGpx,
+                child: Text(
+                  _route == null ? 'Import GPX route' : 'Replace GPX route',
+                ),
+              ),
               const PopupMenuItem(
                 value: _MapAction.loadDemo,
                 child: Text('Load demo route'),
               ),
+              if (_route != null)
+                PopupMenuItem(
+                  value: _MapAction.downloadOffline,
+                  enabled:
+                      _basemap.canDownloadOffline && _downloadProgress == null,
+                  child: Text(
+                    _basemap.canDownloadOffline
+                        ? 'Download map for offline use'
+                        : 'Offline map download unavailable',
+                  ),
+                ),
               const PopupMenuItem(
                 value: _MapAction.clearOfflineTiles,
                 child: Text('Clear downloaded map data'),
@@ -290,28 +322,28 @@ class _RideMapScreenState extends State<RideMapScreen> {
           ? const Center(child: CircularProgressIndicator())
           : _loadError != null
           ? _ErrorState(error: _loadError!, onRetry: _loadPersistedRoute)
-          : Column(
+          : Stack(
               children: [
-                _RouteToolbar(
-                  route: _route,
-                  importing: _importing,
-                  onImport: _importGpx,
-                  onLoadDemo: _loadDemoRoute,
-                ),
-                _BasemapStatus(configuration: _basemap),
+                Positioned.fill(child: _buildMap()),
                 if (_downloadProgress case final progress?)
-                  _DownloadProgress(
-                    progress: progress,
-                    onCancel: _downloadCancellation?.cancel,
+                  Positioned(
+                    left: 12,
+                    right: 12,
+                    top: 12,
+                    child: Card(
+                      child: _DownloadProgress(
+                        progress: progress,
+                        onCancel: _downloadCancellation?.cancel,
+                      ),
+                    ),
                   ),
-                Expanded(child: _buildMap()),
-                if (_route != null)
-                  _OfflineDownloadBar(
-                    enabled:
-                        _basemap.canDownloadOffline &&
-                        _downloadProgress == null,
-                    statusMessage: _basemap.statusMessage,
-                    onDownload: _downloadOfflineMap,
+                if (_route == null)
+                  Positioned.fill(
+                    child: _EmptyRoutePrompt(
+                      importing: _importing,
+                      onImport: _importGpx,
+                      onLoadDemo: _loadDemoRoute,
+                    ),
                   ),
               ],
             ),
@@ -444,25 +476,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
         ),
         if (!_basemap.isConfigured)
           const Positioned(left: 12, bottom: 12, child: _RouteOnlyBadge()),
-        if (route == null)
-          Positioned.fill(
-            child: IgnorePointer(
-              child: Center(
-                child: Container(
-                  margin: const EdgeInsets.all(24),
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    color: const Color(0xE8171D25),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: const Text(
-                    'Import a GPX file or load the demo route.\nRoute lines are stored and shown offline.',
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ),
-            ),
-          ),
       ],
     );
   }
@@ -499,25 +512,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
           bottom: 8,
           child: _MapAttributionBadge(text: _basemap.attribution),
         ),
-        if (_route == null)
-          Positioned.fill(
-            child: IgnorePointer(
-              child: Center(
-                child: Container(
-                  margin: const EdgeInsets.all(24),
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    color: const Color(0xE8171D25),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: const Text(
-                    'Import a GPX file or load the demo route.\nMap regions can be saved before the ride.',
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ),
-            ),
-          ),
       ],
     );
   }
@@ -840,8 +834,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   Future<void> _handleMenuAction(_MapAction action) async {
     switch (action) {
+      case _MapAction.importGpx:
+        await _importGpx();
       case _MapAction.loadDemo:
         await _loadDemoRoute();
+      case _MapAction.downloadOffline:
+        await _downloadOfflineMap();
       case _MapAction.removeRoute:
         await widget.routeStore.clearActiveRoute();
         if (mounted) {
@@ -864,7 +862,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 }
 
-enum _MapAction { loadDemo, removeRoute, clearOfflineTiles }
+enum _MapAction {
+  importGpx,
+  loadDemo,
+  downloadOffline,
+  removeRoute,
+  clearOfflineTiles,
+}
 
 /// Neutral presentation model for hazards, group riders, markers, or other
 /// feature-owned map overlays. Callers retain ownership of their domain models.
@@ -906,119 +910,55 @@ ml.LatLngBounds _mapLibreBounds(List<GeoPoint> points) {
 String _hexColor(Color color) =>
     '#${color.toARGB32().toRadixString(16).padLeft(8, '0').substring(2)}';
 
-class _RouteToolbar extends StatelessWidget {
-  const _RouteToolbar({
-    required this.route,
+class _EmptyRoutePrompt extends StatelessWidget {
+  const _EmptyRoutePrompt({
     required this.importing,
     required this.onImport,
     required this.onLoadDemo,
   });
 
-  final ImportedRoute? route;
   final bool importing;
   final VoidCallback onImport;
   final VoidCallback onLoadDemo;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
-    child: Row(
-      children: [
-        Expanded(
+  Widget build(BuildContext context) => Center(
+    child: Card(
+      margin: const EdgeInsets.all(24),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 360),
+        child: Padding(
+          padding: const EdgeInsets.all(22),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                route?.name ?? 'No route loaded',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleMedium,
+                'Choose a route',
+                style: Theme.of(context).textTheme.headlineSmall,
               ),
-              Text(
-                route == null
-                    ? 'GPX 1.1 tracks, routes and waypoints'
-                    : '${route!.pathPointCount} route points · ${route!.waypoints.length} waypoints',
-                style: const TextStyle(color: Color(0xFF98A3B1), fontSize: 12),
+              const SizedBox(height: 8),
+              const Text(
+                'Import a GPX file, or use the demo route to try the map.',
+                style: TextStyle(color: Color(0xFF98A3B1)),
+              ),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                onPressed: importing ? null : onImport,
+                icon: importing
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.upload_file),
+                label: const Text('Import GPX'),
+              ),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: onLoadDemo,
+                child: const Text('Use demo route'),
               ),
             ],
-          ),
-        ),
-        TextButton(onPressed: onLoadDemo, child: const Text('Demo')),
-        const SizedBox(width: 4),
-        FilledButton.tonalIcon(
-          onPressed: importing ? null : onImport,
-          icon: importing
-              ? const SizedBox.square(
-                  dimension: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.upload_file),
-          label: Text(route == null ? 'Import GPX' : 'Replace'),
-        ),
-      ],
-    ),
-  );
-}
-
-class _BasemapStatus extends StatelessWidget {
-  const _BasemapStatus({required this.configuration});
-
-  final BasemapConfiguration configuration;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    width: double.infinity,
-    color: configuration.canDownloadOffline
-        ? const Color(0xFF173124)
-        : const Color(0xFF28251C),
-    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-    child: Row(
-      children: [
-        Icon(
-          configuration.canDownloadOffline
-              ? Icons.offline_pin
-              : Icons.info_outline,
-          size: 16,
-          color: configuration.canDownloadOffline
-              ? const Color(0xFF6ED89A)
-              : const Color(0xFFFFC857),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            configuration.statusMessage,
-            style: const TextStyle(fontSize: 11),
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-class _OfflineDownloadBar extends StatelessWidget {
-  const _OfflineDownloadBar({
-    required this.enabled,
-    required this.statusMessage,
-    required this.onDownload,
-  });
-
-  final bool enabled;
-  final String statusMessage;
-  final VoidCallback onDownload;
-
-  @override
-  Widget build(BuildContext context) => SafeArea(
-    top: false,
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
-      child: SizedBox(
-        width: double.infinity,
-        child: Tooltip(
-          message: statusMessage,
-          child: FilledButton.icon(
-            onPressed: enabled ? onDownload : null,
-            icon: const Icon(Icons.download_for_offline),
-            label: const Text('Download map for offline use'),
           ),
         ),
       ),

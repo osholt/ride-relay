@@ -50,15 +50,15 @@ void main() {
     expect(find.text('ROUTE-ONLY OFFLINE MAP'), findsOneWidget);
     expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
 
-    await tester.tap(find.text('Demo'));
+    await tester.tap(find.text('Use demo route'));
     for (var i = 0; i < 5; i += 1) {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
     expect(find.text('Peak District demo loop'), findsOneWidget);
-    expect(find.text('7 route points · 2 waypoints'), findsOneWidget);
-    expect(find.text('Replace'), findsOneWidget);
     expect(find.byTooltip('Navigate or export route'), findsOneWidget);
+    expect(find.textContaining('basemap configured'), findsNothing);
+    expect(find.text('Download map for offline use'), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
