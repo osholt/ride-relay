@@ -37,6 +37,45 @@ For maps, add a licence-approved archive and matching style as described in
 [maps-and-gpx.md](./maps-and-gpx.md), then add `--profile maps` to the Compose
 command and verify the style plus representative tiles.
 
+## Tailnet-only field-test host
+
+For a private field test, the override runs a Tailscale sidecar with its own
+persisted tailnet identity and proxies to the API over the private Docker
+network. No API port is published on the Docker host. Tailscale Serve terminates
+HTTPS and Funnel remains disabled. Do not start the public Caddy service in this
+mode:
+
+```bash
+cp deploy/.env.example deploy/.env.tailnet
+# Set RIDE_RELAY_DOMAIN=ride-relay.<tailnet>.ts.net, the database password,
+# and both random keys. Optionally set RIDE_RELAY_TAILSCALE_HOSTNAME.
+# Set TS_AUTHKEY to a one-off key for unattended first-time registration.
+docker compose --project-name ride-relay-tailnet \
+  --env-file deploy/.env.tailnet \
+  --file deploy/compose.yaml \
+  --file deploy/compose.tailnet.yaml \
+  up -d --build db tailscale server cleanup
+```
+
+If no auth key is supplied, follow the one-time URL printed by `docker compose
+logs tailscale`; the `tailscale-state` volume preserves the resulting identity
+across restarts and container recreation. Verify it with:
+
+```bash
+docker compose --project-name ride-relay-tailnet \
+  --env-file deploy/.env.tailnet \
+  --file deploy/compose.yaml \
+  --file deploy/compose.tailnet.yaml \
+  exec -T tailscale tailscale status
+curl --fail https://ride-relay.<tailnet>.ts.net/health/ready
+```
+
+Compile the field-test client with
+`RIDE_RELAY_API_BASE_URL=https://ride-relay.<tailnet>.ts.net/api`. Tailscale ACLs
+determine which tailnet members can reach the HTTPS address. Readiness and
+metrics are tailnet-visible in this temporary topology, so use the public Caddy
+topology before internet exposure.
+
 ## Operations
 
 - Alert if readiness fails, 5xx rises, sync latency grows, PostgreSQL storage

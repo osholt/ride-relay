@@ -54,6 +54,8 @@ services:
       - sh
       - -c
       - while true; do .venv/bin/ride-relay-cleanup; sleep 3600; done
+    healthcheck:
+      disable: true
     depends_on:
       db:
         condition: service_healthy
