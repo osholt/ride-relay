@@ -1,0 +1,54 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:ride_relay/app/ride_relay_app.dart';
+import 'package:ride_relay/controllers/ride_controller.dart';
+import 'package:ride_relay/data/in_memory_event_store.dart';
+import 'package:ride_relay/data/in_memory_session_store.dart';
+import 'package:ride_relay/services/nearby_bridge.dart';
+
+void main() {
+  testWidgets('home screen exposes the two ride entry points', (tester) async {
+    final controller = await _controller();
+    await tester.pumpWidget(RideRelayApp(controller: controller));
+
+    expect(find.text('Create a ride'), findsOneWidget);
+    expect(find.text('Join with a code'), findsOneWidget);
+    expect(find.textContaining('still connected'), findsOneWidget);
+
+    controller.dispose();
+  });
+
+  testWidgets('active ride shows coordination controls', (tester) async {
+    final controller = await _controller();
+    await controller.createRide('Oliver');
+    await tester.pumpWidget(RideRelayApp(controller: controller));
+    await tester.pump();
+
+    expect(find.text('Oliver'), findsOneWidget);
+    expect(find.text('QUICK MESSAGES'), findsOneWidget);
+    expect(find.text('Marker mode'), findsOneWidget);
+
+    controller.dispose();
+  });
+}
+
+Future<RideController> _controller() async {
+  final controller = RideController(
+    InMemoryEventStore(),
+    InMemorySessionStore(),
+    const _FakeNearbyBridge(),
+  );
+  await controller.initialize();
+  return controller;
+}
+
+class _FakeNearbyBridge extends NearbyBridge {
+  const _FakeNearbyBridge();
+
+  @override
+  Future<NearbyCapabilities> capabilities() async => const NearbyCapabilities(
+    platform: 'test',
+    nativeBridgeReady: true,
+    nearbyApiLinked: false,
+    status: 'phase0',
+  );
+}

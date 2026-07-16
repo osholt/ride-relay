@@ -1,0 +1,31 @@
+# Project-local tooling
+.tools/
+
+# Flutter and Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+build/
+coverage/
+
+# IDEs and operating systems
+.DS_Store
+.idea/
+*.iml
+.vscode/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+key.properties
+*.mobileprovision
+*.p12
+*.cer
+
+# Local test output
+test-results/
