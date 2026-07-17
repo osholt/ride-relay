@@ -44,6 +44,7 @@ class RideMapFeature extends StatefulWidget {
     this.overlayMarkers,
     this.offRouteTraces,
     this.leaderStatus,
+    this.junctionMarkerOverlay,
     this.onRouteChanged,
     this.acquireCurrentPosition,
     this.navigationExportCoordinator,
@@ -59,6 +60,7 @@ class RideMapFeature extends StatefulWidget {
     ValueListenable<List<MapOverlayMarker>>? overlayMarkers,
     ValueListenable<List<MapOverlayTrace>>? offRouteTraces,
     ValueListenable<LeaderRideStatus?>? leaderStatus,
+    ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay,
     ValueChanged<ImportedRoute?>? onRouteChanged,
     Future<GeoPoint?> Function()? acquireCurrentPosition,
     RouteStore? routeStore,
@@ -70,6 +72,7 @@ class RideMapFeature extends StatefulWidget {
     overlayMarkers: overlayMarkers,
     offRouteTraces: offRouteTraces,
     leaderStatus: leaderStatus,
+    junctionMarkerOverlay: junctionMarkerOverlay,
     onRouteChanged: onRouteChanged,
     acquireCurrentPosition: acquireCurrentPosition,
     routeStore: routeStore,
@@ -82,6 +85,7 @@ class RideMapFeature extends StatefulWidget {
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
   final ValueListenable<List<MapOverlayTrace>>? offRouteTraces;
   final ValueListenable<LeaderRideStatus?>? leaderStatus;
+  final ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
@@ -151,6 +155,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         overlayMarkers: widget.overlayMarkers,
         offRouteTraces: widget.offRouteTraces,
         leaderStatus: widget.leaderStatus,
+        junctionMarkerOverlay: widget.junctionMarkerOverlay,
         onRouteChanged: widget.onRouteChanged,
         acquireCurrentPosition: widget.acquireCurrentPosition,
         navigationExportCoordinator: widget.navigationExportCoordinator,
@@ -188,6 +193,7 @@ class RideMapScreen extends StatefulWidget {
     this.overlayMarkers,
     this.offRouteTraces,
     this.leaderStatus,
+    this.junctionMarkerOverlay,
     this.onRouteChanged,
     this.acquireCurrentPosition,
     this.navigationExportCoordinator,
@@ -208,6 +214,7 @@ class RideMapScreen extends StatefulWidget {
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
   final ValueListenable<List<MapOverlayTrace>>? offRouteTraces;
   final ValueListenable<LeaderRideStatus?>? leaderStatus;
+  final ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
@@ -245,6 +252,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   bool _exporting = false;
   bool _routing = false;
   bool _navigationMode = false;
+  bool _markerOverviewVisible = false;
   bool _autoFollowSuppressed = false;
   double _lastHeadingDegrees = 0;
   GeoPoint? _previousNavigationPoint;
@@ -297,6 +305,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
     widget.navigationPosition?.addListener(_onPositionChanged);
     widget.overlayMarkers?.addListener(_onOverlayDataChanged);
     widget.offRouteTraces?.addListener(_onOverlayDataChanged);
+    widget.junctionMarkerOverlay?.addListener(_onJunctionMarkerChanged);
+    _markerOverviewVisible = widget.junctionMarkerOverlay?.value != null;
     _loadPersistedRoute();
   }
 
@@ -319,6 +329,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
       oldWidget.offRouteTraces?.removeListener(_onOverlayDataChanged);
       widget.offRouteTraces?.addListener(_onOverlayDataChanged);
     }
+    if (oldWidget.junctionMarkerOverlay != widget.junctionMarkerOverlay) {
+      oldWidget.junctionMarkerOverlay?.removeListener(_onJunctionMarkerChanged);
+      widget.junctionMarkerOverlay?.addListener(_onJunctionMarkerChanged);
+      _onJunctionMarkerChanged();
+    }
   }
 
   @override
@@ -328,6 +343,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     widget.navigationPosition?.removeListener(_onPositionChanged);
     widget.overlayMarkers?.removeListener(_onOverlayDataChanged);
     widget.offRouteTraces?.removeListener(_onOverlayDataChanged);
+    widget.junctionMarkerOverlay?.removeListener(_onJunctionMarkerChanged);
     _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
     _mapController.dispose();
     _routingClient.close();
@@ -354,6 +370,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
           if (mounted) unawaited(_followNavigationCamera());
         });
       }
+      if (_markerOverviewVisible) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) unawaited(_showMarkerOverview());
+        });
+      }
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -367,7 +388,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
   Widget build(BuildContext context) {
     final landscape =
         MediaQuery.orientationOf(context) == Orientation.landscape;
-    final hideChrome = _route != null && _isMoving;
+    final markerOverlay = widget.junctionMarkerOverlay?.value;
+    final markerOverviewActive = markerOverlay != null;
+    final hideChrome = _route != null && (_isMoving || markerOverviewActive);
     final safeInsets = MediaQuery.paddingOf(context);
     final overlayTop = hideChrome ? safeInsets.top : 0.0;
     final overlayLeft = hideChrome ? safeInsets.left : 0.0;
@@ -378,7 +401,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
         .where((marker) => marker.id.startsWith('rider-'))
         .toList(growable: false);
     final groupSize = groupRiders.length + (_effectivePosition == null ? 0 : 1);
-    final showGroupMiniMap = landscape && _route != null && groupSize > 1;
+    final showGroupMiniMap =
+        landscape && _route != null && groupSize > 1 && !markerOverviewActive;
     const groupMiniMapWidth = 196.0;
     final statusRight = showGroupMiniMap
         ? overlayRight + groupMiniMapWidth + 16
@@ -543,7 +567,24 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       mapStyleString: widget.mapStyleString,
                     ),
                   ),
-                if (_route != null && !_navigationMode)
+                if (markerOverlay != null)
+                  Positioned(
+                    key: const Key('junction-marker-overlay-position'),
+                    left: overlayLeft + 12,
+                    right: overlayRight + 12,
+                    top: overlayTop + 12,
+                    child: ValueListenableBuilder<MapJunctionMarkerOverlay?>(
+                      valueListenable: widget.junctionMarkerOverlay!,
+                      builder: (context, overlay, _) => overlay == null
+                          ? const SizedBox.shrink()
+                          : _JunctionMarkerOverlay(
+                              overlay: overlay,
+                              compact: landscape,
+                              distanceUnit: widget.distanceUnit,
+                            ),
+                    ),
+                  ),
+                if (_route != null && !_navigationMode && !markerOverviewActive)
                   Positioned(
                     right: overlayRight + 12,
                     bottom: overlayBottom + 12,
@@ -841,6 +882,24 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _scheduleMapLibreSync(overlays: true);
   }
 
+  void _onJunctionMarkerChanged() {
+    if (!mounted) return;
+    final visible = widget.junctionMarkerOverlay?.value != null;
+    if (visible == _markerOverviewVisible) return;
+    setState(() {
+      _markerOverviewVisible = visible;
+      if (visible) {
+        _navigationMode = false;
+        _autoFollowSuppressed = false;
+      }
+    });
+    if (visible) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_showMarkerOverview());
+      });
+    }
+  }
+
   void _onFlutterMapEvent(MapEvent event) {
     if (!_navigationMode ||
         event.source == MapEventSource.mapController ||
@@ -914,6 +973,82 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _fitRoute();
   }
 
+  Future<void> _showMarkerOverview() async {
+    final overlay = widget.junctionMarkerOverlay?.value;
+    if (overlay == null) return;
+    final points = <GeoPoint>[overlay.markerPoint];
+    final localPosition = _effectivePosition;
+    if (localPosition != null) points.add(localPosition);
+    for (final rider in widget.overlayMarkers?.value ?? const []) {
+      if (!rider.id.startsWith('rider-')) continue;
+      if (_mapDistanceMeters(overlay.markerPoint, rider.point) <= 1600) {
+        points.add(rider.point);
+      }
+    }
+    final distinctPoints = <GeoPoint>[];
+    for (final point in points) {
+      if (distinctPoints.every((existing) => _pointsDiffer(existing, point))) {
+        distinctPoints.add(point);
+      }
+    }
+    if (_basemap.usesMapLibre) {
+      final controller = _mapLibreController;
+      if (controller == null) return;
+      if (distinctPoints.length >= 2) {
+        await controller.animateCamera(
+          ml.CameraUpdate.newLatLngBounds(
+            _mapLibreBounds(distinctPoints),
+            left: 36,
+            top: 160,
+            right: 36,
+            bottom: 54,
+          ),
+        );
+      } else {
+        await controller.easeCamera(
+          ml.CameraUpdate.newCameraPosition(
+            ml.CameraPosition(
+              target: ml.LatLng(
+                overlay.markerPoint.latitude,
+                overlay.markerPoint.longitude,
+              ),
+              zoom: 13.4,
+              tilt: 0,
+              bearing: 0,
+            ),
+          ),
+          duration: const Duration(milliseconds: 350),
+        );
+      }
+      return;
+    }
+    try {
+      if (distinctPoints.length >= 2) {
+        _mapController.fitCamera(
+          CameraFit.bounds(
+            bounds: LatLngBounds.fromPoints(
+              distinctPoints.map(_latLng).toList(),
+            ),
+            padding: const EdgeInsets.fromLTRB(36, 160, 36, 54),
+          ),
+        );
+      } else {
+        _mapController.moveAndRotateAnimatedRaw(
+          _latLng(overlay.markerPoint),
+          13.4,
+          0,
+          offset: Offset.zero,
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOut,
+          hasGesture: false,
+          source: MapEventSource.mapController,
+        );
+      }
+    } on StateError {
+      // The marker can activate before FlutterMap finishes attaching.
+    }
+  }
+
   Future<void> _followNavigationCamera({bool force = false}) async {
     if (!_navigationMode) return;
     final position = _effectivePosition;
@@ -937,12 +1072,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
         MediaQuery.orientationOf(context) == Orientation.landscape;
     final speed = _navigationFix?.speedMetersPerSecond ?? 0;
     final lookAheadMeters = landscape
-        ? (speed * 20).clamp(220, 500).toDouble()
-        : (speed * 14).clamp(140, 360).toDouble();
+        ? (speed * 34).clamp(400, 900).toDouble()
+        : (speed * 22).clamp(250, 560).toDouble();
     final target =
         _pointAlongRemainingRoute(position, lookAheadMeters) ??
         _pointAhead(position, _lastHeadingDegrees, lookAheadMeters);
-    final navigationZoom = landscape ? 14.65 : 15.2;
+    final navigationZoom = landscape ? 13.85 : 14.45;
     if (_basemap.usesMapLibre) {
       final controller = _mapLibreController;
       if (controller == null) return;
@@ -951,7 +1086,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
           ml.CameraPosition(
             target: ml.LatLng(target.latitude, target.longitude),
             zoom: navigationZoom,
-            tilt: landscape ? 38 : 43,
+            tilt: landscape ? 58 : 52,
             bearing: _lastHeadingDegrees,
           ),
         ),
@@ -1588,6 +1723,33 @@ class MapNavigationPosition {
   );
 }
 
+enum MapJunctionMarkerStage { waitingForRiders, tecApproaching, readyToRideOff }
+
+/// Presentation data for the automatic second-bike-drop view. It lives beside
+/// the map so a marker stop does not have to interrupt navigation with a tab
+/// change.
+class MapJunctionMarkerOverlay {
+  const MapJunctionMarkerOverlay({
+    required this.markerPoint,
+    required this.markerRiderName,
+    required this.isLocalMarker,
+    required this.ridersPassed,
+    required this.ridersExpected,
+    required this.instruction,
+    required this.stage,
+    this.tecDistanceMeters,
+  });
+
+  final GeoPoint markerPoint;
+  final String markerRiderName;
+  final bool isLocalMarker;
+  final int ridersPassed;
+  final int ridersExpected;
+  final double? tecDistanceMeters;
+  final String instruction;
+  final MapJunctionMarkerStage stage;
+}
+
 class MapOverlayTrace {
   const MapOverlayTrace({
     required this.id,
@@ -2167,6 +2329,171 @@ class _GroupMiniMapPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_GroupMiniMapPainter oldDelegate) => true;
+}
+
+class _JunctionMarkerOverlay extends StatelessWidget {
+  const _JunctionMarkerOverlay({
+    required this.overlay,
+    required this.compact,
+    required this.distanceUnit,
+  });
+
+  final MapJunctionMarkerOverlay overlay;
+  final bool compact;
+  final DistanceUnit distanceUnit;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (overlay.stage) {
+      MapJunctionMarkerStage.waitingForRiders => const Color(0xFFFFC857),
+      MapJunctionMarkerStage.tecApproaching => const Color(0xFFFFA24C),
+      MapJunctionMarkerStage.readyToRideOff => const Color(0xFF6ED89A),
+    };
+    final padding = compact
+        ? const EdgeInsets.symmetric(horizontal: 14, vertical: 10)
+        : const EdgeInsets.fromLTRB(16, 13, 16, 12);
+    final tecDistance = overlay.tecDistanceMeters;
+    return Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: compact ? 460 : 560),
+        child: Card(
+          key: const Key('junction-marker-overlay'),
+          margin: EdgeInsets.zero,
+          color: const Color(0xEE121820),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: color.withValues(alpha: 0.9), width: 1.5),
+          ),
+          child: Padding(
+            padding: padding,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.alt_route, color: color),
+                    const SizedBox(width: 9),
+                    const Expanded(
+                      child: Text(
+                        'JUNCTION MARKER',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.7,
+                        ),
+                      ),
+                    ),
+                    _MarkerStatusPill(label: 'AUTO', color: color),
+                  ],
+                ),
+                const SizedBox(height: 7),
+                Text(
+                  overlay.isLocalMarker
+                      ? 'You are holding this junction.'
+                      : '${overlay.markerRiderName} is holding this junction.',
+                  style: const TextStyle(
+                    color: Color(0xFFD8E0EA),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 9),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
+                    _MarkerMetric(
+                      icon: Icons.groups_outlined,
+                      label:
+                          '${overlay.ridersPassed}/${overlay.ridersExpected} passed',
+                    ),
+                    if (tecDistance != null)
+                      _MarkerMetric(
+                        icon: Icons.shield_outlined,
+                        label:
+                            'TEC ${MeasurementFormatter(distanceUnit).distance(tecDistance)} away',
+                        color: const Color(0xFF68A9FF),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 9),
+                Text(
+                  overlay.instruction,
+                  style: TextStyle(color: color, fontWeight: FontWeight.w800),
+                ),
+                if (overlay.stage == MapJunctionMarkerStage.tecApproaching) ...[
+                  const SizedBox(height: 7),
+                  const Text(
+                    'GET READY TO RIDE OFF',
+                    key: Key('junction-marker-get-ready'),
+                    style: TextStyle(
+                      color: Color(0xFFFFC857),
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MarkerMetric extends StatelessWidget {
+  const _MarkerMetric({required this.icon, required this.label, this.color});
+
+  final IconData icon;
+  final String label;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+    decoration: BoxDecoration(
+      color: const Color(0xFF202A35),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 15, color: color ?? const Color(0xFFB7C2CF)),
+        const SizedBox(width: 5),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+        ),
+      ],
+    ),
+  );
+}
+
+class _MarkerStatusPill extends StatelessWidget {
+  const _MarkerStatusPill({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.17),
+      borderRadius: BorderRadius.circular(99),
+      border: Border.all(color: color.withValues(alpha: 0.7)),
+    ),
+    child: Text(
+      label,
+      style: TextStyle(
+        color: color,
+        fontWeight: FontWeight.w900,
+        fontSize: 10,
+        letterSpacing: 0.8,
+      ),
+    ),
+  );
 }
 
 class _LeaderMapStatus extends StatelessWidget {

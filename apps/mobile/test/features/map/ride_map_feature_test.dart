@@ -95,6 +95,83 @@ void main() {
   });
 
   testWidgets(
+    'keeps an automatic junction marker on the zoomed-out map overview',
+    (tester) async {
+      tester.view.physicalSize = const Size(844, 390);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final directory = Directory.systemTemp.createTempSync('marker-map-test');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final marker = ValueNotifier<MapJunctionMarkerOverlay?>(
+        const MapJunctionMarkerOverlay(
+          markerPoint: GeoPoint(latitude: 53, longitude: -1.01),
+          markerRiderName: 'Maya',
+          isLocalMarker: false,
+          ridersPassed: 2,
+          ridersExpected: 3,
+          tecDistanceMeters: 210,
+          instruction: 'Maya is holding the junction while riders pass.',
+          stage: MapJunctionMarkerStage.waitingForRiders,
+        ),
+      );
+      addTearDown(marker.dispose);
+      final route = ImportedRoute(
+        id: 'route',
+        name: 'Marker route',
+        importedAt: DateTime.utc(2026, 7, 17),
+        sourceFileName: 'route.gpx',
+        paths: const [
+          RoutePath(
+            kind: RoutePathKind.track,
+            points: [
+              GeoPoint(latitude: 53, longitude: -1.02),
+              GeoPoint(latitude: 53, longitude: -1.01),
+              GeoPoint(latitude: 53, longitude: -1.00),
+            ],
+          ),
+        ],
+        waypoints: const [],
+      );
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(route),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            junctionMarkerOverlay: marker,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AppBar), findsNothing);
+      expect(find.byKey(const Key('junction-marker-overlay')), findsOneWidget);
+      expect(find.text('Maya is holding this junction.'), findsOneWidget);
+      expect(find.text('2/3 passed'), findsOneWidget);
+      expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
+
+      marker.value = null;
+      await tester.pump();
+
+      expect(find.byKey(const Key('junction-marker-overlay')), findsNothing);
+      expect(find.byType(AppBar), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    },
+  );
+
+  testWidgets(
     'landscape moving mode hides chrome and styles progress and off-route trail',
     (tester) async {
       tester.view.physicalSize = const Size(844, 390);

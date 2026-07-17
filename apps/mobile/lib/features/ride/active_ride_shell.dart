@@ -66,6 +66,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   final _mapOverlays = ValueNotifier<List<MapOverlayMarker>>(const []);
   final _offRouteTraces = ValueNotifier<List<MapOverlayTrace>>(const []);
   final _leaderStatus = ValueNotifier<LeaderRideStatus?>(null);
+  final _junctionMarkerOverlay = ValueNotifier<MapJunctionMarkerOverlay?>(null);
   final _riderTrails = <String, List<route_domain.GeoPoint>>{};
   final _publishedEventIds = <String>{};
   final _warnings = <String>{};
@@ -329,6 +330,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     _simulationRouteFingerprint = fingerprint;
     _handledAutomaticMarkerActivation = 0;
     _handledAutomaticMarkerRideOffActivation = 0;
+    _junctionMarkerOverlay.value = null;
     _lastSimulationNavigationUpdateAt = null;
     previous?.removeListener(_onSimulationVisualChanged);
     previous?.dispose();
@@ -400,6 +402,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   void _onSimulationVisualChanged() {
     if (!mounted || !_isSimulation) return;
     final controller = _simulationController;
+    if (controller != null) _updateJunctionMarkerOverlay(controller);
     if (controller != null &&
         controller.automaticMarkerActivation >
             _handledAutomaticMarkerActivation) {
@@ -431,6 +434,44 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       updateOverlayMarkers: updateOverlayMarkers,
       updateNavigationPosition: updateNavigationPosition,
     );
+  }
+
+  void _updateJunctionMarkerOverlay(RideSimulationController controller) {
+    final hadOverlay = _junctionMarkerOverlay.value != null;
+    if (!controller.automaticMarkerActive) {
+      if (hadOverlay) {
+        _junctionMarkerOverlay.value = null;
+        setState(() {});
+      }
+      return;
+    }
+    final marker = controller.riders
+        .where((rider) => rider.role == RideRole.marker)
+        .firstOrNull;
+    if (marker == null) return;
+    final stage = switch (controller.markerPhase) {
+      SimulationMarkerPhase.tecApproaching =>
+        MapJunctionMarkerStage.tecApproaching,
+      SimulationMarkerPhase.readyToRideOff =>
+        MapJunctionMarkerStage.readyToRideOff,
+      _ => MapJunctionMarkerStage.waitingForRiders,
+    };
+    _junctionMarkerOverlay.value = MapJunctionMarkerOverlay(
+      markerPoint: route_domain.GeoPoint(
+        latitude: marker.position.latitude,
+        longitude: marker.position.longitude,
+      ),
+      markerRiderName: controller.automaticMarkerIsLocal
+          ? 'You'
+          : (controller.automaticMarkerRiderName ?? 'Second bike'),
+      isLocalMarker: controller.automaticMarkerIsLocal,
+      ridersPassed: controller.ridersPassedMarker,
+      ridersExpected: controller.ridersExpectedToPass,
+      tecDistanceMeters: controller.tecDistanceToMarkerMeters,
+      instruction: controller.markerInstruction,
+      stage: stage,
+    );
+    if (!hadOverlay) setState(() {});
   }
 
   void _onAwarenessChanged() {
@@ -792,9 +833,12 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         final landscape =
             MediaQuery.orientationOf(context) == Orientation.landscape;
         final hideWhileMoving =
-            !_isSimulation &&
-            _selectedIndex == 0 &&
-            navigationPosition?.isMoving == true;
+            (_selectedIndex == 0 &&
+                navigationPosition?.isMoving == true &&
+                !_isSimulation) ||
+            (_isSimulation &&
+                _selectedIndex == 0 &&
+                _junctionMarkerOverlay.value != null);
         final destinations = <NavigationDestination>[
           const NavigationDestination(
             icon: Icon(Icons.map_outlined),
@@ -881,6 +925,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       overlayMarkers: _mapOverlays,
       offRouteTraces: _offRouteTraces,
       leaderStatus: _leaderStatus,
+      junctionMarkerOverlay: _junctionMarkerOverlay,
       onRouteChanged: _onRouteChanged,
       acquireCurrentPosition: _isSimulation
           ? () async => _mapPosition.value
@@ -939,7 +984,6 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         !controller.automaticMarkerActive) {
       return;
     }
-    setState(() => _selectedIndex = 1);
     if (controller.automaticMarkerIsLocal &&
         !widget.rideController.markerActive) {
       await widget.rideController.startMarker(mode: 'simulation-auto-junction');
@@ -959,9 +1003,6 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     if (controller.lastAutomaticMarkerRideOffWasLocal &&
         widget.rideController.markerActive) {
       await widget.rideController.endMarker();
-    }
-    if (mounted && _simulationController == controller) {
-      setState(() => _selectedIndex = 0);
     }
   }
 
@@ -1066,6 +1107,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     _mapOverlays.dispose();
     _offRouteTraces.dispose();
     _leaderStatus.dispose();
+    _junctionMarkerOverlay.dispose();
     super.dispose();
   }
 }
