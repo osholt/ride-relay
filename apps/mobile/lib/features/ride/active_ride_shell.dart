@@ -103,6 +103,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   bool _rideEndHandled = false;
   bool _holdingNavigationChromeForMarkerExit = false;
   bool _autoEndingRide = false;
+  bool _simulationPausedByRide = false;
 
   bool get _isSimulation => widget.rideController.session?.isSimulation == true;
 
@@ -681,6 +682,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   ) async {
     if (_autoEndingRide ||
         widget.rideController.rideEnded ||
+        widget.rideController.ridePaused ||
         widget.rideController.markerActive) {
       return;
     }
@@ -853,10 +855,28 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       _awarenessController?.updateLocalSession(session);
       _updateMapOverlays();
     }
+    _applyRidePauseState();
     if (widget.rideController.rideEnded && !_rideEndHandled) {
       unawaited(_handleRideEnded());
     }
     _schedulePublish();
+  }
+
+  void _applyRidePauseState() {
+    if (!_isSimulation) return;
+    final simulation = _simulationController;
+    if (simulation == null) return;
+    if (widget.rideController.ridePaused) {
+      if (simulation.isRunning) {
+        simulation.pause();
+        _simulationPausedByRide = true;
+      }
+      return;
+    }
+    if (_simulationPausedByRide) {
+      _simulationPausedByRide = false;
+      simulation.start();
+    }
   }
 
   Future<void> _handleRideEnded() async {
@@ -928,12 +948,15 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       builder: (context, navigationPosition, _) {
         final landscape =
             MediaQuery.orientationOf(context) == Orientation.landscape;
+        // The native map flashes when a bottom bar is repeatedly inserted as
+        // GPS speed dips at lights. Once there is a navigation fix, preserve
+        // the map viewport until the rider deliberately leaves the map tab.
         final hideWhileMoving =
-            (_selectedIndex == 0 && navigationPosition?.isMoving == true) ||
-            (_isSimulation &&
-                _selectedIndex == 0 &&
-                (_junctionMarkerOverlay.value != null ||
-                    _holdingNavigationChromeForMarkerExit));
+            _selectedIndex == 0 &&
+            _activeRoute != null &&
+            (navigationPosition != null ||
+                _junctionMarkerOverlay.value != null ||
+                _holdingNavigationChromeForMarkerExit);
         final destinations = <NavigationDestination>[
           const NavigationDestination(
             icon: Icon(Icons.map_outlined),
@@ -1024,6 +1047,9 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       emergencyContacts: _emergencyContacts,
       onEmergencyAlert: _sendEmergencyMapAlert,
       onEmergencyIssue: _sendEmergencyMapIssue,
+      ridePaused: widget.rideController.ridePaused,
+      canToggleRidePause: widget.rideController.session?.role == RideRole.lead,
+      onToggleRidePause: _toggleRidePause,
       onRouteChanged: _onRouteChanged,
       acquireCurrentPosition: _isSimulation
           ? () async => _mapPosition.value
@@ -1075,6 +1101,14 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       message,
       recipientRiderIds: recipients,
     );
+  }
+
+  Future<void> _toggleRidePause() async {
+    if (widget.rideController.ridePaused) {
+      await widget.rideController.resumeRide();
+    } else {
+      await widget.rideController.pauseRide();
+    }
   }
 
   Widget _buildSimulation() {

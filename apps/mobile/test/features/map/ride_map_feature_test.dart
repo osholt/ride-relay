@@ -148,6 +148,7 @@ void main() {
             routeImporter: RouteImporter(source: const _NoFileSource()),
             offlineTileCache: cache,
             junctionMarkerOverlay: marker,
+            onEmergencyAlert: () async {},
           ),
         ),
       );
@@ -201,6 +202,10 @@ void main() {
       );
       expect(portraitBounds.left, greaterThanOrEqualTo(12));
       expect(portraitBounds.right, lessThanOrEqualTo(378));
+      final emergencyBounds = tester.getRect(
+        find.byKey(const Key('emergency-alert-button')),
+      );
+      expect(emergencyBounds.bottom, lessThan(portraitBounds.top));
 
       marker.value = null;
       await tester.pump();
@@ -407,6 +412,60 @@ void main() {
     await tester.tap(find.text('Mechanical'));
     await tester.pumpAndSettle();
     expect(sentIssues, ['mechanical']);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('shows a leader pause control and paused state on the map', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync('pause-map-test');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final route = ImportedRoute(
+      id: 'route',
+      name: 'Pause route',
+      importedAt: DateTime.utc(2026, 7, 17),
+      sourceFileName: 'route.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 53, longitude: -1.02),
+            GeoPoint(latitude: 53, longitude: -1),
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );
+    var toggles = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(route),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          ridePaused: true,
+          canToggleRidePause: true,
+          onToggleRidePause: () async => toggles += 1,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(find.text('GROUP RIDE PAUSED'), findsOneWidget);
+    expect(find.text('RESUME'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('ride-pause-button')));
+    await tester.pump();
+    expect(toggles, 1);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();

@@ -58,13 +58,25 @@ class RideController extends ChangeNotifier {
   bool get hasActiveRide => _session != null;
 
   bool get rideEnded {
-    final localDeviceId = _session?.localRiderId;
-    return localDeviceId != null &&
-        _events.any(
-          (event) =>
-              event.deviceId == localDeviceId &&
-              event.type == RideEventType.rideEnded,
-        );
+    return _events.any((event) => event.type == RideEventType.rideEnded);
+  }
+
+  /// A lead-owned group coordination pause. It deliberately does not suppress
+  /// GPS evidence: riders can still be found while the group is stopped.
+  bool get ridePaused {
+    RideEvent? latest;
+    for (final event in _events) {
+      if (event.type != RideEventType.ridePaused &&
+          event.type != RideEventType.rideResumed) {
+        continue;
+      }
+      // Local clocks can produce equal timestamps for back-to-back actions;
+      // events are ordered by the durable store, so the later item wins ties.
+      if (latest == null || !event.createdAt.isBefore(latest.createdAt)) {
+        latest = event;
+      }
+    }
+    return latest?.type == RideEventType.ridePaused;
   }
 
   bool get markerActive {
@@ -258,6 +270,27 @@ class RideController extends ChangeNotifier {
           'label': message.label,
           if (recipients.isNotEmpty) 'recipientRiderIds': recipients,
         },
+      );
+    });
+  }
+
+  Future<void> pauseRide() => _setRidePaused(true);
+
+  Future<void> resumeRide() => _setRidePaused(false);
+
+  Future<void> _setRidePaused(bool paused) async {
+    if (ridePaused == paused) return;
+    await _run(() async {
+      final session = _requireSession();
+      if (session.role != RideRole.lead) {
+        throw const FormatException(
+          'Only the ride leader can pause the group.',
+        );
+      }
+      await _record(
+        type: paused ? RideEventType.ridePaused : RideEventType.rideResumed,
+        priority: EventPriority.important,
+        payload: const {},
       );
     });
   }

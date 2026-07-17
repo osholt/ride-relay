@@ -677,8 +677,12 @@ class RideSimulationController extends ChangeNotifier {
 
   _SimulatedPosition _sampleAgent(_SimulatedAgent agent) {
     final sampled = _routeSampler.sampleAt(agent.progressMeters);
+    // The synthetic off-route scenario must recover at the destination so the
+    // same completion rule used by a live ride can end the demo naturally.
+    final recoveredAtDestination =
+        agent.progressMeters >= routeDistanceMeters - 45;
     return _SimulatedPosition(
-      position: agent.isOffRoute
+      position: agent.isOffRoute && !recoveredAtDestination
           ? _offsetPoint(sampled.point, sampled.headingDegrees, 220)
           : sampled.point,
       headingDegrees: sampled.headingDegrees,

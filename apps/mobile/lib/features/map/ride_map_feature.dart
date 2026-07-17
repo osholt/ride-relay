@@ -52,6 +52,9 @@ class RideMapFeature extends StatefulWidget {
     this.emergencyContacts = const [],
     this.onEmergencyAlert,
     this.onEmergencyIssue,
+    this.ridePaused = false,
+    this.canToggleRidePause = false,
+    this.onToggleRidePause,
     this.onRouteChanged,
     this.acquireCurrentPosition,
     this.navigationExportCoordinator,
@@ -71,6 +74,9 @@ class RideMapFeature extends StatefulWidget {
     List<MapEmergencyContact> emergencyContacts = const [],
     Future<void> Function()? onEmergencyAlert,
     Future<void> Function(QuickMessage message)? onEmergencyIssue,
+    bool ridePaused = false,
+    bool canToggleRidePause = false,
+    Future<void> Function()? onToggleRidePause,
     ValueChanged<ImportedRoute?>? onRouteChanged,
     Future<GeoPoint?> Function()? acquireCurrentPosition,
     RouteStore? routeStore,
@@ -86,6 +92,9 @@ class RideMapFeature extends StatefulWidget {
     emergencyContacts: emergencyContacts,
     onEmergencyAlert: onEmergencyAlert,
     onEmergencyIssue: onEmergencyIssue,
+    ridePaused: ridePaused,
+    canToggleRidePause: canToggleRidePause,
+    onToggleRidePause: onToggleRidePause,
     onRouteChanged: onRouteChanged,
     acquireCurrentPosition: acquireCurrentPosition,
     routeStore: routeStore,
@@ -102,6 +111,9 @@ class RideMapFeature extends StatefulWidget {
   final List<MapEmergencyContact> emergencyContacts;
   final Future<void> Function()? onEmergencyAlert;
   final Future<void> Function(QuickMessage message)? onEmergencyIssue;
+  final bool ridePaused;
+  final bool canToggleRidePause;
+  final Future<void> Function()? onToggleRidePause;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
@@ -216,6 +228,9 @@ class RideMapScreen extends StatefulWidget {
     this.emergencyContacts = const [],
     this.onEmergencyAlert,
     this.onEmergencyIssue,
+    this.ridePaused = false,
+    this.canToggleRidePause = false,
+    this.onToggleRidePause,
     this.onRouteChanged,
     this.acquireCurrentPosition,
     this.navigationExportCoordinator,
@@ -240,6 +255,9 @@ class RideMapScreen extends StatefulWidget {
   final List<MapEmergencyContact> emergencyContacts;
   final Future<void> Function()? onEmergencyAlert;
   final Future<void> Function(QuickMessage message)? onEmergencyIssue;
+  final bool ridePaused;
+  final bool canToggleRidePause;
+  final Future<void> Function()? onToggleRidePause;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
@@ -455,6 +473,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
         ? overlayRight + groupMiniMapWidth + 16
         : overlayRight + (landscape ? 68 : 12);
     final statusTop = overlayTop + (_downloadProgress == null ? 8 : 72);
+    final emergencyBottom =
+        overlayBottom + (markerOverviewActive && !landscape ? 254.0 : 54.0);
     return Scaffold(
       appBar: hideChrome
           ? null
@@ -663,7 +683,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 if (_route != null && widget.onEmergencyAlert != null)
                   Positioned(
                     left: overlayLeft + 12,
-                    bottom: overlayBottom + 54,
+                    bottom: emergencyBottom,
                     child: FloatingActionButton.extended(
                       key: const Key('emergency-alert-button'),
                       heroTag: 'ride-relay-emergency-alert',
@@ -688,6 +708,36 @@ class _RideMapScreenState extends State<RideMapScreen> {
                             ),
                       label: Text(_emergencyAlertSent ? 'ALERT SENT' : 'ALERT'),
                     ),
+                  ),
+                if (_route != null &&
+                    widget.canToggleRidePause &&
+                    widget.onToggleRidePause != null)
+                  Positioned(
+                    left: overlayLeft + 12,
+                    bottom: emergencyBottom + 62,
+                    child: FloatingActionButton.extended(
+                      key: const Key('ride-pause-button'),
+                      heroTag: 'ride-relay-pause',
+                      tooltip: widget.ridePaused
+                          ? 'Resume group ride'
+                          : 'Pause group ride',
+                      onPressed: widget.onToggleRidePause,
+                      backgroundColor: widget.ridePaused
+                          ? const Color(0xFF4D9D70)
+                          : const Color(0xE6252E39),
+                      foregroundColor: Colors.white,
+                      icon: Icon(
+                        widget.ridePaused ? Icons.play_arrow : Icons.pause,
+                      ),
+                      label: Text(widget.ridePaused ? 'RESUME' : 'PAUSE'),
+                    ),
+                  ),
+                if (_route != null && widget.ridePaused)
+                  Positioned(
+                    left: overlayLeft + 12,
+                    right: overlayRight + 12,
+                    top: statusTop,
+                    child: const _RidePausedBanner(),
                   ),
                 if (_route == null)
                   Positioned.fill(
@@ -832,14 +882,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
                   .toList(growable: false),
             ),
           ),
-        if (_basemap.usesLegacyRaster)
-          SimpleAttributionWidget(
-            source: Text(
-              _basemap.attribution,
-              style: const TextStyle(fontSize: 10),
-            ),
-            backgroundColor: const Color(0xCC171D25),
-          ),
       ],
     );
 
@@ -881,11 +923,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
             ),
           ),
         ),
-        Positioned(
-          left: 8,
-          bottom: 8,
-          child: _MapAttributionBadge(text: _basemap.attribution),
-        ),
       ],
     );
   }
@@ -893,7 +930,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
   void _onMapLibreCreated(ml.MapLibreMapController controller) {
     _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
     _mapLibreController = controller;
-    _initialCameraPositioned = false;
     controller.onFeatureTapped.add(_onMapLibreFeatureTapped);
   }
 
@@ -3130,20 +3166,32 @@ class _RouteOnlyBadge extends StatelessWidget {
   );
 }
 
-class _MapAttributionBadge extends StatelessWidget {
-  const _MapAttributionBadge({required this.text});
-
-  final String text;
+class _RidePausedBanner extends StatelessWidget {
+  const _RidePausedBanner();
 
   @override
-  Widget build(BuildContext context) => Container(
-    constraints: const BoxConstraints(maxWidth: 260),
-    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-    decoration: BoxDecoration(
-      color: const Color(0xCC171D25),
-      borderRadius: BorderRadius.circular(6),
+  Widget build(BuildContext context) => Center(
+    child: DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xE6252E39),
+        borderRadius: BorderRadius.circular(99),
+        border: Border.all(color: const Color(0xFFFFC857)),
+      ),
+      child: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.pause_circle_filled, color: Color(0xFFFFC857)),
+            SizedBox(width: 8),
+            Text(
+              'GROUP RIDE PAUSED',
+              style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 0.7),
+            ),
+          ],
+        ),
+      ),
     ),
-    child: Text(text, style: const TextStyle(fontSize: 9)),
   );
 }
 

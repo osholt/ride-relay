@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../controllers/distance_unit_controller.dart';
 import '../../domain/distance_unit.dart';
+import '../../services/basemap_configuration.dart';
 
 class UnitSettingsSheet extends StatelessWidget {
   const UnitSettingsSheet({super.key, required this.controller});
@@ -23,7 +24,7 @@ class UnitSettingsSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: controller,
-    builder: (context, _) => Padding(
+    builder: (context, _) => SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(22, 4, 22, 28),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -72,6 +73,19 @@ class UnitSettingsSheet extends StatelessWidget {
               ),
             ),
           ],
+          const SizedBox(height: 22),
+          Text(
+            'MAP DATA',
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              color: const Color(0xFF8D98A7),
+              letterSpacing: 1.1,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            BasemapConfiguration.fromEnvironment().attribution,
+            style: const TextStyle(color: Color(0xFF98A3B1), fontSize: 12),
+          ),
         ],
       ),
     ),

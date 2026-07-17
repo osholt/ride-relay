@@ -664,6 +664,8 @@ class _EventRow extends StatelessWidget {
       RideEventType.hazardCleared => 'Hazard cleared',
       RideEventType.routeDeviationChanged => 'Route status changed',
       RideEventType.routeAlertAcknowledged => 'Route alert acknowledged',
+      RideEventType.ridePaused => 'Ride paused',
+      RideEventType.rideResumed => 'Ride resumed',
       RideEventType.rideEnded => 'Ride ended',
     };
     final time = TimeOfDay.fromDateTime(event.createdAt).format(context);

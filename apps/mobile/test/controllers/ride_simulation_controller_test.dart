@@ -6,6 +6,7 @@ import 'package:ride_relay/domain/geo_point.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/domain/route_alert.dart';
+import 'package:ride_relay/services/ride_completion_detector.dart';
 
 void main() {
   late InMemoryEventStore store;
@@ -386,6 +387,14 @@ void main() {
     expect(
       awareness.riderLocations.every(
         (location) => location.sample.speedMetersPerSecond == 0,
+      ),
+      isTrue,
+    );
+    expect(
+      const RideCompletionDetector().everyoneReachedDestination(
+        destination: const GeoPoint(latitude: 51, longitude: -0.9),
+        riderLocations: awareness.riderLocations,
+        now: DateTime.now(),
       ),
       isTrue,
     );

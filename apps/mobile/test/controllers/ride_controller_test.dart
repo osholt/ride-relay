@@ -142,6 +142,21 @@ void main() {
     expect(message.payload['recipientRiderIds'], const ['lead', 'tec']);
   });
 
+  test(
+    'leader can pause and resume the shared ride without stopping GPS',
+    () async {
+      await controller.createRide('Oliver');
+
+      await controller.pauseRide();
+      expect(controller.ridePaused, isTrue);
+      expect(controller.events.last.type, RideEventType.ridePaused);
+
+      await controller.resumeRide();
+      expect(controller.ridePaused, isFalse);
+      expect(controller.events.last.type, RideEventType.rideResumed);
+    },
+  );
+
   test('marker counts each rider once', () async {
     await controller.createRide('Oliver');
     await controller.startMarker();

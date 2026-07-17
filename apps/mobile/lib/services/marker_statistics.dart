@@ -73,6 +73,8 @@ abstract final class MarkerStatistics {
         case RideEventType.hazardCleared:
         case RideEventType.routeDeviationChanged:
         case RideEventType.routeAlertAcknowledged:
+        case RideEventType.ridePaused:
+        case RideEventType.rideResumed:
         case RideEventType.rideEnded:
           break;
       }

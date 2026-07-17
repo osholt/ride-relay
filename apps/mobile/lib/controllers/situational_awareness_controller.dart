@@ -391,6 +391,8 @@ class SituationalAwarenessController extends ChangeNotifier {
       case RideEventType.markerPass:
       case RideEventType.markerEnded:
       case RideEventType.statusMessage:
+      case RideEventType.ridePaused:
+      case RideEventType.rideResumed:
       case RideEventType.rideEnded:
         break;
     }

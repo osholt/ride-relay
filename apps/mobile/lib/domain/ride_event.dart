@@ -11,6 +11,8 @@ enum RideEventType {
   hazardCleared,
   routeDeviationChanged,
   routeAlertAcknowledged,
+  ridePaused,
+  rideResumed,
   rideEnded,
 }
 
