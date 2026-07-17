@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:uuid/uuid.dart';
@@ -15,12 +16,16 @@ import '../../domain/route_store.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/gpx_import_source.dart';
 import '../../services/gpx_parser.dart';
+import '../../services/leader_ride_status.dart';
 import '../../services/map_geojson.dart';
 import '../../services/map_style_repository.dart';
 import '../../services/maplibre_offline_manager.dart';
 import '../../services/navigation_export.dart';
 import '../../services/offline_tile_cache.dart';
+import '../../services/road_routing.dart';
+import '../../services/route_geometry_enricher.dart';
 import '../../services/route_importer.dart';
+import 'destination_route_sheet.dart';
 import 'navigation_export_sheet.dart';
 
 /// Self-contained production entry point for the map/GPX feature.
@@ -34,7 +39,9 @@ class RideMapFeature extends StatefulWidget {
     super.key,
     this.currentPosition,
     this.overlayMarkers,
+    this.leaderStatus,
     this.onRouteChanged,
+    this.acquireCurrentPosition,
     this.navigationExportCoordinator,
     this.basemapConfiguration = const BasemapConfiguration(),
   });
@@ -43,18 +50,24 @@ class RideMapFeature extends StatefulWidget {
     Key? key,
     ValueListenable<GeoPoint?>? currentPosition,
     ValueListenable<List<MapOverlayMarker>>? overlayMarkers,
+    ValueListenable<LeaderRideStatus?>? leaderStatus,
     ValueChanged<ImportedRoute?>? onRouteChanged,
+    Future<GeoPoint?> Function()? acquireCurrentPosition,
   }) => RideMapFeature(
     key: key,
     currentPosition: currentPosition,
     overlayMarkers: overlayMarkers,
+    leaderStatus: leaderStatus,
     onRouteChanged: onRouteChanged,
+    acquireCurrentPosition: acquireCurrentPosition,
     basemapConfiguration: BasemapConfiguration.fromEnvironment(),
   );
 
   final ValueListenable<GeoPoint?>? currentPosition;
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
+  final ValueListenable<LeaderRideStatus?>? leaderStatus;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
+  final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
   final BasemapConfiguration basemapConfiguration;
 
@@ -117,7 +130,9 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         disposeOfflineTileCache: true,
         currentPosition: widget.currentPosition,
         overlayMarkers: widget.overlayMarkers,
+        leaderStatus: widget.leaderStatus,
         onRouteChanged: widget.onRouteChanged,
+        acquireCurrentPosition: widget.acquireCurrentPosition,
         navigationExportCoordinator: widget.navigationExportCoordinator,
       );
     },
@@ -149,8 +164,12 @@ class RideMapScreen extends StatefulWidget {
     this.mapStyleString = MapStyleRepository.fallbackStyle,
     this.currentPosition,
     this.overlayMarkers,
+    this.leaderStatus,
     this.onRouteChanged,
+    this.acquireCurrentPosition,
     this.navigationExportCoordinator,
+    this.destinationRoutePlanner,
+    this.routeGeometryEnricher,
     this.demoRouteLoader,
     this.disposeOfflineTileCache = false,
   });
@@ -162,8 +181,12 @@ class RideMapScreen extends StatefulWidget {
   final String mapStyleString;
   final ValueListenable<GeoPoint?>? currentPosition;
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
+  final ValueListenable<LeaderRideStatus?>? leaderStatus;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
+  final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
+  final DestinationRoutePlanner? destinationRoutePlanner;
+  final RouteGeometryEnricher? routeGeometryEnricher;
   final Future<ImportedRoute> Function()? demoRouteLoader;
   final bool disposeOfflineTileCache;
 
@@ -178,6 +201,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
   static const _overlaySource = 'ride-relay-overlays';
 
   final MapController _mapController = MapController();
+  late final http.Client _routingClient;
+  late final DestinationRoutePlanner _defaultDestinationRoutePlanner;
+  late final RouteGeometryEnricher _defaultRouteGeometryEnricher;
   ml.MapLibreMapController? _mapLibreController;
   late final MapLibreOfflineManager _mapLibreOfflineManager;
   bool _mapLibreStyleReady = false;
@@ -186,14 +212,37 @@ class _RideMapScreenState extends State<RideMapScreen> {
   bool _loading = true;
   bool _importing = false;
   bool _exporting = false;
+  bool _routing = false;
   TileDownloadProgress? _downloadProgress;
   TileDownloadCancellationToken? _downloadCancellation;
 
   BasemapConfiguration get _basemap => widget.offlineTileCache.configuration;
 
+  DestinationRoutePlanner get _destinationRoutePlanner =>
+      widget.destinationRoutePlanner ?? _defaultDestinationRoutePlanner;
+
+  RouteGeometryEnricher get _routeGeometryEnricher =>
+      widget.routeGeometryEnricher ?? _defaultRouteGeometryEnricher;
+
   @override
   void initState() {
     super.initState();
+    _routingClient = http.Client();
+    final routingConfiguration = RoutingConfiguration.fromEnvironment();
+    final routingService = OsrmRoadRoutingService(
+      client: _routingClient,
+      baseUrl: routingConfiguration.routingBaseUrl,
+    );
+    _defaultDestinationRoutePlanner = DestinationRoutePlanner(
+      searchService: NominatimDestinationSearchService(
+        client: _routingClient,
+        baseUrl: routingConfiguration.geocodingBaseUrl,
+      ),
+      routingService: routingService,
+    );
+    _defaultRouteGeometryEnricher = RouteGeometryEnricher(
+      routingService: routingService,
+    );
     _mapLibreOfflineManager =
         widget.mapLibreOfflineManager ??
         MapLibreOfflineManager(configuration: _basemap);
@@ -222,6 +271,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     widget.overlayMarkers?.removeListener(_onMapDataChanged);
     _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
     _mapController.dispose();
+    _routingClient.close();
     if (widget.disposeOfflineTileCache) widget.offlineTileCache.dispose();
     super.dispose();
   }
@@ -254,6 +304,16 @@ class _RideMapScreenState extends State<RideMapScreen> {
           overflow: TextOverflow.ellipsis,
         ),
         actions: [
+          IconButton(
+            tooltip: 'Plan a destination',
+            onPressed: _routing ? null : _planDestination,
+            icon: _routing
+                ? const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.add_road),
+          ),
           if (_route == null)
             IconButton(
               tooltip: 'Import GPX route',
@@ -337,10 +397,24 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       ),
                     ),
                   ),
+                if (widget.leaderStatus != null)
+                  Positioned(
+                    left: 12,
+                    right: 12,
+                    top: _downloadProgress == null ? 12 : 82,
+                    child: ValueListenableBuilder<LeaderRideStatus?>(
+                      valueListenable: widget.leaderStatus!,
+                      builder: (context, status, _) => status == null
+                          ? const SizedBox.shrink()
+                          : _LeaderMapStatus(status: status),
+                    ),
+                  ),
                 if (_route == null)
                   Positioned.fill(
                     child: _EmptyRoutePrompt(
                       importing: _importing,
+                      routing: _routing,
+                      onPlanDestination: _planDestination,
                       onImport: _importGpx,
                       onLoadDemo: _loadDemoRoute,
                     ),
@@ -683,6 +757,38 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
   }
 
+  Future<void> _planDestination() async {
+    if (_routing) return;
+    final request = await DestinationRouteSheet.show(context);
+    if (request == null || !mounted) return;
+    setState(() => _routing = true);
+    try {
+      var origin = widget.currentPosition?.value;
+      origin ??= await widget.acquireCurrentPosition?.call();
+      origin ??= widget.currentPosition?.value;
+      if (origin == null) {
+        throw const FormatException(
+          'A current location is required. Allow location access and try again.',
+        );
+      }
+      final planned = await _destinationRoutePlanner.plan(
+        origin: origin,
+        query: request.query,
+      );
+      final route = await _activateRoute(planned);
+      if (mounted) {
+        final target = request.handoffTarget;
+        if (target != null) await _exportRoute(target, route);
+      }
+    } on FormatException catch (error) {
+      _showMessage(error.message);
+    } on Object catch (error) {
+      _showMessage('Could not plan destination: $error');
+    } finally {
+      if (mounted) setState(() => _routing = false);
+    }
+  }
+
   Future<void> _loadDemoRoute() async {
     try {
       final loader = widget.demoRouteLoader ?? _loadBundledDemoRoute;
@@ -702,16 +808,25 @@ class _RideMapScreenState extends State<RideMapScreen> {
     );
   }
 
-  Future<void> _activateRoute(ImportedRoute route) async {
-    await widget.routeStore.saveActiveRoute(route);
-    if (!mounted) return;
-    setState(() => _route = route);
+  Future<ImportedRoute> _activateRoute(ImportedRoute route) async {
+    final enrichment = await _routeGeometryEnricher.enrich(route);
+    final activeRoute = enrichment.route;
+    await widget.routeStore.saveActiveRoute(activeRoute);
+    if (!mounted) return activeRoute;
+    setState(() => _route = activeRoute);
     await _syncMapLibreSources();
     _fitRoute();
-    widget.onRouteChanged?.call(route);
+    widget.onRouteChanged?.call(activeRoute);
+    final routeMessage = enrichment.changed
+        ? '${activeRoute.name}: matched to roads and stored offline '
+              '(${activeRoute.pathPointCount} points).'
+        : '${activeRoute.name}: ${activeRoute.pathPointCount} route points stored offline.';
     _showMessage(
-      '${route.name}: ${route.pathPointCount} route points stored offline.',
+      enrichment.warning == null
+          ? routeMessage
+          : '$routeMessage ${enrichment.warning}',
     );
+    return activeRoute;
   }
 
   Future<void> _downloadOfflineMap() async {
@@ -767,6 +882,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
     if (route == null) return;
     final target = await NavigationExportSheet.show(context);
     if (target == null || !mounted) return;
+    await _exportRoute(target, route);
+  }
+
+  Future<void> _exportRoute(
+    NavigationTarget target,
+    ImportedRoute route,
+  ) async {
     setState(() => _exporting = true);
     try {
       final renderObject = context.findRenderObject();
@@ -913,11 +1035,15 @@ String _hexColor(Color color) =>
 class _EmptyRoutePrompt extends StatelessWidget {
   const _EmptyRoutePrompt({
     required this.importing,
+    required this.routing,
+    required this.onPlanDestination,
     required this.onImport,
     required this.onLoadDemo,
   });
 
   final bool importing;
+  final bool routing;
+  final VoidCallback onPlanDestination;
   final VoidCallback onImport;
   final VoidCallback onLoadDemo;
 
@@ -939,11 +1065,23 @@ class _EmptyRoutePrompt extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Import a GPX file, or use the demo route to try the map.',
+                'Enter a destination, import a GPX file, or use the demo route.',
                 style: TextStyle(color: Color(0xFF98A3B1)),
               ),
               const SizedBox(height: 20),
               FilledButton.icon(
+                key: const Key('plan-destination-empty-button'),
+                onPressed: routing ? null : onPlanDestination,
+                icon: routing
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.add_road),
+                label: const Text('Enter destination'),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
                 onPressed: importing ? null : onImport,
                 icon: importing
                     ? const SizedBox.square(
@@ -953,7 +1091,6 @@ class _EmptyRoutePrompt extends StatelessWidget {
                     : const Icon(Icons.upload_file),
                 label: const Text('Import GPX'),
               ),
-              const SizedBox(height: 8),
               TextButton(
                 onPressed: onLoadDemo,
                 child: const Text('Use demo route'),
@@ -964,6 +1101,147 @@ class _EmptyRoutePrompt extends StatelessWidget {
       ),
     ),
   );
+}
+
+class _LeaderMapStatus extends StatelessWidget {
+  const _LeaderMapStatus({required this.status});
+
+  final LeaderRideStatus status;
+
+  @override
+  Widget build(BuildContext context) => Align(
+    alignment: Alignment.topCenter,
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 560),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (status.offCourseAlerts.isNotEmpty) ...[
+            _OffCourseBanner(alerts: status.offCourseAlerts),
+            const SizedBox(height: 8),
+          ],
+          _TecGapCard(status: status),
+        ],
+      ),
+    ),
+  );
+}
+
+class _OffCourseBanner extends StatelessWidget {
+  const _OffCourseBanner({required this.alerts});
+
+  final List<LeaderOffCourseAlert> alerts;
+
+  @override
+  Widget build(BuildContext context) {
+    final first = alerts.first;
+    final distance = first.distanceFromRouteMeters;
+    final message = alerts.length == 1
+        ? '${first.displayName} is clearly off course'
+        : '${alerts.length} riders are clearly off course';
+    return Card(
+      key: const Key('leader-off-course-alert'),
+      color: const Color(0xFFE2445C),
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        child: Row(
+          children: [
+            const Icon(Icons.warning_rounded, color: Colors.white),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    message,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  if (alerts.length == 1 && distance != null)
+                    Text(
+                      '${_distanceLabel(distance)} from the planned route',
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TecGapCard extends StatelessWidget {
+  const _TecGapCard({required this.status});
+
+  final LeaderRideStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = status.tecName;
+    final distance = status.distanceToTecMeters;
+    final eta = status.estimatedTimeToTec;
+    final age = status.tecLocationAge;
+    final detail = name == null
+        ? 'Waiting for a Tail End Charlie location'
+        : distance == null || eta == null
+        ? '$name · last update ${_ageLabel(age)}'
+        : '$name · ${_distanceLabel(distance)} · about ${_durationLabel(eta)}';
+    return Card(
+      key: const Key('leader-tec-gap'),
+      margin: EdgeInsets.zero,
+      color: const Color(0xE6252E39),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Row(
+          children: [
+            const Icon(Icons.two_wheeler, color: Color(0xFF6ED89A)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'TEC GAP',
+                    style: TextStyle(
+                      color: Color(0xFFB7C2CF),
+                      fontWeight: FontWeight.w800,
+                      fontSize: 11,
+                      letterSpacing: 1.1,
+                    ),
+                  ),
+                  Text(detail, maxLines: 1, overflow: TextOverflow.ellipsis),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+String _distanceLabel(double meters) => meters < 1000
+    ? '${meters.round()} m'
+    : '${(meters / 1000).toStringAsFixed(1)} km';
+
+String _durationLabel(Duration duration) {
+  final minutes = (duration.inSeconds / 60).ceil();
+  if (minutes <= 1) return '<1 min';
+  if (minutes < 60) return '$minutes min';
+  final hours = minutes ~/ 60;
+  final remainder = minutes % 60;
+  return remainder == 0 ? '$hours hr' : '$hours hr $remainder min';
+}
+
+String _ageLabel(Duration? age) {
+  if (age == null || age.inSeconds < 30) return 'just now';
+  if (age.inMinutes < 1) return '${age.inSeconds}s ago';
+  return '${age.inMinutes} min ago';
 }
 
 class _DownloadProgress extends StatelessWidget {

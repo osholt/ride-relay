@@ -25,9 +25,14 @@ phones when mobile coverage disappears.
 - Generate and share a private invitation link, paste it to join, and display it
   as a QR code. OS link handling and in-app QR scanning remain release work.
 - Import and persist GPX 1.1 routes, render them with MapLibre on both platforms,
-  and download bounded native offline regions when an approved style is configured.
+  match sparse route/waypoint files to roads when online, and download bounded
+  native offline regions when an approved style is configured.
+- Enter a destination to generate a road-following route, keep it in Ride Relay,
+  or hand its GPX to Calimoto/MyRoute-app through the native share sheet.
 - Record foreground position, report/expire/deduplicate hazards, show rider and
   hazard overlays, and detect sustained route deviation with stale-GPS handling.
+- Give the ride lead a compact along-route distance/ETA to Tail End Charlie and
+  an immediate map alert for confirmed unacknowledged off-course riders.
 - Queue authenticated events for store-and-forward delivery over native Google
   Nearby Connections transports with reconnect, expiry, ACK, and replay safety.
 - Batch authenticated events through an optional HTTPS relay with durable

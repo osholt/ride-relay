@@ -1,0 +1,179 @@
+import 'dart:convert';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:ride_relay/domain/imported_route.dart';
+import 'package:ride_relay/services/road_routing.dart';
+import 'package:ride_relay/services/route_geometry_enricher.dart';
+
+void main() {
+  test('OSRM client requests and parses full road geometry', () async {
+    final client = MockClient((request) async {
+      expect(request.url.path, contains('/route/v1/driving/'));
+      expect(request.url.queryParameters['geometries'], 'geojson');
+      expect(request.url.queryParameters['overview'], 'full');
+      expect(request.headers['User-Agent'], contains('RideRelay'));
+      return http.Response(
+        jsonEncode({
+          'code': 'Ok',
+          'routes': [
+            {
+              'distance': 1250.5,
+              'duration': 92.4,
+              'geometry': {
+                'coordinates': [
+                  [-1.0, 53.0],
+                  [-1.005, 53.005],
+                  [-1.01, 53.01],
+                ],
+              },
+            },
+          ],
+        }),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    final service = OsrmRoadRoutingService(
+      client: client,
+      baseUrl: Uri.parse('https://routing.example.test'),
+    );
+
+    final result = await service.routeThrough(const [
+      GeoPoint(latitude: 53, longitude: -1),
+      GeoPoint(latitude: 53.01, longitude: -1.01),
+    ]);
+
+    expect(result.points, hasLength(3));
+    expect(result.distanceMeters, 1250.5);
+    expect(result.duration, const Duration(milliseconds: 92400));
+  });
+
+  test(
+    'destination search supports coordinates and one-shot place search',
+    () async {
+      var requests = 0;
+      final service = NominatimDestinationSearchService(
+        client: MockClient((request) async {
+          requests += 1;
+          expect(request.url.queryParameters['q'], 'Matlock Bath');
+          expect(request.url.queryParameters['limit'], '5');
+          return http.Response(
+            jsonEncode([
+              {
+                'lat': '53.121',
+                'lon': '-1.562',
+                'display_name': 'Matlock Bath, Derbyshire, United Kingdom',
+              },
+            ]),
+            200,
+          );
+        }),
+        baseUrl: Uri.parse('https://geocoding.example.test'),
+      );
+
+      final coordinateMatch = await service.search('53.12, -1.56');
+      final placeMatch = await service.search('Matlock Bath');
+
+      expect(coordinateMatch.single.point.latitude, 53.12);
+      expect(placeMatch.single.label, startsWith('Matlock Bath'));
+      expect(requests, 1);
+    },
+  );
+
+  test(
+    'sparse GPX route points are replaced with road track geometry',
+    () async {
+      final routing = _FakeRoadRoutingService();
+      final route = ImportedRoute(
+        id: 'route',
+        name: 'Sparse route',
+        importedAt: DateTime.utc(2026),
+        sourceFileName: 'sparse.gpx',
+        paths: const [
+          RoutePath(
+            kind: RoutePathKind.track,
+            name: 'Recorded section',
+            points: [
+              GeoPoint(latitude: 52.9, longitude: -1),
+              GeoPoint(latitude: 52.91, longitude: -1.01),
+            ],
+          ),
+          RoutePath(
+            kind: RoutePathKind.route,
+            name: 'Planned section',
+            points: [
+              GeoPoint(latitude: 53, longitude: -1),
+              GeoPoint(latitude: 53.1, longitude: -1.1),
+            ],
+          ),
+        ],
+        waypoints: const [],
+      );
+
+      final result = await RouteGeometryEnricher(
+        routingService: routing,
+      ).enrich(route);
+
+      expect(result.changed, isTrue);
+      expect(result.snappedPathCount, 1);
+      expect(result.route.paths.first.kind, RoutePathKind.track);
+      expect(result.route.paths.last.kind, RoutePathKind.track);
+      expect(result.route.paths.last.points, hasLength(3));
+      expect(routing.requests.single, hasLength(2));
+    },
+  );
+
+  test('routing failure preserves the original sparse GPX route', () async {
+    final route = ImportedRoute(
+      id: 'route',
+      name: 'Offline route',
+      importedAt: DateTime.utc(2026),
+      sourceFileName: 'offline.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.route,
+          points: [
+            GeoPoint(latitude: 53, longitude: -1),
+            GeoPoint(latitude: 53.1, longitude: -1.1),
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );
+
+    final result = await RouteGeometryEnricher(
+      routingService: _FailingRoadRoutingService(),
+    ).enrich(route);
+
+    expect(result.changed, isFalse);
+    expect(result.route, same(route));
+    expect(result.warning, contains('Could not match'));
+  });
+}
+
+class _FakeRoadRoutingService implements RoadRoutingService {
+  final List<List<GeoPoint>> requests = [];
+
+  @override
+  Future<RoadRouteResult> routeThrough(List<GeoPoint> waypoints) async {
+    requests.add(waypoints);
+    return const RoadRouteResult(
+      points: [
+        GeoPoint(latitude: 53, longitude: -1),
+        GeoPoint(latitude: 53.05, longitude: -1.05),
+        GeoPoint(latitude: 53.1, longitude: -1.1),
+      ],
+      distanceMeters: 10000,
+      duration: Duration(minutes: 12),
+    );
+  }
+}
+
+class _FailingRoadRoutingService implements RoadRoutingService {
+  @override
+  Future<RoadRouteResult> routeThrough(List<GeoPoint> waypoints) {
+    throw const FormatException('offline');
+  }
+}

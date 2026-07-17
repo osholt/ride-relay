@@ -25,6 +25,7 @@ import '../../relay/relay_engine.dart';
 import '../../relay/sqlite_relay_queue.dart';
 import '../../services/device_location_source.dart';
 import '../../services/external_hazard_provider.dart';
+import '../../services/leader_ride_status.dart';
 import '../../services/route_decision_point_extractor.dart';
 import '../map/ride_map.dart';
 import '../situational_awareness/situational_awareness_screen.dart';
@@ -53,6 +54,7 @@ class ActiveRideShell extends StatefulWidget {
 class _ActiveRideShellState extends State<ActiveRideShell> {
   final _mapPosition = ValueNotifier<route_domain.GeoPoint?>(null);
   final _mapOverlays = ValueNotifier<List<MapOverlayMarker>>(const []);
+  final _leaderStatus = ValueNotifier<LeaderRideStatus?>(null);
   final _publishedEventIds = <String>{};
   final _warnings = <String>{};
 
@@ -327,6 +329,17 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
           }),
     ];
     _mapOverlays.value = List.unmodifiable(overlays);
+    final session = widget.rideController.session;
+    _leaderStatus.value = session == null
+        ? null
+        : const LeaderRideStatusCalculator().calculate(
+            localRole: session.role,
+            localRiderId: session.localRiderId,
+            localLocation: localLocation,
+            riderLocations: awareness.riderLocations,
+            routeAlerts: awareness.routeAlerts,
+            route: awareness.route,
+          );
   }
 
   static Color _hazardColor(HazardSeverity severity) => switch (severity) {
@@ -378,6 +391,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     final session = widget.rideController.session;
     if (session != null) {
       _awarenessController?.updateLocalSession(session);
+      _updateMapOverlays();
     }
     if (widget.rideController.rideEnded && !_rideEndHandled) {
       unawaited(_handleRideEnded());
@@ -485,8 +499,40 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     return RideMapFeature.fromEnvironment(
       currentPosition: _mapPosition,
       overlayMarkers: _mapOverlays,
+      leaderStatus: _leaderStatus,
       onRouteChanged: _onRouteChanged,
+      acquireCurrentPosition: _acquireCurrentPosition,
     );
+  }
+
+  Future<route_domain.GeoPoint?> _acquireCurrentPosition() async {
+    final existing = _mapPosition.value;
+    if (existing != null) return existing;
+    final locationController = _locationController;
+    if (locationController == null) return null;
+
+    final completer = Completer<route_domain.GeoPoint?>();
+    void onPosition() {
+      final position = _mapPosition.value;
+      if (position != null && !completer.isCompleted) {
+        completer.complete(position);
+      }
+    }
+
+    _mapPosition.addListener(onPosition);
+    try {
+      await locationController.requestAndStart();
+      onPosition();
+      if (!locationController.status.canSample && !completer.isCompleted) {
+        return null;
+      }
+      return await completer.future.timeout(
+        const Duration(seconds: 12),
+        onTimeout: () => _mapPosition.value,
+      );
+    } finally {
+      _mapPosition.removeListener(onPosition);
+    }
   }
 
   Widget _buildAwareness() {
@@ -528,6 +574,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     unawaited(_internetRelayController?.close());
     _mapPosition.dispose();
     _mapOverlays.dispose();
+    _leaderStatus.dispose();
     super.dispose();
   }
 }

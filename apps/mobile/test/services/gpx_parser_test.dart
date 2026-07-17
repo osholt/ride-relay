@@ -72,8 +72,17 @@ void main() {
     );
 
     expect(route.name, 'Peak District demo loop');
-    expect(route.pathPointCount, greaterThan(5));
+    expect(route.pathPointCount, greaterThan(50));
     expect(route.waypoints, hasLength(2));
+    expect(route.paths.single.kind.name, 'track');
+    expect(
+      route.paths.single.points.first.latitude,
+      route.paths.single.points.last.latitude,
+    );
+    expect(
+      route.paths.single.points.first.longitude,
+      route.paths.single.points.last.longitude,
+    );
   });
 }
 

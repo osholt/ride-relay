@@ -2,27 +2,73 @@
 <gpx version="1.1" creator="Ride Relay" xmlns="http://www.topografix.com/GPX/1/1">
   <metadata>
     <name>Peak District demo loop</name>
-    <desc>A short development route near Castleton for exercising offline route display.</desc>
+    <desc>A 36.2 km road-following loop from Castleton via Hathersage, Grindleford and Tideswell.</desc>
   </metadata>
-  <wpt lat="53.3431" lon="-1.7769">
-    <name>Ride start</name>
+  <wpt lat="53.343166" lon="-1.776903">
+    <name>Ride start and finish</name>
     <sym>Flag, Blue</sym>
   </wpt>
-  <wpt lat="53.3496" lon="-1.8138">
-    <name>Junction marker</name>
-    <desc>Demo waypoint only; not a live hazard.</desc>
+  <wpt lat="53.329269" lon="-1.663156">
+    <name>Hathersage junction marker</name>
+    <desc>Demo marker point on the planned road route.</desc>
     <sym>Waypoint</sym>
   </wpt>
   <trk>
-    <name>Winnats Pass demo</name>
+    <name>Peak District road loop</name>
     <trkseg>
-      <trkpt lat="53.3431" lon="-1.7769"><ele>195</ele></trkpt>
-      <trkpt lat="53.3448" lon="-1.7852"><ele>214</ele></trkpt>
-      <trkpt lat="53.3474" lon="-1.7961"><ele>253</ele></trkpt>
-      <trkpt lat="53.3496" lon="-1.8138"><ele>352</ele></trkpt>
-      <trkpt lat="53.3445" lon="-1.8298"><ele>411</ele></trkpt>
-      <trkpt lat="53.3347" lon="-1.8319"><ele>368</ele></trkpt>
-      <trkpt lat="53.3265" lon="-1.8154"><ele>286</ele></trkpt>
+      <trkpt lat="53.343166" lon="-1.776903" />
+      <trkpt lat="53.344712" lon="-1.771298" />
+      <trkpt lat="53.346684" lon="-1.769140" />
+      <trkpt lat="53.347338" lon="-1.765645" />
+      <trkpt lat="53.348150" lon="-1.742558" />
+      <trkpt lat="53.340706" lon="-1.721561" />
+      <trkpt lat="53.341689" lon="-1.710885" />
+      <trkpt lat="53.341484" lon="-1.701108" />
+      <trkpt lat="53.339796" lon="-1.694620" />
+      <trkpt lat="53.337694" lon="-1.692462" />
+      <trkpt lat="53.332999" lon="-1.673118" />
+      <trkpt lat="53.329269" lon="-1.663156" />
+      <trkpt lat="53.330051" lon="-1.656449" />
+      <trkpt lat="53.327563" lon="-1.653723" />
+      <trkpt lat="53.321071" lon="-1.650715" />
+      <trkpt lat="53.314205" lon="-1.644553" />
+      <trkpt lat="53.311476" lon="-1.640050" />
+      <trkpt lat="53.306027" lon="-1.641737" />
+      <trkpt lat="53.302718" lon="-1.641181" />
+      <trkpt lat="53.298408" lon="-1.637298" />
+      <trkpt lat="53.296092" lon="-1.637406" />
+      <trkpt lat="53.295499" lon="-1.636095" />
+      <trkpt lat="53.288579" lon="-1.642233" />
+      <trkpt lat="53.281673" lon="-1.642624" />
+      <trkpt lat="53.276275" lon="-1.639418" />
+      <trkpt lat="53.274356" lon="-1.643481" />
+      <trkpt lat="53.269917" lon="-1.642926" />
+      <trkpt lat="53.276752" lon="-1.659757" />
+      <trkpt lat="53.279855" lon="-1.680659" />
+      <trkpt lat="53.278844" lon="-1.685081" />
+      <trkpt lat="53.280548" lon="-1.691653" />
+      <trkpt lat="53.280865" lon="-1.700413" />
+      <trkpt lat="53.282641" lon="-1.706338" />
+      <trkpt lat="53.278990" lon="-1.714914" />
+      <trkpt lat="53.276940" lon="-1.731336" />
+      <trkpt lat="53.283385" lon="-1.762391" />
+      <trkpt lat="53.297507" lon="-1.745397" />
+      <trkpt lat="53.304389" lon="-1.749087" />
+      <trkpt lat="53.311648" lon="-1.749388" />
+      <trkpt lat="53.314794" lon="-1.743953" />
+      <trkpt lat="53.318538" lon="-1.744930" />
+      <trkpt lat="53.325974" lon="-1.739298" />
+      <trkpt lat="53.329388" lon="-1.742168" />
+      <trkpt lat="53.332004" lon="-1.741097" />
+      <trkpt lat="53.333264" lon="-1.739065" />
+      <trkpt lat="53.336821" lon="-1.739073" />
+      <trkpt lat="53.344210" lon="-1.740533" />
+      <trkpt lat="53.346261" lon="-1.743723" />
+      <trkpt lat="53.348222" lon="-1.743205" />
+      <trkpt lat="53.347280" lon="-1.766039" />
+      <trkpt lat="53.346592" lon="-1.769386" />
+      <trkpt lat="53.344045" lon="-1.772804" />
+      <trkpt lat="53.343166" lon="-1.776903" />
     </trkseg>
   </trk>
 </gpx>

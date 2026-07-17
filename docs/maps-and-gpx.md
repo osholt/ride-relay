@@ -12,7 +12,34 @@ not bulk-download from the public OpenStreetMap tile servers.
 - Stores a versioned parsed route in application support storage.
 - Accepts UTF-8 files up to 10 MB and 200,000 points.
 - Rejects invalid coordinates, document type declarations, and empty geometry.
-- Includes a Peak District demo route for simulator testing.
+- Treats recorded `<trk>` geometry as authoritative and never reroutes it.
+- Attempts to match sparse `<rte>` geometry, or waypoint-only GPX files, to the
+  road network after an explicit import. If routing is unavailable, the original
+  GPX remains usable and is stored unchanged.
+- Includes a valid 36.2 km Peak District GPX track following mapped roads.
+
+## Destination and road routing
+
+The map's destination action performs one user-submitted place/postcode search
+and routes from the current foreground location. It does not send autocomplete
+or background geocoding traffic. Latitude/longitude input bypasses geocoding.
+Generated road geometry is stored as an ordinary GPX-compatible track and stays
+visible offline after planning.
+
+Development-alpha builds use the public OSRM and Nominatim endpoints. Both are
+replaceable without an app update:
+
+```text
+--dart-define=RIDE_RELAY_ROUTING_URL=https://routing.example.com
+--dart-define=RIDE_RELAY_GEOCODING_URL=https://geocoding.example.com
+```
+
+Destination results are cached for the app session and requests identify Ride
+Relay with a valid User-Agent. The public Nominatim service forbids client-side
+autocomplete and limits aggregate use; production must use an approved provider
+or self-hosted proxy before scale testing. OSRM uses the driving profile, so it
+produces road-following routes but does not claim Calimoto-style motorcycle or
+curvy-road optimization.
 
 ## MapLibre provider configuration
 
@@ -96,3 +123,5 @@ and coverage edges remain part of the field-test matrix.
 - [OpenStreetMap tile usage policy](https://operations.osmfoundation.org/policies/tiles/)
 - [OS Open Zoomstack](https://www.ordnancesurvey.co.uk/products/os-open-zoomstack)
 - [GPX 1.1 schema](https://www.topografix.com/GPX/1/1/)
+- [OSRM route service](https://project-osrm.org/docs/)
+- [Nominatim usage policy](https://operations.osmfoundation.org/policies/nominatim/)
