@@ -139,7 +139,6 @@ void main() {
         configuration: const BasemapConfiguration(),
         httpClient: MockClient((_) async => http.Response('', 404)),
       );
-
       await tester.pumpWidget(
         MaterialApp(
           theme: ThemeData.dark(useMaterial3: true),
@@ -284,6 +283,7 @@ void main() {
         configuration: const BasemapConfiguration(),
         httpClient: MockClient((_) async => http.Response('', 404)),
       );
+      var menuOpens = 0;
 
       await tester.pumpWidget(
         MaterialApp(
@@ -295,6 +295,7 @@ void main() {
             navigationPosition: navigation,
             overlayMarkers: riders,
             offRouteTraces: traces,
+            onOpenRideMenu: () async => menuOpens += 1,
           ),
         ),
       );
@@ -302,11 +303,16 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
 
       expect(find.byType(AppBar), findsNothing);
+      expect(find.byKey(const Key('ride-menu-button')), findsOneWidget);
       expect(find.byKey(const Key('group-mini-map')), findsOneWidget);
       expect(find.text('3 RIDERS'), findsOneWidget);
       expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
+      await tester.tap(find.byKey(const Key('ride-menu-button')));
+      await tester.pump();
+      expect(menuOpens, 1);
       tester.view.physicalSize = const Size(390, 844);
       await tester.pump();
+      expect(find.byKey(const Key('ride-menu-button')), findsOneWidget);
       expect(find.byKey(const Key('group-mini-map')), findsOneWidget);
       final portraitMiniMap = tester.getRect(
         find.byKey(const Key('group-mini-map')),

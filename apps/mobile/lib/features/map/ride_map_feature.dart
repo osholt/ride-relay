@@ -55,6 +55,7 @@ class RideMapFeature extends StatefulWidget {
     this.ridePaused = false,
     this.canToggleRidePause = false,
     this.onToggleRidePause,
+    this.onOpenRideMenu,
     this.onRouteChanged,
     this.acquireCurrentPosition,
     this.navigationExportCoordinator,
@@ -77,6 +78,7 @@ class RideMapFeature extends StatefulWidget {
     bool ridePaused = false,
     bool canToggleRidePause = false,
     Future<void> Function()? onToggleRidePause,
+    Future<void> Function()? onOpenRideMenu,
     ValueChanged<ImportedRoute?>? onRouteChanged,
     Future<GeoPoint?> Function()? acquireCurrentPosition,
     RouteStore? routeStore,
@@ -95,6 +97,7 @@ class RideMapFeature extends StatefulWidget {
     ridePaused: ridePaused,
     canToggleRidePause: canToggleRidePause,
     onToggleRidePause: onToggleRidePause,
+    onOpenRideMenu: onOpenRideMenu,
     onRouteChanged: onRouteChanged,
     acquireCurrentPosition: acquireCurrentPosition,
     routeStore: routeStore,
@@ -114,6 +117,7 @@ class RideMapFeature extends StatefulWidget {
   final bool ridePaused;
   final bool canToggleRidePause;
   final Future<void> Function()? onToggleRidePause;
+  final Future<void> Function()? onOpenRideMenu;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
@@ -231,6 +235,7 @@ class RideMapScreen extends StatefulWidget {
     this.ridePaused = false,
     this.canToggleRidePause = false,
     this.onToggleRidePause,
+    this.onOpenRideMenu,
     this.onRouteChanged,
     this.acquireCurrentPosition,
     this.navigationExportCoordinator,
@@ -258,6 +263,7 @@ class RideMapScreen extends StatefulWidget {
   final bool ridePaused;
   final bool canToggleRidePause;
   final Future<void> Function()? onToggleRidePause;
+  final Future<void> Function()? onOpenRideMenu;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
@@ -469,6 +475,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
     final showGroupMiniMap =
         _route != null && groupSize > 1 && !markerOverviewActive;
     final groupMiniMapWidth = landscape ? 196.0 : 150.0;
+    final showRideMenu = hideChrome && widget.onOpenRideMenu != null;
+    final statusLeft =
+        overlayLeft +
+        (showRideMenu
+            ? 60
+            : landscape
+            ? 8
+            : 12);
     final statusRight = showGroupMiniMap
         ? overlayRight + groupMiniMapWidth + 16
         : overlayRight + (landscape ? 68 : 12);
@@ -604,9 +618,23 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       ),
                     ),
                   ),
+                if (showRideMenu)
+                  Positioned(
+                    left: overlayLeft + 10,
+                    top: overlayTop + 8,
+                    child: FloatingActionButton.small(
+                      key: const Key('ride-menu-button'),
+                      heroTag: 'ride-relay-menu',
+                      tooltip: 'Ride menu',
+                      onPressed: widget.onOpenRideMenu,
+                      backgroundColor: const Color(0xE6252E39),
+                      foregroundColor: Colors.white,
+                      child: const Icon(Icons.menu),
+                    ),
+                  ),
                 if (widget.leaderStatus != null)
                   Positioned(
-                    left: overlayLeft + (landscape ? 8 : 12),
+                    left: statusLeft,
                     right: statusRight,
                     top: statusTop,
                     child: ValueListenableBuilder<LeaderRideStatus?>(
@@ -736,7 +764,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                   Positioned(
                     left: overlayLeft + 12,
                     right: overlayRight + 12,
-                    top: statusTop,
+                    top: statusTop + (showRideMenu ? 48 : 0),
                     child: const _RidePausedBanner(),
                   ),
                 if (_route == null)

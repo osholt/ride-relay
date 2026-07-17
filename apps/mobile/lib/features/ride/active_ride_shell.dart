@@ -62,6 +62,62 @@ class ActiveRideShell extends StatefulWidget {
   State<ActiveRideShell> createState() => _ActiveRideShellState();
 }
 
+/// Compact, always-available navigation for the full-screen map canvas.
+class _RideNavigationMenu extends StatelessWidget {
+  const _RideNavigationMenu({
+    required this.simulation,
+    required this.selectedIndex,
+    required this.onSelected,
+  });
+
+  final bool simulation;
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final destinations = <({int index, IconData icon, String label})>[
+      (index: 0, icon: Icons.map_outlined, label: 'Navigation map'),
+      if (simulation)
+        (index: 1, icon: Icons.science_outlined, label: 'Ride Lab'),
+      (
+        index: simulation ? 2 : 1,
+        icon: Icons.tune_outlined,
+        label: 'Ride details',
+      ),
+      (
+        index: simulation ? 3 : 2,
+        icon: Icons.health_and_safety_outlined,
+        label: 'Safety',
+      ),
+    ];
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Ride menu', style: Theme.of(context).textTheme.headlineSmall),
+            const SizedBox(height: 8),
+            for (final destination in destinations)
+              ListTile(
+                key: Key('ride-menu-${destination.index}'),
+                leading: Icon(destination.icon),
+                title: Text(destination.label),
+                trailing: selectedIndex == destination.index
+                    ? const Icon(Icons.check, color: Color(0xFFFFC857))
+                    : null,
+                onTap: () => onSelected(destination.index),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ActiveRideShellState extends State<ActiveRideShell> {
   final _mapPosition = ValueNotifier<route_domain.GeoPoint?>(null);
   final _mapNavigationPosition = ValueNotifier<MapNavigationPosition?>(null);
@@ -1050,6 +1106,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       ridePaused: widget.rideController.ridePaused,
       canToggleRidePause: widget.rideController.session?.role == RideRole.lead,
       onToggleRidePause: _toggleRidePause,
+      onOpenRideMenu: _openRideMenu,
       onRouteChanged: _onRouteChanged,
       acquireCurrentPosition: _isSimulation
           ? () async => _mapPosition.value
@@ -1109,6 +1166,21 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     } else {
       await widget.rideController.pauseRide();
     }
+  }
+
+  Future<void> _openRideMenu() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => _RideNavigationMenu(
+        simulation: _isSimulation,
+        selectedIndex: _selectedIndex,
+        onSelected: (index) {
+          Navigator.of(context).pop();
+          if (mounted) setState(() => _selectedIndex = index);
+        },
+      ),
+    );
   }
 
   Widget _buildSimulation() {
