@@ -159,6 +159,12 @@ void main() {
       expect(find.text('Maya is holding this junction.'), findsOneWidget);
       expect(find.text('2/3 passed'), findsOneWidget);
       expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
+      final overlayBounds = tester.getRect(
+        find.byKey(const Key('junction-marker-overlay')),
+      );
+      expect(overlayBounds.left, greaterThan(400));
+      expect(overlayBounds.top, greaterThan(100));
+      expect(overlayBounds.bottom, greaterThan(350));
 
       marker.value = null;
       await tester.pump();

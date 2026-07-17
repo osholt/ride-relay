@@ -243,7 +243,7 @@ class RideSimulationController extends ChangeNotifier {
       final sampled = _sampleAgent(agent);
       return SimulatedRiderSnapshot(
         id: agent.id,
-        displayName: agent.displayName,
+        displayName: agent.isLocal ? _localPerspectiveName : agent.displayName,
         role: agent.role,
         progress: (agent.progressMeters / routeDistanceMeters).clamp(0, 1),
         speedMetersPerSecond: _speedFor(agent),
@@ -403,6 +403,7 @@ class RideSimulationController extends ChangeNotifier {
       agent.progressMeters = nextProgress;
       if (agent.isOffRoute) _recordOffRouteTrail(agent);
     }
+    _keepFollowerBehindLeader();
     _updateAutomaticMarkerPhase(realElapsed);
     final completed = _agents.first.progressMeters >= routeDistanceMeters;
     if (completed) _state = RideSimulationState.completed;
@@ -606,7 +607,18 @@ class RideSimulationController extends ChangeNotifier {
     final maya = _agent('ride-lab-maya');
     maya.progressMeters = math.min(
       routeDistanceMeters,
-      math.max(maya.progressMeters, local.progressMeters + 160),
+      math.max(maya.progressMeters, local.progressMeters + _followerGapMeters),
+    );
+  }
+
+  void _keepFollowerBehindLeader() {
+    if (_selectedLocalRole != RideRole.rider) return;
+    final local = _agents.first;
+    final lead = _leadAgent();
+    if (lead.id == local.id) return;
+    local.progressMeters = math.min(
+      local.progressMeters,
+      math.max(0, lead.progressMeters - _followerGapMeters),
     );
   }
 
@@ -644,6 +656,7 @@ class RideSimulationController extends ChangeNotifier {
   static const _markerPassMeters = 35.0;
   static const _tecApproachMeters = 260.0;
   static const _tecRideOffMeters = 55.0;
+  static const _followerGapMeters = 180.0;
   static const _leaderClearanceMeters = 18.0;
 
   bool _isStoppedAtMarker(_SimulatedAgent agent) =>
@@ -676,6 +689,13 @@ class RideSimulationController extends ChangeNotifier {
   String _markerRiderSubject() => automaticMarkerIsLocal
       ? 'You'
       : (automaticMarkerRiderName ?? 'The rider');
+
+  String get _localPerspectiveName => switch (_selectedLocalRole) {
+    RideRole.lead => _session.displayName,
+    RideRole.rider => 'You · Follower',
+    RideRole.tailEndCharlie => 'You · TEC',
+    RideRole.marker => 'You · Marker',
+  };
 
   DateTime _nextRecordedAt() {
     final now = DateTime.now();

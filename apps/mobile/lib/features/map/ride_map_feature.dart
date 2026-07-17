@@ -570,9 +570,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 if (markerOverlay != null)
                   Positioned(
                     key: const Key('junction-marker-overlay-position'),
-                    left: overlayLeft + 12,
                     right: overlayRight + 12,
-                    top: overlayTop + 12,
+                    bottom: overlayBottom + 12,
                     child: ValueListenableBuilder<MapJunctionMarkerOverlay?>(
                       valueListenable: widget.junctionMarkerOverlay!,
                       builder: (context, overlay, _) => overlay == null
@@ -999,9 +998,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
           ml.CameraUpdate.newLatLngBounds(
             _mapLibreBounds(distinctPoints),
             left: 36,
-            top: 160,
+            top: 36,
             right: 36,
-            bottom: 54,
+            bottom: 160,
           ),
         );
       } else {
@@ -1029,7 +1028,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
             bounds: LatLngBounds.fromPoints(
               distinctPoints.map(_latLng).toList(),
             ),
-            padding: const EdgeInsets.fromLTRB(36, 160, 36, 54),
+            padding: const EdgeInsets.fromLTRB(36, 36, 36, 160),
           ),
         );
       } else {
@@ -2353,88 +2352,85 @@ class _JunctionMarkerOverlay extends StatelessWidget {
         ? const EdgeInsets.symmetric(horizontal: 14, vertical: 10)
         : const EdgeInsets.fromLTRB(16, 13, 16, 12);
     final tecDistance = overlay.tecDistanceMeters;
-    return Align(
-      alignment: Alignment.topCenter,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: compact ? 460 : 560),
-        child: Card(
-          key: const Key('junction-marker-overlay'),
-          margin: EdgeInsets.zero,
-          color: const Color(0xEE121820),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: color.withValues(alpha: 0.9), width: 1.5),
-          ),
-          child: Padding(
-            padding: padding,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.alt_route, color: color),
-                    const SizedBox(width: 9),
-                    const Expanded(
-                      child: Text(
-                        'JUNCTION MARKER',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 0.7,
-                        ),
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: compact ? 360 : 400),
+      child: Card(
+        key: const Key('junction-marker-overlay'),
+        margin: EdgeInsets.zero,
+        color: const Color(0xEE121820),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: color.withValues(alpha: 0.9), width: 1.5),
+        ),
+        child: Padding(
+          padding: padding,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.alt_route, color: color),
+                  const SizedBox(width: 9),
+                  const Expanded(
+                    child: Text(
+                      'JUNCTION MARKER',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.7,
                       ),
                     ),
-                    _MarkerStatusPill(label: 'AUTO', color: color),
-                  ],
-                ),
-                const SizedBox(height: 7),
-                Text(
-                  overlay.isLocalMarker
-                      ? 'You are holding this junction.'
-                      : '${overlay.markerRiderName} is holding this junction.',
-                  style: const TextStyle(
-                    color: Color(0xFFD8E0EA),
-                    fontWeight: FontWeight.w700,
                   ),
-                ),
-                const SizedBox(height: 9),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 6,
-                  children: [
-                    _MarkerMetric(
-                      icon: Icons.groups_outlined,
-                      label:
-                          '${overlay.ridersPassed}/${overlay.ridersExpected} passed',
-                    ),
-                    if (tecDistance != null)
-                      _MarkerMetric(
-                        icon: Icons.shield_outlined,
-                        label:
-                            'TEC ${MeasurementFormatter(distanceUnit).distance(tecDistance)} away',
-                        color: const Color(0xFF68A9FF),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 9),
-                Text(
-                  overlay.instruction,
-                  style: TextStyle(color: color, fontWeight: FontWeight.w800),
-                ),
-                if (overlay.stage == MapJunctionMarkerStage.tecApproaching) ...[
-                  const SizedBox(height: 7),
-                  const Text(
-                    'GET READY TO RIDE OFF',
-                    key: Key('junction-marker-get-ready'),
-                    style: TextStyle(
-                      color: Color(0xFFFFC857),
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 0.8,
-                    ),
-                  ),
+                  _MarkerStatusPill(label: 'AUTO', color: color),
                 ],
+              ),
+              const SizedBox(height: 7),
+              Text(
+                overlay.isLocalMarker
+                    ? 'You are holding this junction.'
+                    : '${overlay.markerRiderName} is holding this junction.',
+                style: const TextStyle(
+                  color: Color(0xFFD8E0EA),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 9),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  _MarkerMetric(
+                    icon: Icons.groups_outlined,
+                    label:
+                        '${overlay.ridersPassed}/${overlay.ridersExpected} passed',
+                  ),
+                  if (tecDistance != null)
+                    _MarkerMetric(
+                      icon: Icons.shield_outlined,
+                      label:
+                          'TEC ${MeasurementFormatter(distanceUnit).distance(tecDistance)} away',
+                      color: const Color(0xFF68A9FF),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 9),
+              Text(
+                overlay.instruction,
+                style: TextStyle(color: color, fontWeight: FontWeight.w800),
+              ),
+              if (overlay.stage == MapJunctionMarkerStage.tecApproaching) ...[
+                const SizedBox(height: 7),
+                const Text(
+                  'GET READY TO RIDE OFF',
+                  key: Key('junction-marker-get-ready'),
+                  style: TextStyle(
+                    color: Color(0xFFFFC857),
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.8,
+                  ),
+                ),
               ],
-            ),
+            ],
           ),
         ),
       ),

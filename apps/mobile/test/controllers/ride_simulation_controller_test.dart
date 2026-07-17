@@ -94,12 +94,13 @@ void main() {
   test('switches between leader, follower and TEC perspectives', () {
     simulation.setLocalRole(RideRole.rider);
     expect(simulation.localRole, RideRole.rider);
-    expect(
-      simulation.riders
-          .singleWhere((rider) => rider.displayName == 'Maya')
-          .role,
-      RideRole.lead,
+    final follower = simulation.riders.singleWhere((rider) => rider.isLocal);
+    final leader = simulation.riders.singleWhere(
+      (rider) => rider.displayName == 'Maya',
     );
+    expect(follower.displayName, 'You · Follower');
+    expect(follower.progress, lessThan(leader.progress));
+    expect(leader.role, RideRole.lead);
 
     simulation.setLocalRole(RideRole.tailEndCharlie);
     expect(simulation.localRole, RideRole.tailEndCharlie);
@@ -111,6 +112,21 @@ void main() {
           .role,
       RideRole.rider,
     );
+  });
+
+  test('follower perspective remains behind the simulated leader', () async {
+    simulation.setLocalRole(RideRole.rider);
+    simulation.setTimeScale(1);
+
+    await simulation.advance(const Duration(seconds: 30));
+
+    final follower = simulation.riders.singleWhere((rider) => rider.isLocal);
+    final leader = simulation.riders.singleWhere(
+      (rider) => rider.displayName == 'Maya',
+    );
+    expect(follower.role, RideRole.rider);
+    expect(leader.role, RideRole.lead);
+    expect(follower.progress, lessThan(leader.progress));
   });
 
   test(
