@@ -633,6 +633,10 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       _mapPosition.value = mapPoint;
     }
 
+    // A simulation can finish between throttled overlay frames. Completion
+    // needs to inspect the final GPS fixes even when no later overlay frame is
+    // scheduled to arrive.
+    unawaited(_maybeAutomaticallyEndRide(awareness));
     if (!updateOverlayMarkers) return;
     if (_isSimulation) {
       _updateSimulationOffRouteTraces(simulatedRiders ?? const []);
@@ -730,7 +734,6 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
               route: awareness.route,
             );
     }
-    unawaited(_maybeAutomaticallyEndRide(awareness));
   }
 
   Future<void> _maybeAutomaticallyEndRide(
@@ -743,7 +746,12 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       return;
     }
     final session = widget.rideController.session;
-    if (session == null || session.role != RideRole.lead) return;
+    // A real ride remains leader-owned. Ride Lab drives the entire virtual
+    // group locally, so completion must work from its leader, follower and TEC
+    // perspectives alike.
+    if (session == null || (!_isSimulation && session.role != RideRole.lead)) {
+      return;
+    }
     final route = _activeRoute;
     final destination = _routeDestination(route);
     if (destination == null) return;

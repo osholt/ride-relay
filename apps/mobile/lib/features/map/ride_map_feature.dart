@@ -60,6 +60,9 @@ class RideMapFeature extends StatefulWidget {
     this.acquireCurrentPosition,
     this.navigationExportCoordinator,
     this.routeStore,
+    this.offlineTileCache,
+    this.mapLibreOfflineManager,
+    this.mapStyleString,
     this.distanceUnit = DistanceUnit.kilometres,
     this.basemapConfiguration = const BasemapConfiguration(),
   });
@@ -122,6 +125,9 @@ class RideMapFeature extends StatefulWidget {
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
   final RouteStore? routeStore;
+  final OfflineTileCache? offlineTileCache;
+  final MapLibreOfflineManager? mapLibreOfflineManager;
+  final String? mapStyleString;
   final DistanceUnit distanceUnit;
   final BasemapConfiguration basemapConfiguration;
 
@@ -139,17 +145,37 @@ class _RideMapFeatureState extends State<RideMapFeature> {
   }
 
   Future<_MapDependencies> _openDependencies() async {
+    // Supplying all three map dependencies keeps integration tests and
+    // embedders independent of platform storage while production continues to
+    // use the default persistent stores below.
+    final suppliedStore = widget.routeStore;
+    final suppliedCache = widget.offlineTileCache;
+    final suppliedStyle = widget.mapStyleString;
+    if (suppliedStore != null &&
+        suppliedCache != null &&
+        suppliedStyle != null) {
+      return _MapDependencies(
+        store: suppliedStore,
+        cache: suppliedCache,
+        mapLibreOfflineManager:
+            widget.mapLibreOfflineManager ??
+            MapLibreOfflineManager(configuration: widget.basemapConfiguration),
+        mapStyleString: suppliedStyle,
+      );
+    }
     final styleRepository = await MapStyleRepository.openDefault(
       widget.basemapConfiguration,
     );
     try {
       return _MapDependencies(
-        store: widget.routeStore ?? await JsonFileRouteStore.openDefault(),
-        cache: await OfflineTileCache.openDefault(widget.basemapConfiguration),
-        mapLibreOfflineManager: MapLibreOfflineManager(
-          configuration: widget.basemapConfiguration,
-        ),
-        mapStyleString: await styleRepository.resolve(),
+        store: suppliedStore ?? await JsonFileRouteStore.openDefault(),
+        cache:
+            suppliedCache ??
+            await OfflineTileCache.openDefault(widget.basemapConfiguration),
+        mapLibreOfflineManager:
+            widget.mapLibreOfflineManager ??
+            MapLibreOfflineManager(configuration: widget.basemapConfiguration),
+        mapStyleString: suppliedStyle ?? await styleRepository.resolve(),
       );
     } finally {
       styleRepository.dispose();
@@ -181,7 +207,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         offlineTileCache: dependencies.cache,
         mapLibreOfflineManager: dependencies.mapLibreOfflineManager,
         mapStyleString: dependencies.mapStyleString,
-        disposeOfflineTileCache: true,
+        disposeOfflineTileCache: widget.offlineTileCache == null,
         currentPosition: widget.currentPosition,
         navigationPosition: widget.navigationPosition,
         overlayMarkers: widget.overlayMarkers,
@@ -191,6 +217,10 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         emergencyContacts: widget.emergencyContacts,
         onEmergencyAlert: widget.onEmergencyAlert,
         onEmergencyIssue: widget.onEmergencyIssue,
+        ridePaused: widget.ridePaused,
+        canToggleRidePause: widget.canToggleRidePause,
+        onToggleRidePause: widget.onToggleRidePause,
+        onOpenRideMenu: widget.onOpenRideMenu,
         onRouteChanged: widget.onRouteChanged,
         acquireCurrentPosition: widget.acquireCurrentPosition,
         navigationExportCoordinator: widget.navigationExportCoordinator,

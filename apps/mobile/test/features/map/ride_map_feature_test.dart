@@ -95,6 +95,73 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets('forwards the full-screen ride menu through the app wrapper', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync('map-wrapper-test');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    addTearDown(cache.dispose);
+    final navigation = ValueNotifier<MapNavigationPosition?>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 53, longitude: -1.01),
+        recordedAt: DateTime.utc(2026, 7, 18, 12),
+        speedMetersPerSecond: 8,
+        headingDegrees: 90,
+      ),
+    );
+    addTearDown(navigation.dispose);
+    final route = ImportedRoute(
+      id: 'wrapper-route',
+      name: 'Wrapper route',
+      importedAt: DateTime.utc(2026, 7, 18),
+      sourceFileName: 'route.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 53, longitude: -1.02),
+            GeoPoint(latitude: 53, longitude: -1.00),
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );
+    var menuOpens = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapFeature(
+          routeStore: InMemoryRouteStore(route),
+          offlineTileCache: cache,
+          mapStyleString:
+              '{"version":8,"sources":{},"layers":[{"id":"background","type":"background"}]}',
+          navigationPosition: navigation,
+          onOpenRideMenu: () async => menuOpens += 1,
+        ),
+      ),
+    );
+    await tester.pump();
+    for (var frame = 0; frame < 5; frame += 1) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(find.byType(RideMapScreen), findsOneWidget);
+    expect(find.byKey(const Key('ride-menu-button')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('ride-menu-button')));
+    await tester.pump();
+    expect(menuOpens, 1);
+
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
   testWidgets(
     'keeps an automatic junction marker on the zoomed-out map overview',
     (tester) async {
