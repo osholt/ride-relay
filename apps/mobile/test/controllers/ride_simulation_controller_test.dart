@@ -140,6 +140,73 @@ void main() {
   );
 
   test(
+    'follower automatically marks a junction until TEC has passed',
+    () async {
+      final markerSimulation = RideSimulationController(
+        awareness,
+        session: RideSession(
+          rideId: 'sim-ride',
+          rideCode: 'SIM123',
+          inviteSecret: 'simulation-secret-that-is-long-enough',
+          localRiderId: 'lead',
+          displayName: 'Demo Lead',
+          role: RideRole.lead,
+          joinedAt: DateTime.utc(2026, 7, 17),
+          isSimulation: true,
+        ),
+        route: const [
+          GeoPoint(latitude: 51, longitude: -1),
+          GeoPoint(latitude: 51, longitude: -0.9),
+        ],
+        markerJunctions: const [GeoPoint(latitude: 51, longitude: -0.99)],
+        tickInterval: const Duration(days: 1),
+      );
+      addTearDown(markerSimulation.dispose);
+      await markerSimulation.initialize();
+      markerSimulation.setLocalRole(RideRole.rider);
+
+      await markerSimulation.advance(const Duration(seconds: 4));
+
+      final stopped = markerSimulation.riders.singleWhere(
+        (rider) => rider.isLocal,
+      );
+      expect(markerSimulation.markerMode, isTrue);
+      expect(markerSimulation.automaticMarkerActivation, 1);
+      expect(
+        markerSimulation.markerPhase,
+        SimulationMarkerPhase.waitingForRiders,
+      );
+      expect(stopped.role, RideRole.marker);
+      expect(stopped.speedMetersPerSecond, 0);
+      expect(markerSimulation.ridersExpectedToPass, greaterThanOrEqualTo(1));
+
+      var sawTecApproaching = false;
+      for (var tick = 0; tick < 18; tick += 1) {
+        await markerSimulation.advance(const Duration(seconds: 1));
+        sawTecApproaching |=
+            markerSimulation.markerPhase ==
+            SimulationMarkerPhase.tecApproaching;
+      }
+
+      expect(sawTecApproaching, isTrue);
+      expect(
+        markerSimulation.markerPhase,
+        SimulationMarkerPhase.readyToRideOff,
+      );
+      expect(markerSimulation.canRideOff, isTrue);
+      expect(markerSimulation.markerInstruction, contains('TEC has passed'));
+
+      markerSimulation.rideOff();
+      expect(markerSimulation.markerMode, isFalse);
+      expect(markerSimulation.markerPhase, SimulationMarkerPhase.riding);
+      expect(
+        markerSimulation.riders.singleWhere((rider) => rider.isLocal).role,
+        RideRole.rider,
+      );
+    },
+  );
+
+  test(
     'off-route scenario drives real alert hysteresis and recovery',
     () async {
       simulation.setAlexOffRoute(true);

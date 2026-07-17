@@ -86,6 +86,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   String? _simulationRouteFingerprint;
   int _routeGeneration = 0;
   int _selectedIndex = 0;
+  int _handledAutomaticMarkerActivation = 0;
   DateTime? _lastSimulationOverlayUpdateAt;
   bool _loading = true;
   bool _relayConfigured = false;
@@ -317,6 +318,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     final previous = _simulationController;
     _simulationController = null;
     _simulationRouteFingerprint = fingerprint;
+    _handledAutomaticMarkerActivation = 0;
     previous?.removeListener(_onSimulationVisualChanged);
     previous?.dispose();
 
@@ -330,11 +332,27 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       if (notify && mounted) setState(() {});
       return;
     }
+    final waypointJunctions =
+        route?.waypoints
+            .map(
+              (waypoint) => awareness_geo.GeoPoint(
+                latitude: waypoint.point.latitude,
+                longitude: waypoint.point.longitude,
+              ),
+            )
+            .toList(growable: false) ??
+        const <awareness_geo.GeoPoint>[];
+    final derivedJunctions = const RouteDecisionPointExtractor()
+        .extract(route: simulationRoute)
+        .map((point) => point.position)
+        .toList(growable: false);
 
     final controller = RideSimulationController(
       awareness,
       session: session,
       route: simulationRoute,
+      markerJunctions: waypointJunctions,
+      fallbackJunctions: derivedJunctions,
     );
     _simulationController = controller;
     controller.addListener(_onSimulationVisualChanged);
@@ -350,6 +368,13 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
 
   void _onSimulationVisualChanged() {
     if (!mounted || !_isSimulation) return;
+    final controller = _simulationController;
+    if (controller != null &&
+        controller.automaticMarkerActivation >
+            _handledAutomaticMarkerActivation) {
+      _handledAutomaticMarkerActivation = controller.automaticMarkerActivation;
+      unawaited(_startAutomaticSimulationMarker(controller));
+    }
     final now = DateTime.now();
     final updateOverlayMarkers =
         _lastSimulationOverlayUpdateAt == null ||
@@ -824,6 +849,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       onExit: _leaveRide,
       onRoleChanged: _setSimulationRole,
       onToggleMarker: _toggleSimulationMarker,
+      onRideOff: _rideOffSimulationMarker,
       markerPassCount: widget.rideController.markerPassCount,
       tecPassedMarker: widget.rideController.tecPassedCurrentMarker,
     );
@@ -850,6 +876,28 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     }
     await widget.rideController.startMarker(mode: 'simulation');
     controller.setMarkerMode(true);
+  }
+
+  Future<void> _startAutomaticSimulationMarker(
+    RideSimulationController controller,
+  ) async {
+    if (!mounted ||
+        _simulationController != controller ||
+        !controller.automaticMarkerActive) {
+      return;
+    }
+    setState(() => _selectedIndex = 1);
+    if (!widget.rideController.markerActive) {
+      await widget.rideController.startMarker(mode: 'simulation-auto-junction');
+    }
+  }
+
+  Future<void> _rideOffSimulationMarker() async {
+    final controller = _simulationController;
+    if (controller == null || !controller.canRideOff) return;
+    await widget.rideController.endMarker();
+    controller.rideOff();
+    if (mounted) setState(() => _selectedIndex = 0);
   }
 
   Future<void> _restartSimulation() async {
