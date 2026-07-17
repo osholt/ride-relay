@@ -226,9 +226,9 @@ class RideSimulationController extends ChangeNotifier {
       'The simulated second bike will stop at the next route decision.',
     SimulationMarkerPhase.waitingForRiders =>
       ridersPassedMarker < ridersExpectedToPass
-          ? '${_markerRiderSubject()} is holding the junction while riders pass '
+          ? '${_markerRiderSubject()} $_markerRiderPresentVerb holding the junction while riders pass '
                 '($ridersPassedMarker/$ridersExpectedToPass).'
-          : 'Riders are through. ${_markerRiderSubject()} is waiting for '
+          : 'Riders are through. ${_markerRiderSubject()} $_markerRiderPresentVerb waiting for '
                 'Tail End Charlie.',
     SimulationMarkerPhase.tecApproaching =>
       '${ridersPassedMarker < ridersExpectedToPass ? 'Traffic is still clearing. ' : 'All riders are through. '}TEC is approaching — '
@@ -738,6 +738,8 @@ class RideSimulationController extends ChangeNotifier {
   String _markerRiderSubject() => automaticMarkerIsLocal
       ? 'You'
       : (automaticMarkerRiderName ?? 'The rider');
+
+  String get _markerRiderPresentVerb => automaticMarkerIsLocal ? 'are' : 'is';
 
   String get _localPerspectiveName => switch (_selectedLocalRole) {
     RideRole.lead => _session.displayName,

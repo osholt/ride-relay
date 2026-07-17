@@ -221,6 +221,7 @@ void main() {
       expect(stopped.role, RideRole.marker);
       expect(stopped.speedMetersPerSecond, 0);
       expect(markerSimulation.ridersExpectedToPass, greaterThanOrEqualTo(1));
+      expect(markerSimulation.markerInstruction, contains('You are holding'));
 
       var sawTecApproaching = false;
       for (
