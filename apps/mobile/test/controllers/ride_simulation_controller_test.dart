@@ -88,7 +88,7 @@ void main() {
     addTearDown(smoothSimulation.dispose);
 
     expect(smoothSimulation.tickInterval, const Duration(milliseconds: 100));
-    expect(smoothSimulation.eventInterval, const Duration(milliseconds: 750));
+    expect(smoothSimulation.eventInterval, const Duration(seconds: 2));
   });
 
   test('switches between leader, follower and TEC perspectives', () {

@@ -11,6 +11,7 @@ import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/ride_simulation_controller.dart';
 import '../../controllers/situational_awareness_controller.dart';
+import '../../data/in_memory_event_store.dart';
 import '../../data/json_file_route_store.dart';
 import '../../domain/event_store.dart';
 import '../../domain/geo_point.dart' as awareness_geo;
@@ -87,6 +88,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   int _routeGeneration = 0;
   int _selectedIndex = 0;
   int _handledAutomaticMarkerActivation = 0;
+  DateTime? _lastSimulationNavigationUpdateAt;
   DateTime? _lastSimulationOverlayUpdateAt;
   bool _loading = true;
   bool _relayConfigured = false;
@@ -235,8 +237,14 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
             )
             .toList(growable: false) ??
         const <List<awareness_geo.GeoPoint>>[];
+    // Synthetic position updates are intentionally ephemeral. Writing five
+    // riders to SQLite throughout a Ride Lab run makes the durable event
+    // history grow quickly, which in turn slows down the phone.
+    final awarenessEventStore = _isSimulation
+        ? InMemoryEventStore()
+        : widget.eventStore;
     final controller = SituationalAwarenessController(
-      widget.eventStore,
+      awarenessEventStore,
       session,
       route: routeSegments.expand((segment) => segment).toList(growable: false),
       routeSegments: routeSegments,
@@ -319,6 +327,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     _simulationController = null;
     _simulationRouteFingerprint = fingerprint;
     _handledAutomaticMarkerActivation = 0;
+    _lastSimulationNavigationUpdateAt = null;
     previous?.removeListener(_onSimulationVisualChanged);
     previous?.dispose();
 
@@ -396,6 +405,13 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       unawaited(_startAutomaticSimulationMarker(controller));
     }
     final now = DateTime.now();
+    final updateNavigationPosition =
+        _lastSimulationNavigationUpdateAt == null ||
+        now.difference(_lastSimulationNavigationUpdateAt!) >=
+            const Duration(milliseconds: 200);
+    if (updateNavigationPosition) {
+      _lastSimulationNavigationUpdateAt = now;
+    }
     final updateOverlayMarkers =
         _lastSimulationOverlayUpdateAt == null ||
         now.difference(_lastSimulationOverlayUpdateAt!) >=
@@ -404,6 +420,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     _updateMapOverlays(
       updateDerivedState: false,
       updateOverlayMarkers: updateOverlayMarkers,
+      updateNavigationPosition: updateNavigationPosition,
     );
   }
 
@@ -431,22 +448,20 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     _simulationAwarenessTimer = Timer(const Duration(milliseconds: 250), () {
       _simulationAwarenessTimer = null;
       if (!mounted) return;
-      _updateMapOverlays();
-      if (_refreshingRideEvents) return;
-      _refreshingRideEvents = true;
-      unawaited(() async {
-        try {
-          await widget.rideController.reloadEvents();
-        } finally {
-          _refreshingRideEvents = false;
-        }
-      }());
+      // Simulation awareness maintains its own in-memory location evidence.
+      // Local marker actions update RideController directly, so reloading and
+      // decoding the entire durable ride history here is unnecessary.
+      _updateMapOverlays(
+        updateDerivedState: false,
+        updateNavigationPosition: false,
+      );
     });
   }
 
   void _updateMapOverlays({
     bool updateDerivedState = true,
     bool updateOverlayMarkers = true,
+    bool updateNavigationPosition = true,
   }) {
     final awareness = _awarenessController;
     if (awareness == null) return;
@@ -472,19 +487,21 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     final navigationRecordedAt = simulatedLocal == null
         ? localLocation?.sample.recordedAt
         : DateTime.now();
-    _mapNavigationPosition.value = mapPoint == null
-        ? null
-        : MapNavigationPosition(
-            point: mapPoint,
-            recordedAt: navigationRecordedAt!,
-            speedMetersPerSecond:
-                simulatedLocal?.speedMetersPerSecond ??
-                localLocation!.sample.speedMetersPerSecond,
-            headingDegrees:
-                simulatedLocal?.headingDegrees ??
-                localLocation!.sample.headingDegrees,
-          );
-    _mapPosition.value = mapPoint;
+    if (updateNavigationPosition) {
+      _mapNavigationPosition.value = mapPoint == null
+          ? null
+          : MapNavigationPosition(
+              point: mapPoint,
+              recordedAt: navigationRecordedAt!,
+              speedMetersPerSecond:
+                  simulatedLocal?.speedMetersPerSecond ??
+                  localLocation!.sample.speedMetersPerSecond,
+              headingDegrees:
+                  simulatedLocal?.headingDegrees ??
+                  localLocation!.sample.headingDegrees,
+            );
+      _mapPosition.value = mapPoint;
+    }
 
     if (!updateOverlayMarkers) return;
     if (_isSimulation) {

@@ -64,7 +64,7 @@ class RideSimulationController extends ChangeNotifier {
     List<GeoPoint> markerJunctions = const [],
     List<GeoPoint> fallbackJunctions = const [],
     this.tickInterval = const Duration(milliseconds: 100),
-    this.eventInterval = const Duration(milliseconds: 750),
+    this.eventInterval = const Duration(seconds: 2),
   }) : assert(session.isSimulation),
        assert(route.length >= 2),
        _session = session,
