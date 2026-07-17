@@ -31,6 +31,16 @@ timestamps from the persisted active route. The native operating-system share
 sheet controls which installed apps are offered; mobile apps cannot safely
 preselect a third-party recipient.
 
+## Planned projected navigation
+
+Apple CarPlay and Android Auto companion surfaces are P1 roadmap features. The
+intended scope is a low-interaction route view, next-action guidance, group
+separation state, and urgent ride alerts backed by the phone's existing offline
+ride journal. CarPlay requires the appropriate Apple entitlement and approved
+template category; Android Auto must use the Android for Cars App Library and
+comply with its distraction-optimized templates. Neither integration is
+implemented or claimed by the current alpha.
+
 ## Ride and marker summary
 
 The active ride screen has a `Share ride summary` action. It shares a readable

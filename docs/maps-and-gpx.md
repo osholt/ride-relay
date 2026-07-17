@@ -20,10 +20,17 @@ not bulk-download from the public OpenStreetMap tile servers.
 
 ## Riding display
 
-The map uses foreground GPS speed and heading to enter a close, heading-up
-follow view while moving. In that state the top and bottom navigation chrome is
-hidden; stationary landscape mode retains compact controls. The follow button
-can also enable or dismiss this view manually.
+The map uses foreground GPS speed and heading to enter a heading-up follow view
+while moving. The rider sits low enough in the viewport to expose more of the
+road ahead without disappearing below the landscape safe area. In that state
+the top and bottom navigation chrome is hidden; stationary landscape mode
+retains compact controls. Manual pan or zoom suspends camera following and
+shows a **Re-centre** action instead of snapping back on the next GPS update.
+
+Landscape navigation also shows a compact group overview above the primary
+turn-by-turn map. It fits the latest known rider locations, distinguishes the
+local rider, and includes nearby route geometry without changing the main
+camera.
 
 The primary route is split at the rider's monotonic along-route progress. The
 completed section is solid orange and the route ahead is a translucent dotted

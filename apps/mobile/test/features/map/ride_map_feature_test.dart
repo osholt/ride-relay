@@ -5,6 +5,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/route_store.dart';
 import 'package:ride_relay/domain/route_alert.dart';
@@ -60,6 +61,7 @@ void main() {
           offlineTileCache: cache,
           overlayMarkers: overlays,
           leaderStatus: leaderStatus,
+          distanceUnit: DistanceUnit.miles,
         ),
       ),
     );
@@ -72,6 +74,8 @@ void main() {
     expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
     expect(find.text('TEC GAP'), findsOneWidget);
     expect(find.textContaining('Alex is clearly off course'), findsOneWidget);
+    expect(find.textContaining('2.0 mi'), findsOneWidget);
+    expect(find.textContaining('0.1 mi'), findsOneWidget);
 
     await tester.tap(find.text('Use demo route'));
     for (var i = 0; i < 5; i += 1) {
@@ -118,6 +122,19 @@ void main() {
         ),
       ]);
       addTearDown(traces.dispose);
+      final riders = ValueNotifier<List<MapOverlayMarker>>([
+        const MapOverlayMarker(
+          id: 'rider-alex',
+          point: GeoPoint(latitude: 53, longitude: -1.011),
+          label: 'Alex',
+        ),
+        const MapOverlayMarker(
+          id: 'rider-charlie',
+          point: GeoPoint(latitude: 53, longitude: -1.015),
+          label: 'Charlie',
+        ),
+      ]);
+      addTearDown(riders.dispose);
       final route = ImportedRoute(
         id: 'route',
         name: 'Landscape route',
@@ -149,6 +166,7 @@ void main() {
             routeImporter: RouteImporter(source: const _NoFileSource()),
             offlineTileCache: cache,
             navigationPosition: navigation,
+            overlayMarkers: riders,
             offRouteTraces: traces,
           ),
         ),
@@ -157,7 +175,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
 
       expect(find.byType(AppBar), findsNothing);
-      expect(find.byKey(const Key('navigation-follow-button')), findsOneWidget);
+      expect(find.byKey(const Key('group-mini-map')), findsOneWidget);
+      expect(find.text('GROUP 3'), findsOneWidget);
+      expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
       final layer = tester.widget<PolylineLayer>(find.byType(PolylineLayer));
       expect(
         layer.polylines.any(
@@ -174,6 +194,17 @@ void main() {
         layer.polylines.any((line) => line.color == const Color(0xFFE244C7)),
         isTrue,
       );
+
+      await tester.drag(find.byType(FlutterMap), const Offset(80, 0));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('navigation-follow-button')), findsOneWidget);
+      expect(find.text('Re-centre'), findsOneWidget);
+      expect(find.byType(AppBar), findsNothing);
+
+      await tester.tap(find.text('Re-centre'));
+      await tester.pump();
+      expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();

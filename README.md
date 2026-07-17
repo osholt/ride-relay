@@ -34,8 +34,11 @@ phones when mobile coverage disappears.
 - Give the ride lead a compact along-route distance/ETA to Tail End Charlie and
   an immediate map alert for confirmed unacknowledged off-course riders.
 - Switch into a compact, heading-up follow camera while moving, with reduced
-  landscape chrome, solid ridden route progress, a faded dotted route ahead,
-  and a contrasting trace for riders currently off route.
+  landscape chrome, a group overview mini-map, solid ridden route progress, a
+  faded dotted route ahead, and a contrasting trace for riders currently off
+  route. Manual pan/zoom pauses follow mode until **Re-centre** is pressed.
+- Default distance and speed units from the device locale (UK/US miles,
+  kilometres elsewhere), with a persistent Settings override.
 - Queue authenticated events for store-and-forward delivery over native Google
   Nearby Connections transports with reconnect, expiry, ACK, and replay safety.
 - Batch authenticated events through an optional HTTPS relay with durable
@@ -50,6 +53,16 @@ phones when mobile coverage disappears.
 
 See [PLAN.md](./PLAN.md) for product requirements and delivery gates, and
 [docs/architecture.md](./docs/architecture.md) for the implementation shape.
+
+## Planned navigation platforms
+
+- **Apple CarPlay:** a glanceable route/group companion using approved CarPlay
+  navigation templates, subject to Apple entitlement and review.
+- **Android Auto:** a matching projected navigation/group-alert companion using
+  the Android for Cars App Library and its driver-distraction restrictions.
+
+These are planned P1 platform integrations, not features of the current alpha.
+The phone remains the source of ride state and offline relay data.
 
 ## Repository layout
 

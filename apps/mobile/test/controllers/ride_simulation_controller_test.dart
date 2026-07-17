@@ -67,6 +67,29 @@ void main() {
     },
   );
 
+  test('uses short updates for continuous visual movement', () {
+    final smoothSimulation = RideSimulationController(
+      awareness,
+      session: RideSession(
+        rideId: 'sim-ride',
+        rideCode: 'SIM123',
+        inviteSecret: 'simulation-secret-that-is-long-enough',
+        localRiderId: 'lead',
+        displayName: 'Demo Lead',
+        role: RideRole.lead,
+        joinedAt: DateTime.utc(2026, 7, 17),
+        isSimulation: true,
+      ),
+      route: const [
+        GeoPoint(latitude: 51, longitude: -1),
+        GeoPoint(latitude: 51, longitude: -0.9),
+      ],
+    );
+    addTearDown(smoothSimulation.dispose);
+
+    expect(smoothSimulation.tickInterval, const Duration(milliseconds: 500));
+  });
+
   test(
     'off-route scenario drives real alert hysteresis and recovery',
     () async {

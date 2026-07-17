@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/foreground_location_controller.dart';
 import '../../controllers/internet_relay_controller.dart';
 import '../../controllers/marker_assistance_controller.dart';
@@ -43,11 +44,13 @@ class ActiveRideShell extends StatefulWidget {
   const ActiveRideShell({
     super.key,
     required this.rideController,
+    required this.distanceUnits,
     required this.eventStore,
     required this.enableNativeServices,
   });
 
   final RideController rideController;
+  final DistanceUnitController distanceUnits;
   final EventStore eventStore;
   final bool enableNativeServices;
 
@@ -658,6 +661,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
           ? () async => _mapPosition.value
           : _acquireCurrentPosition,
       routeStore: _simulationRouteStore,
+      distanceUnit: widget.distanceUnits.value,
     );
   }
 
@@ -668,6 +672,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     }
     return RideSimulationScreen(
       controller: controller,
+      distanceUnit: widget.distanceUnits.value,
       onRestart: _restartSimulation,
       onExit: _leaveRide,
     );
@@ -680,6 +685,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
 
   Widget _buildDetails() => RideDashboard(
     controller: widget.rideController,
+    distanceUnits: widget.distanceUnits,
     onLeaveRide: _leaveRide,
     relayController: _relayController,
     markerAssistanceController: _markerAssistanceController,

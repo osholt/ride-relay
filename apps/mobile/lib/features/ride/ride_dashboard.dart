@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/internet_relay_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
@@ -13,12 +14,14 @@ import '../../domain/ride_role.dart';
 import '../../services/ride_summary_exporter.dart';
 import '../internet/internet_relay_status_card.dart';
 import '../nearby/relay_status_card.dart';
+import '../settings/unit_settings_sheet.dart';
 import 'marker_assistance_widgets.dart';
 
 class RideDashboard extends StatelessWidget {
   const RideDashboard({
     super.key,
     required this.controller,
+    required this.distanceUnits,
     required this.onLeaveRide,
     this.relayController,
     this.markerAssistanceController,
@@ -28,6 +31,7 @@ class RideDashboard extends StatelessWidget {
   });
 
   final RideController controller;
+  final DistanceUnitController distanceUnits;
   final Future<void> Function() onLeaveRide;
   final NearbyRelayController? relayController;
   final MarkerAssistanceController? markerAssistanceController;
@@ -44,6 +48,11 @@ class RideDashboard extends StatelessWidget {
         title: const Text('Ride Relay'),
         backgroundColor: Colors.transparent,
         actions: [
+          IconButton(
+            tooltip: 'Settings',
+            onPressed: () => UnitSettingsSheet.show(context, distanceUnits),
+            icon: const Icon(Icons.settings_outlined),
+          ),
           IconButton(
             tooltip: 'Leave or switch ride',
             onPressed: () => _confirmLeaveRide(context),
@@ -93,7 +102,10 @@ class RideDashboard extends StatelessWidget {
                 ],
                 const SizedBox(height: 14),
                 if (markerAssistanceController case final assistance?) ...[
-                  MarkerAssistancePrompt(controller: assistance),
+                  MarkerAssistancePrompt(
+                    controller: assistance,
+                    distanceUnit: distanceUnits.value,
+                  ),
                   if (assistance.hasSuggestion) const SizedBox(height: 14),
                 ],
                 _MarkerCard(controller: controller),

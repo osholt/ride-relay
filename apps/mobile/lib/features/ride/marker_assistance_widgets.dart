@@ -1,12 +1,19 @@
 import 'package:flutter/material.dart';
 
 import '../../controllers/marker_assistance_controller.dart';
+import '../../domain/distance_unit.dart';
 import '../../domain/marker_assistance.dart';
+import '../../services/measurement_formatter.dart';
 
 class MarkerAssistancePrompt extends StatelessWidget {
-  const MarkerAssistancePrompt({super.key, required this.controller});
+  const MarkerAssistancePrompt({
+    super.key,
+    required this.controller,
+    this.distanceUnit = DistanceUnit.kilometres,
+  });
 
   final MarkerAssistanceController controller;
+  final DistanceUnit distanceUnit;
 
   @override
   Widget build(BuildContext context) {
@@ -37,7 +44,7 @@ class MarkerAssistancePrompt extends StatelessWidget {
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      'Stopped ${suggestion.distanceMeters.round()} m from a '
+                      'Stopped ${MeasurementFormatter(distanceUnit).distance(suggestion.distanceMeters)} from a '
                       'route decision while ${suggestion.progressingRiderCount} '
                       'rider${suggestion.progressingRiderCount == 1 ? '' : 's'} '
                       'continued.',

@@ -3,17 +3,21 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../controllers/ride_simulation_controller.dart';
+import '../../domain/distance_unit.dart';
 import '../../domain/ride_role.dart';
+import '../../services/measurement_formatter.dart';
 
 class RideSimulationScreen extends StatelessWidget {
   const RideSimulationScreen({
     super.key,
     required this.controller,
+    this.distanceUnit = DistanceUnit.miles,
     required this.onRestart,
     required this.onExit,
   });
 
   final RideSimulationController controller;
+  final DistanceUnit distanceUnit;
   final Future<void> Function() onRestart;
   final Future<void> Function() onExit;
 
@@ -45,7 +49,10 @@ class RideSimulationScreen extends StatelessWidget {
           animation: controller,
           builder: (context, _) {
             final controls = _SimulationControls(controller: controller);
-            final fleet = _FleetCard(controller: controller);
+            final fleet = _FleetCard(
+              controller: controller,
+              distanceUnit: distanceUnit,
+            );
             if (landscape) {
               return Padding(
                 padding: const EdgeInsets.all(10),
@@ -204,9 +211,10 @@ class _SimulationControls extends StatelessWidget {
 }
 
 class _FleetCard extends StatelessWidget {
-  const _FleetCard({required this.controller});
+  const _FleetCard({required this.controller, required this.distanceUnit});
 
   final RideSimulationController controller;
+  final DistanceUnit distanceUnit;
 
   @override
   Widget build(BuildContext context) => Card(
@@ -237,7 +245,7 @@ class _FleetCard extends StatelessWidget {
                       ),
                       Text(
                         '${rider.role.label} · '
-                        '${(rider.speedMetersPerSecond * 2.23694).round()} mph',
+                        '${MeasurementFormatter(distanceUnit).speed(rider.speedMetersPerSecond)}',
                         style: const TextStyle(
                           color: Color(0xFF8F9BAA),
                           fontSize: 12,

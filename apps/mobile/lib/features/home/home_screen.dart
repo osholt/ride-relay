@@ -1,75 +1,98 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/ride_controller.dart';
+import '../settings/unit_settings_sheet.dart';
 
 class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key, required this.controller});
+  const HomeScreen({
+    super.key,
+    required this.controller,
+    required this.distanceUnits,
+  });
 
   final RideController controller;
+  final DistanceUnitController distanceUnits;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(24, 28, 24, 36),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 560),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const _BrandMark(),
-                  const SizedBox(height: 56),
-                  Text(
-                    'Ready to ride?',
-                    style: Theme.of(context).textTheme.displaySmall,
+        child: Stack(
+          children: [
+            Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 28, 24, 36),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 560),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const _BrandMark(),
+                      const SizedBox(height: 56),
+                      Text(
+                        'Ready to ride?',
+                        style: Theme.of(context).textTheme.displaySmall,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Create a group or join with a private invite. You will go '
+                        'straight to the navigation map.',
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          color: const Color(0xFFB7C0CC),
+                          height: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 40),
+                      FilledButton.icon(
+                        onPressed: controller.busy
+                            ? null
+                            : () => _showRideSheet(context, creating: true),
+                        icon: const Icon(Icons.add_road),
+                        label: const Text('Create a ride'),
+                      ),
+                      const SizedBox(height: 12),
+                      OutlinedButton.icon(
+                        onPressed: controller.busy
+                            ? null
+                            : () => _showRideSheet(context, creating: false),
+                        icon: const Icon(Icons.group_add_outlined),
+                        label: const Text('Join a ride'),
+                      ),
+                      const SizedBox(height: 12),
+                      TextButton.icon(
+                        key: const Key('start-ride-simulator'),
+                        onPressed: controller.busy
+                            ? null
+                            : controller.createSimulationRide,
+                        icon: const Icon(Icons.science_outlined),
+                        label: const Text('Try a simulated ride'),
+                      ),
+                      const SizedBox(height: 20),
+                      const Text(
+                        'No account required · the simulator never shares location',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Color(0xFF7F8A98),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Create a group or join with a private invite. You will go '
-                    'straight to the navigation map.',
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: const Color(0xFFB7C0CC),
-                      height: 1.5,
-                    ),
-                  ),
-                  const SizedBox(height: 40),
-                  FilledButton.icon(
-                    onPressed: controller.busy
-                        ? null
-                        : () => _showRideSheet(context, creating: true),
-                    icon: const Icon(Icons.add_road),
-                    label: const Text('Create a ride'),
-                  ),
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: controller.busy
-                        ? null
-                        : () => _showRideSheet(context, creating: false),
-                    icon: const Icon(Icons.group_add_outlined),
-                    label: const Text('Join a ride'),
-                  ),
-                  const SizedBox(height: 12),
-                  TextButton.icon(
-                    key: const Key('start-ride-simulator'),
-                    onPressed: controller.busy
-                        ? null
-                        : controller.createSimulationRide,
-                    icon: const Icon(Icons.science_outlined),
-                    label: const Text('Try a simulated ride'),
-                  ),
-                  const SizedBox(height: 20),
-                  const Text(
-                    'No account required · the simulator never shares location',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Color(0xFF7F8A98), fontSize: 12),
-                  ),
-                ],
+                ),
               ),
             ),
-          ),
+            Positioned(
+              top: 4,
+              right: 8,
+              child: IconButton(
+                tooltip: 'Settings',
+                onPressed: () => UnitSettingsSheet.show(context, distanceUnits),
+                icon: const Icon(Icons.settings_outlined),
+              ),
+            ),
+          ],
         ),
       ),
     );

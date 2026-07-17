@@ -43,7 +43,7 @@ class RideSimulationController extends ChangeNotifier {
     this._awarenessController, {
     required RideSession session,
     required List<GeoPoint> route,
-    this.tickInterval = const Duration(seconds: 2),
+    this.tickInterval = const Duration(milliseconds: 500),
   }) : assert(session.isSimulation),
        assert(route.length >= 2),
        _session = session,

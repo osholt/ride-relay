@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../controllers/distance_unit_controller.dart';
 import '../controllers/ride_controller.dart';
 import '../features/home/home_screen.dart';
 import '../features/ride/active_ride_shell.dart';
@@ -8,10 +9,12 @@ class RideRelayApp extends StatelessWidget {
   const RideRelayApp({
     super.key,
     required this.controller,
+    required this.distanceUnits,
     this.enableNativeServices = true,
   });
 
   final RideController controller;
+  final DistanceUnitController distanceUnits;
   final bool enableNativeServices;
 
   @override
@@ -88,15 +91,16 @@ class RideRelayApp extends StatelessWidget {
         ),
       ),
       home: AnimatedBuilder(
-        animation: controller,
+        animation: Listenable.merge([controller, distanceUnits]),
         builder: (context, _) => controller.hasActiveRide
             ? ActiveRideShell(
                 key: ValueKey(controller.session!.rideId),
                 rideController: controller,
+                distanceUnits: distanceUnits,
                 eventStore: controller.eventStore,
                 enableNativeServices: enableNativeServices,
               )
-            : HomeScreen(controller: controller),
+            : HomeScreen(controller: controller, distanceUnits: distanceUnits),
       ),
     );
   }

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -9,6 +10,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 
 import '../../data/json_file_route_store.dart';
+import '../../domain/distance_unit.dart';
 import '../../domain/imported_route.dart';
 import '../../domain/route_store.dart';
 import '../../services/basemap_configuration.dart';
@@ -18,6 +20,7 @@ import '../../services/leader_ride_status.dart';
 import '../../services/map_geojson.dart';
 import '../../services/map_style_repository.dart';
 import '../../services/maplibre_offline_manager.dart';
+import '../../services/measurement_formatter.dart';
 import '../../services/navigation_export.dart';
 import '../../services/offline_tile_cache.dart';
 import '../../services/road_routing.dart';
@@ -45,6 +48,7 @@ class RideMapFeature extends StatefulWidget {
     this.acquireCurrentPosition,
     this.navigationExportCoordinator,
     this.routeStore,
+    this.distanceUnit = DistanceUnit.kilometres,
     this.basemapConfiguration = const BasemapConfiguration(),
   });
 
@@ -58,6 +62,7 @@ class RideMapFeature extends StatefulWidget {
     ValueChanged<ImportedRoute?>? onRouteChanged,
     Future<GeoPoint?> Function()? acquireCurrentPosition,
     RouteStore? routeStore,
+    DistanceUnit distanceUnit = DistanceUnit.kilometres,
   }) => RideMapFeature(
     key: key,
     currentPosition: currentPosition,
@@ -68,6 +73,7 @@ class RideMapFeature extends StatefulWidget {
     onRouteChanged: onRouteChanged,
     acquireCurrentPosition: acquireCurrentPosition,
     routeStore: routeStore,
+    distanceUnit: distanceUnit,
     basemapConfiguration: BasemapConfiguration.fromEnvironment(),
   );
 
@@ -80,6 +86,7 @@ class RideMapFeature extends StatefulWidget {
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
   final RouteStore? routeStore;
+  final DistanceUnit distanceUnit;
   final BasemapConfiguration basemapConfiguration;
 
   @override
@@ -147,6 +154,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         onRouteChanged: widget.onRouteChanged,
         acquireCurrentPosition: widget.acquireCurrentPosition,
         navigationExportCoordinator: widget.navigationExportCoordinator,
+        distanceUnit: widget.distanceUnit,
       );
     },
   );
@@ -186,6 +194,7 @@ class RideMapScreen extends StatefulWidget {
     this.destinationRoutePlanner,
     this.routeGeometryEnricher,
     this.demoRouteLoader,
+    this.distanceUnit = DistanceUnit.kilometres,
     this.disposeOfflineTileCache = false,
   });
 
@@ -205,6 +214,7 @@ class RideMapScreen extends StatefulWidget {
   final DestinationRoutePlanner? destinationRoutePlanner;
   final RouteGeometryEnricher? routeGeometryEnricher;
   final Future<ImportedRoute> Function()? demoRouteLoader;
+  final DistanceUnit distanceUnit;
   final bool disposeOfflineTileCache;
 
   @override
@@ -219,8 +229,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
   static const _positionSource = 'ride-relay-position';
   static const _overlaySource = 'ride-relay-overlays';
 
-  final MapController _mapController = MapController();
+  final MapControllerImpl _mapController = MapControllerImpl();
   final RouteProgressTracker _routeProgressTracker = RouteProgressTracker();
+  final Map<int, Offset> _mapPointerOrigins = {};
   late final http.Client _routingClient;
   late final DestinationRoutePlanner _defaultDestinationRoutePlanner;
   late final RouteGeometryEnricher _defaultRouteGeometryEnricher;
@@ -237,6 +248,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
   bool _autoFollowSuppressed = false;
   double _lastHeadingDegrees = 0;
   GeoPoint? _previousNavigationPoint;
+  MapNavigationPosition? _lastHandledNavigationFix;
+  GeoPoint? _lastHandledCurrentPosition;
+  DateTime? _previousCameraFixAt;
+  Duration _cameraTransitionDuration = const Duration(milliseconds: 450);
   RouteProgressGeometry _progressGeometry = const RouteProgressGeometry.empty();
   TileDownloadProgress? _downloadProgress;
   TileDownloadCancellationToken? _downloadCancellation;
@@ -345,13 +360,23 @@ class _RideMapScreenState extends State<RideMapScreen> {
   Widget build(BuildContext context) {
     final landscape =
         MediaQuery.orientationOf(context) == Orientation.landscape;
-    final hideChrome = _navigationMode && _isMoving;
+    final hideChrome = _route != null && _isMoving;
     final safeInsets = MediaQuery.paddingOf(context);
     final overlayTop = hideChrome ? safeInsets.top : 0.0;
     final overlayLeft = hideChrome ? safeInsets.left : 0.0;
     final overlayRight = hideChrome ? safeInsets.right : 0.0;
     final overlayBottom = hideChrome ? safeInsets.bottom : 0.0;
     final compactDensity = landscape ? VisualDensity.compact : null;
+    final groupRiders = (widget.overlayMarkers?.value ?? const [])
+        .where((marker) => marker.id.startsWith('rider-'))
+        .toList(growable: false);
+    final groupSize = groupRiders.length + (_effectivePosition == null ? 0 : 1);
+    final showGroupMiniMap = landscape && _route != null && groupSize > 1;
+    const groupMiniMapWidth = 196.0;
+    final statusRight = showGroupMiniMap
+        ? overlayRight + groupMiniMapWidth + 16
+        : overlayRight + (landscape ? 68 : 12);
+    final statusTop = overlayTop + (_downloadProgress == null ? 8 : 72);
     return Scaffold(
       appBar: hideChrome
           ? null
@@ -458,7 +483,17 @@ class _RideMapScreenState extends State<RideMapScreen> {
           ? _ErrorState(error: _loadError!, onRetry: _loadPersistedRoute)
           : Stack(
               children: [
-                Positioned.fill(child: _buildMap()),
+                Positioned.fill(
+                  child: Listener(
+                    behavior: HitTestBehavior.opaque,
+                    onPointerDown: _onMapPointerDown,
+                    onPointerMove: _onMapPointerMove,
+                    onPointerUp: _onMapPointerUp,
+                    onPointerCancel: _onMapPointerCancel,
+                    onPointerSignal: (_) => _suppressFollowForMapGesture(),
+                    child: _buildMap(),
+                  ),
+                ),
                 if (_downloadProgress case final progress?)
                   Positioned(
                     left: overlayLeft + 12,
@@ -474,8 +509,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 if (widget.leaderStatus != null)
                   Positioned(
                     left: overlayLeft + (landscape ? 8 : 12),
-                    right: overlayRight + (landscape ? 68 : 12),
-                    top: overlayTop + (_downloadProgress == null ? 8 : 72),
+                    right: statusRight,
+                    top: statusTop,
                     child: ValueListenableBuilder<LeaderRideStatus?>(
                       valueListenable: widget.leaderStatus!,
                       builder: (context, status, _) => status == null
@@ -483,28 +518,34 @@ class _RideMapScreenState extends State<RideMapScreen> {
                           : _LeaderMapStatus(
                               status: status,
                               compact: landscape || hideChrome,
+                              distanceUnit: widget.distanceUnit,
                             ),
                     ),
                   ),
-                if (_route != null)
+                if (showGroupMiniMap)
+                  Positioned(
+                    key: const Key('group-mini-map-position'),
+                    right: overlayRight + 8,
+                    top: statusTop,
+                    child: _GroupMiniMap(
+                      width: groupMiniMapWidth,
+                      route: _route!.allPoints.toList(growable: false),
+                      currentPosition: _effectivePosition,
+                      riders: groupRiders,
+                    ),
+                  ),
+                if (_route != null && !_navigationMode)
                   Positioned(
                     right: overlayRight + 12,
                     bottom: overlayBottom + 12,
-                    child: FloatingActionButton.small(
+                    child: FloatingActionButton.extended(
                       key: const Key('navigation-follow-button'),
-                      tooltip: _navigationMode
-                          ? 'Stop following position'
-                          : 'Follow position',
+                      tooltip: 'Re-centre navigation',
                       onPressed: _toggleNavigationMode,
-                      backgroundColor: _navigationMode
-                          ? const Color(0xFF2F80ED)
-                          : const Color(0xE6252E39),
+                      backgroundColor: const Color(0xE6252E39),
                       foregroundColor: Colors.white,
-                      child: Icon(
-                        _navigationMode
-                            ? Icons.navigation
-                            : Icons.navigation_outlined,
-                      ),
+                      icon: const Icon(Icons.my_location),
+                      label: const Text('Re-centre'),
                     ),
                   ),
                 if (_route == null)
@@ -619,7 +660,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 width: 38,
                 height: 38,
                 child: _CurrentPositionMarker(
-                  navigationMode: _navigationMode,
+                  navigationMode: _route != null && _isMoving,
                   headingDegrees: _lastHeadingDegrees,
                 ),
               ),
@@ -724,6 +765,29 @@ class _RideMapScreenState extends State<RideMapScreen> {
   void _onPositionChanged() {
     if (!mounted) return;
     final position = _effectivePosition;
+    final navigationFix = _navigationFix;
+    if (navigationFix != null) {
+      if (navigationFix == _lastHandledNavigationFix) return;
+      _lastHandledNavigationFix = navigationFix;
+      _lastHandledCurrentPosition = null;
+    } else {
+      if (_sameMapPoint(position, _lastHandledCurrentPosition)) return;
+      _lastHandledCurrentPosition = position;
+      _lastHandledNavigationFix = null;
+    }
+    final recordedAt = navigationFix?.recordedAt;
+    final previousFixAt = _previousCameraFixAt;
+    if (recordedAt != null) {
+      if (previousFixAt != null && recordedAt.isAfter(previousFixAt)) {
+        final updateMilliseconds = recordedAt
+            .difference(previousFixAt)
+            .inMilliseconds;
+        _cameraTransitionDuration = Duration(
+          milliseconds: (updateMilliseconds * 1.15).round().clamp(180, 900),
+        );
+      }
+      _previousCameraFixAt = recordedAt;
+    }
     final suppliedHeading = _navigationFix?.headingDegrees;
     if (suppliedHeading != null && suppliedHeading.isFinite) {
       _lastHeadingDegrees = suppliedHeading;
@@ -771,6 +835,32 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
   }
 
+  void _onMapPointerDown(PointerDownEvent event) {
+    _mapPointerOrigins[event.pointer] = event.localPosition;
+    if (_mapPointerOrigins.length > 1) _suppressFollowForMapGesture();
+  }
+
+  void _onMapPointerMove(PointerMoveEvent event) {
+    final origin = _mapPointerOrigins[event.pointer];
+    if (origin != null && (event.localPosition - origin).distance >= 8) {
+      _suppressFollowForMapGesture();
+    }
+  }
+
+  void _onMapPointerUp(PointerUpEvent event) {
+    _mapPointerOrigins.remove(event.pointer);
+  }
+
+  void _onMapPointerCancel(PointerCancelEvent event) {
+    _mapPointerOrigins.remove(event.pointer);
+  }
+
+  void _suppressFollowForMapGesture() {
+    if (_navigationMode) {
+      _stopFollowing(suppressAutomatic: _isMoving);
+    }
+  }
+
   Future<void> _toggleNavigationMode() async {
     if (_navigationMode) {
       _stopFollowing(suppressAutomatic: _isMoving);
@@ -808,29 +898,41 @@ class _RideMapScreenState extends State<RideMapScreen> {
     if (!_navigationMode) return;
     final position = _effectivePosition;
     if (position == null) return;
-    final target = _pointAhead(position, _lastHeadingDegrees, 90);
+    final landscape =
+        MediaQuery.orientationOf(context) == Orientation.landscape;
+    final target = _pointAhead(
+      position,
+      _lastHeadingDegrees,
+      landscape ? 70 : 65,
+    );
+    final navigationZoom = landscape ? 15.8 : 16.1;
     if (_basemap.usesMapLibre) {
       final controller = _mapLibreController;
       if (controller == null) return;
-      await controller.animateCamera(
+      await controller.easeCamera(
         ml.CameraUpdate.newCameraPosition(
           ml.CameraPosition(
             target: ml.LatLng(target.latitude, target.longitude),
-            zoom: 16.5,
-            tilt: 45,
+            zoom: navigationZoom,
+            tilt: landscape ? 38 : 43,
             bearing: _lastHeadingDegrees,
           ),
         ),
-        duration: const Duration(milliseconds: 650),
+        duration: _cameraTransitionDuration,
+        interpolation: ml.CameraAnimationInterpolation.linear,
       );
       return;
     }
     try {
-      _mapController.moveAndRotate(
+      _mapController.moveAndRotateAnimatedRaw(
         _latLng(target),
-        16.5,
+        navigationZoom,
         _lastHeadingDegrees,
-        id: 'navigation-follow',
+        offset: Offset.zero,
+        duration: _cameraTransitionDuration,
+        curve: Curves.linear,
+        hasGesture: false,
+        source: MapEventSource.mapController,
       );
     } on StateError {
       // The first position may arrive before FlutterMap has attached.
@@ -1089,6 +1191,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       final planned = await _destinationRoutePlanner.plan(
         origin: origin,
         query: request.query,
+        distanceUnit: widget.distanceUnit,
       );
       final route = await _activateRoute(planned);
       if (mounted) {
@@ -1331,6 +1434,24 @@ class MapNavigationPosition {
   final double? headingDegrees;
 
   bool get isMoving => (speedMetersPerSecond ?? 0) >= 2.5;
+
+  @override
+  bool operator ==(Object other) =>
+      other is MapNavigationPosition &&
+      point.latitude == other.point.latitude &&
+      point.longitude == other.point.longitude &&
+      recordedAt == other.recordedAt &&
+      speedMetersPerSecond == other.speedMetersPerSecond &&
+      headingDegrees == other.headingDegrees;
+
+  @override
+  int get hashCode => Object.hash(
+    point.latitude,
+    point.longitude,
+    recordedAt,
+    speedMetersPerSecond,
+    headingDegrees,
+  );
 }
 
 class MapOverlayTrace {
@@ -1368,6 +1489,14 @@ LatLng _latLng(GeoPoint point) => LatLng(point.latitude, point.longitude);
 bool _pointsDiffer(GeoPoint first, GeoPoint second) =>
     (first.latitude - second.latitude).abs() > 1e-7 ||
     (first.longitude - second.longitude).abs() > 1e-7;
+
+bool _sameMapPoint(GeoPoint? first, GeoPoint? second) =>
+    identical(first, second) ||
+    (first != null &&
+        second != null &&
+        first.latitude == second.latitude &&
+        first.longitude == second.longitude &&
+        first.recordedAt == second.recordedAt);
 
 double _bearingDegrees(GeoPoint from, GeoPoint to) {
   final fromLatitude = from.latitude * math.pi / 180;
@@ -1494,11 +1623,195 @@ class _EmptyRoutePrompt extends StatelessWidget {
   );
 }
 
+class _GroupMiniMap extends StatelessWidget {
+  const _GroupMiniMap({
+    required this.width,
+    required this.route,
+    required this.currentPosition,
+    required this.riders,
+  });
+
+  final double width;
+  final List<GeoPoint> route;
+  final GeoPoint? currentPosition;
+  final List<MapOverlayMarker> riders;
+
+  @override
+  Widget build(BuildContext context) {
+    final riderCount = riders.length + (currentPosition == null ? 0 : 1);
+    return Container(
+      key: const Key('group-mini-map'),
+      width: width,
+      height: 116,
+      decoration: BoxDecoration(
+        color: const Color(0xF2111820),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF566273), width: 1.5),
+        boxShadow: const [
+          BoxShadow(color: Colors.black54, blurRadius: 8, offset: Offset(0, 2)),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: CustomPaint(
+                painter: _GroupMiniMapPainter(
+                  route: route,
+                  currentPosition: currentPosition,
+                  riders: riders,
+                ),
+              ),
+            ),
+            Positioned(
+              left: 7,
+              top: 6,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: const Color(0xD90D1117),
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 3,
+                  ),
+                  child: Text(
+                    'GROUP $riderCount',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GroupMiniMapPainter extends CustomPainter {
+  const _GroupMiniMapPainter({
+    required this.route,
+    required this.currentPosition,
+    required this.riders,
+  });
+
+  final List<GeoPoint> route;
+  final GeoPoint? currentPosition;
+  final List<MapOverlayMarker> riders;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final groupPoints = <GeoPoint?>[
+      currentPosition,
+      ...riders.map((rider) => rider.point),
+    ].nonNulls.toList(growable: false);
+    if (groupPoints.isEmpty) return;
+
+    var south = groupPoints.first.latitude;
+    var north = groupPoints.first.latitude;
+    var west = groupPoints.first.longitude;
+    var east = groupPoints.first.longitude;
+    for (final point in groupPoints.skip(1)) {
+      south = math.min(south, point.latitude);
+      north = math.max(north, point.latitude);
+      west = math.min(west, point.longitude);
+      east = math.max(east, point.longitude);
+    }
+    final latitudeCenter = (north + south) / 2;
+    final longitudeCenter = (east + west) / 2;
+    final latitudeSpan = math.max(north - south, 0.0024) * 1.45;
+    final longitudeSpan = math.max(east - west, 0.0032) * 1.45;
+    south = latitudeCenter - latitudeSpan / 2;
+    north = latitudeCenter + latitudeSpan / 2;
+    west = longitudeCenter - longitudeSpan / 2;
+    east = longitudeCenter + longitudeSpan / 2;
+
+    Offset project(GeoPoint point) => Offset(
+      (point.longitude - west) / (east - west) * size.width,
+      (north - point.latitude) / (north - south) * size.height,
+    );
+
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = const Color(0xFF151E28),
+    );
+    final gridPaint = Paint()
+      ..color = const Color(0xFF263443)
+      ..strokeWidth = 1;
+    canvas.drawLine(
+      Offset(0, size.height * 0.5),
+      Offset(size.width, size.height * 0.5),
+      gridPaint,
+    );
+    canvas.drawLine(
+      Offset(size.width * 0.5, 0),
+      Offset(size.width * 0.5, size.height),
+      gridPaint,
+    );
+
+    if (route.length >= 2) {
+      final path = ui.Path()
+        ..moveTo(project(route.first).dx, project(route.first).dy);
+      final stride = math.max(1, route.length ~/ 1200);
+      for (var index = stride; index < route.length; index += stride) {
+        final offset = project(route[index]);
+        path.lineTo(offset.dx, offset.dy);
+      }
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = const Color(0xB3FFB15C)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.5
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round,
+      );
+    }
+
+    void drawRider(GeoPoint point, Color color, double radius) {
+      final offset = project(point);
+      canvas.drawCircle(offset, radius + 2, Paint()..color = Colors.black87);
+      canvas.drawCircle(offset, radius, Paint()..color = color);
+      canvas.drawCircle(
+        offset,
+        radius,
+        Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1,
+      );
+    }
+
+    for (final rider in riders) {
+      drawRider(rider.point, rider.color, 5);
+    }
+    if (currentPosition case final point?) {
+      drawRider(point, const Color(0xFFFF7A1A), 6);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_GroupMiniMapPainter oldDelegate) => true;
+}
+
 class _LeaderMapStatus extends StatelessWidget {
-  const _LeaderMapStatus({required this.status, required this.compact});
+  const _LeaderMapStatus({
+    required this.status,
+    required this.compact,
+    required this.distanceUnit,
+  });
 
   final LeaderRideStatus status;
   final bool compact;
+  final DistanceUnit distanceUnit;
 
   @override
   Widget build(BuildContext context) => Align(
@@ -1509,10 +1822,18 @@ class _LeaderMapStatus extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (status.offCourseAlerts.isNotEmpty) ...[
-            _OffCourseBanner(alerts: status.offCourseAlerts, compact: compact),
+            _OffCourseBanner(
+              alerts: status.offCourseAlerts,
+              compact: compact,
+              distanceUnit: distanceUnit,
+            ),
             SizedBox(height: compact ? 4 : 8),
           ],
-          _TecGapCard(status: status, compact: compact),
+          _TecGapCard(
+            status: status,
+            compact: compact,
+            distanceUnit: distanceUnit,
+          ),
         ],
       ),
     ),
@@ -1520,10 +1841,15 @@ class _LeaderMapStatus extends StatelessWidget {
 }
 
 class _OffCourseBanner extends StatelessWidget {
-  const _OffCourseBanner({required this.alerts, required this.compact});
+  const _OffCourseBanner({
+    required this.alerts,
+    required this.compact,
+    required this.distanceUnit,
+  });
 
   final List<LeaderOffCourseAlert> alerts;
   final bool compact;
+  final DistanceUnit distanceUnit;
 
   @override
   Widget build(BuildContext context) {
@@ -1558,7 +1884,7 @@ class _OffCourseBanner extends StatelessWidget {
                   ),
                   if (alerts.length == 1 && distance != null)
                     Text(
-                      '${_distanceLabel(distance)} from the planned route',
+                      '${MeasurementFormatter(distanceUnit).distance(distance)} from the planned route',
                       style: const TextStyle(color: Colors.white),
                     ),
                 ],
@@ -1572,10 +1898,15 @@ class _OffCourseBanner extends StatelessWidget {
 }
 
 class _TecGapCard extends StatelessWidget {
-  const _TecGapCard({required this.status, required this.compact});
+  const _TecGapCard({
+    required this.status,
+    required this.compact,
+    required this.distanceUnit,
+  });
 
   final LeaderRideStatus status;
   final bool compact;
+  final DistanceUnit distanceUnit;
 
   @override
   Widget build(BuildContext context) {
@@ -1587,7 +1918,7 @@ class _TecGapCard extends StatelessWidget {
         ? 'Waiting for a Tail End Charlie location'
         : distance == null || eta == null
         ? '$name · last update ${_ageLabel(age)}'
-        : '$name · ${_distanceLabel(distance)} · about ${_durationLabel(eta)}';
+        : '$name · ${MeasurementFormatter(distanceUnit).distance(distance)} · about ${_durationLabel(eta)}';
     return Card(
       key: const Key('leader-tec-gap'),
       margin: EdgeInsets.zero,
@@ -1624,10 +1955,6 @@ class _TecGapCard extends StatelessWidget {
     );
   }
 }
-
-String _distanceLabel(double meters) => meters < 1000
-    ? '${meters.round()} m'
-    : '${(meters / 1000).toStringAsFixed(1)} km';
 
 String _durationLabel(Duration duration) {
   final minutes = (duration.inSeconds / 60).ceil();
