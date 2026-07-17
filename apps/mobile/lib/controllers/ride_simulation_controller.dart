@@ -257,10 +257,25 @@ class RideSimulationController extends ChangeNotifier {
         position: sampled.position,
         headingDegrees: sampled.headingDegrees,
         offRouteTrail: List.unmodifiable(agent.offRouteTrail),
-        travelTrail: List.unmodifiable(agent.travelTrail),
+        travelTrail: List.unmodifiable(_displayTrailFor(agent)),
       );
     }),
   );
+
+  List<GeoPoint> _displayTrailFor(_SimulatedAgent agent) {
+    if (agent.role != RideRole.lead) return agent.travelTrail;
+    final tec = _agent(tecRiderId);
+    final routeTrail = _routeSampler.pointsBetween(
+      math.min(tec.progressMeters, agent.progressMeters),
+      agent.progressMeters,
+    );
+    if (!agent.isOffRoute || agent.offRouteTrail.length < 2) {
+      return routeTrail;
+    }
+    // Keep the planned path back to TEC, then show the actual deviation beyond
+    // it so the leader trail remains useful during a prolonged off-course run.
+    return [...routeTrail, ...agent.offRouteTrail];
+  }
 
   Future<void> initialize() async {
     for (final agent in _agents) {
@@ -527,7 +542,7 @@ class RideSimulationController extends ChangeNotifier {
     if (trail.isEmpty ||
         GeoCalculations.distanceMeters(trail.last, point) >= 2) {
       trail.add(point);
-      if (trail.length > 120) trail.removeRange(0, trail.length - 120);
+      if (trail.length > 600) trail.removeRange(0, trail.length - 600);
     }
   }
 
@@ -822,6 +837,20 @@ class _RouteSampler {
       if (unique.isEmpty || value - unique.last >= 120) unique.add(value);
     }
     return List.unmodifiable(unique);
+  }
+
+  List<GeoPoint> pointsBetween(double fromMeters, double toMeters) {
+    final start = fromMeters.clamp(0, totalDistanceMeters).toDouble();
+    final end = toMeters.clamp(0, totalDistanceMeters).toDouble();
+    if (end <= start) return [sampleAt(start).point];
+    // Keep the leader trace continuous enough to read on the map without
+    // sending every GPS tick through the overlay source.
+    final stepMeters = math.max(20, (end - start) / 750);
+    final segmentCount = ((end - start) / stepMeters).ceil();
+    return List.unmodifiable([
+      for (var index = 0; index <= segmentCount; index += 1)
+        sampleAt(start + (end - start) * index / segmentCount).point,
+    ]);
   }
 
   _SampledRoutePoint sampleAt(double distanceMeters) {

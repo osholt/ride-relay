@@ -313,7 +313,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
     widget.overlayMarkers?.addListener(_onOverlayDataChanged);
     widget.offRouteTraces?.addListener(_onOverlayDataChanged);
     widget.junctionMarkerOverlay?.addListener(_onJunctionMarkerChanged);
-    _markerOverviewVisible = widget.junctionMarkerOverlay?.value != null;
+    _markerOverviewVisible =
+        widget.junctionMarkerOverlay?.value?.isLocalMarker ?? false;
     _loadPersistedRoute();
   }
 
@@ -369,7 +370,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
           route,
           _effectivePosition,
         );
-        _navigationMode = route != null && _isMoving;
+        _navigationMode = route != null && _isMoving && !_markerOverviewVisible;
         _navigationCanvasActive = _navigationMode;
         _initialCameraPositioned = false;
         _loading = false;
@@ -400,7 +401,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
     final landscape =
         MediaQuery.orientationOf(context) == Orientation.landscape;
     final markerOverlay = widget.junctionMarkerOverlay?.value;
-    final markerOverviewActive = markerOverlay != null;
+    final localMarkerOverlay = markerOverlay?.isLocalMarker == true
+        ? markerOverlay
+        : null;
+    final markerOverviewActive = localMarkerOverlay != null;
     // Once navigation has started, retain the full map canvas through brief
     // traffic-light or GPS speed dips. Switching the AppBar in and out changes
     // the platform map's size and was the main source of visible flashing.
@@ -585,20 +589,32 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       mapStyleString: widget.mapStyleString,
                     ),
                   ),
-                if (markerOverlay != null)
+                if (localMarkerOverlay != null)
                   Positioned(
                     key: const Key('junction-marker-overlay-position'),
+                    left: overlayLeft + 12,
                     right: overlayRight + 12,
                     bottom: overlayBottom + 12,
                     child: ValueListenableBuilder<MapJunctionMarkerOverlay?>(
                       valueListenable: widget.junctionMarkerOverlay!,
-                      builder: (context, overlay, _) => overlay == null
-                          ? const SizedBox.shrink()
-                          : _JunctionMarkerOverlay(
+                      builder: (context, overlay, _) {
+                        if (overlay == null || !overlay.isLocalMarker) {
+                          return const SizedBox.shrink();
+                        }
+                        return LayoutBuilder(
+                          builder: (context, constraints) => Align(
+                            alignment: Alignment.bottomRight,
+                            child: _JunctionMarkerOverlay(
                               overlay: overlay,
                               compact: landscape,
+                              maxWidth: landscape
+                                  ? math.min(312.0, constraints.maxWidth)
+                                  : constraints.maxWidth,
                               distanceUnit: widget.distanceUnit,
                             ),
+                          ),
+                        );
+                      },
                     ),
                   ),
                 if (_route != null && !_navigationMode && !markerOverviewActive)
@@ -915,7 +931,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   void _onJunctionMarkerChanged() {
     if (!mounted) return;
-    final visible = widget.junctionMarkerOverlay?.value != null;
+    final visible = widget.junctionMarkerOverlay?.value?.isLocalMarker ?? false;
     if (visible == _markerOverviewVisible) return;
     setState(() {
       _markerOverviewVisible = visible;
@@ -935,7 +951,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
       });
     } else {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) unawaited(_followNavigationCamera(force: true));
+        if (mounted) {
+          unawaited(
+            _followNavigationCamera(
+              force: true,
+              transitionDuration: const Duration(milliseconds: 700),
+            ),
+          );
+        }
       });
     }
   }
@@ -1035,7 +1058,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   Future<void> _showMarkerOverview() async {
     final overlay = widget.junctionMarkerOverlay?.value;
-    if (overlay == null) return;
+    if (overlay == null || !overlay.isLocalMarker) return;
     final points = <GeoPoint>[overlay.markerPoint];
     final localPosition = _effectivePosition;
     if (localPosition != null) points.add(localPosition);
@@ -1053,69 +1076,65 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
     final landscape =
         MediaQuery.orientationOf(context) == Orientation.landscape;
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final safeInsets = MediaQuery.paddingOf(context);
+    final overlayWidth = landscape
+        ? math.min(312.0, screenWidth - safeInsets.horizontal - 24)
+        : screenWidth - safeInsets.horizontal - 24;
     // The card lives in the lower-right corner. Reserve that area when fitting
     // riders so no rider or route decision is hidden underneath it.
-    final rightPadding = landscape ? 400.0 : 32.0;
-    final bottomPadding = landscape ? 156.0 : 264.0;
+    final rightPadding = landscape ? overlayWidth + 36.0 : 32.0;
+    final bottomPadding = landscape ? 228.0 : 276.0;
+    // A stationary marker view should be a genuine overview even when every
+    // rider is briefly at the same junction. These anchors prevent a close
+    // single-point camera from ignoring the reserved card area.
+    final cameraPoints = <GeoPoint>[
+      ...distinctPoints,
+      _pointAhead(overlay.markerPoint, 0, 360),
+      _pointAhead(overlay.markerPoint, 180, 360),
+    ];
     if (_basemap.usesMapLibre) {
       final controller = _mapLibreController;
       if (controller == null) return;
-      if (distinctPoints.length >= 2) {
-        await controller.animateCamera(
-          ml.CameraUpdate.newLatLngBounds(
-            _mapLibreBounds(distinctPoints),
-            left: 36,
-            top: 36,
-            right: rightPadding,
-            bottom: bottomPadding,
-          ),
-        );
-      } else {
-        await controller.easeCamera(
-          ml.CameraUpdate.newCameraPosition(
-            ml.CameraPosition(
-              target: ml.LatLng(
-                overlay.markerPoint.latitude,
-                overlay.markerPoint.longitude,
-              ),
-              zoom: 13.4,
-              tilt: 0,
-              bearing: 0,
-            ),
-          ),
-          duration: const Duration(milliseconds: 350),
-        );
-      }
+      await controller.animateCamera(
+        ml.CameraUpdate.newLatLngBounds(
+          _mapLibreBounds(cameraPoints),
+          left: 36,
+          top: 36,
+          right: rightPadding,
+          bottom: bottomPadding,
+        ),
+        duration: const Duration(milliseconds: 700),
+      );
       return;
     }
     try {
-      if (distinctPoints.length >= 2) {
-        _mapController.fitCamera(
-          CameraFit.bounds(
-            bounds: LatLngBounds.fromPoints(
-              distinctPoints.map(_latLng).toList(),
-            ),
-            padding: EdgeInsets.fromLTRB(36, 36, rightPadding, bottomPadding),
-          ),
-        );
-      } else {
-        _mapController.moveAndRotateAnimatedRaw(
-          _latLng(overlay.markerPoint),
-          13.4,
-          0,
-          offset: Offset.zero,
-          duration: const Duration(milliseconds: 350),
-          curve: Curves.easeOut,
-          hasGesture: false,
-          source: MapEventSource.mapController,
-        );
-      }
+      final fitted = CameraFit.bounds(
+        bounds: LatLngBounds.fromPoints(
+          cameraPoints.map(_latLng).toList(growable: false),
+        ),
+        padding: EdgeInsets.fromLTRB(36, 36, rightPadding, bottomPadding),
+        maxZoom: 14.2,
+      ).fit(_mapController.camera);
+      _mapController.moveAndRotateAnimatedRaw(
+        fitted.center,
+        fitted.zoom,
+        0,
+        offset: Offset.zero,
+        duration: const Duration(milliseconds: 700),
+        curve: Curves.easeInOutCubic,
+        hasGesture: false,
+        source: MapEventSource.mapController,
+      );
     } on StateError {
       // The marker can activate before FlutterMap finishes attaching.
     }
   }
 
-  Future<void> _followNavigationCamera({bool force = false}) async {
+  Future<void> _followNavigationCamera({
+    bool force = false,
+    Duration? transitionDuration,
+  }) async {
     if (!_navigationMode) return;
     final position = _effectivePosition;
     if (position == null) return;
@@ -1131,7 +1150,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
             const Duration(milliseconds: 400)) {
       return;
     }
-    if (previousCameraUpdate != null) {
+    if (previousCameraUpdate != null && transitionDuration == null) {
       final elapsed = now.difference(previousCameraUpdate).inMilliseconds;
       _cameraTransitionDuration = Duration(
         milliseconds: (elapsed * 1.1).round().clamp(360, 560),
@@ -1149,6 +1168,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _pointAlongRemainingRoute(position, lookAheadMeters) ??
         _pointAhead(position, _lastHeadingDegrees, lookAheadMeters);
     final navigationZoom = landscape ? 13.85 : 14.45;
+    final cameraDuration = transitionDuration ?? _cameraTransitionDuration;
     try {
       if (_basemap.usesMapLibre) {
         final controller = _mapLibreController;
@@ -1162,8 +1182,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
               bearing: _lastHeadingDegrees,
             ),
           ),
-          duration: _cameraTransitionDuration,
-          interpolation: ml.CameraAnimationInterpolation.linear,
+          duration: cameraDuration,
+          interpolation: transitionDuration == null
+              ? ml.CameraAnimationInterpolation.linear
+              : null,
         );
         return;
       }
@@ -1172,8 +1194,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
         navigationZoom,
         _lastHeadingDegrees,
         offset: Offset.zero,
-        duration: _cameraTransitionDuration,
-        curve: Curves.linear,
+        duration: cameraDuration,
+        curve: transitionDuration == null
+            ? Curves.linear
+            : Curves.easeInOutCubic,
         hasGesture: false,
         source: MapEventSource.mapController,
       );
@@ -2437,11 +2461,13 @@ class _JunctionMarkerOverlay extends StatelessWidget {
   const _JunctionMarkerOverlay({
     required this.overlay,
     required this.compact,
+    required this.maxWidth,
     required this.distanceUnit,
   });
 
   final MapJunctionMarkerOverlay overlay;
   final bool compact;
+  final double maxWidth;
   final DistanceUnit distanceUnit;
 
   @override
@@ -2456,7 +2482,7 @@ class _JunctionMarkerOverlay extends StatelessWidget {
         : const EdgeInsets.fromLTRB(16, 13, 16, 12);
     final tecDistance = overlay.tecDistanceMeters;
     return ConstrainedBox(
-      constraints: BoxConstraints(maxWidth: compact ? 360 : 400),
+      constraints: BoxConstraints(maxWidth: maxWidth),
       child: Card(
         key: const Key('junction-marker-overlay'),
         margin: EdgeInsets.zero,

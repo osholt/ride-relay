@@ -95,7 +95,18 @@ void main() {
     final initialLeader = simulation.riders.singleWhere(
       (rider) => rider.role == RideRole.lead,
     );
-    expect(initialLeader.travelTrail, hasLength(1));
+    final tec = simulation.riders.singleWhere(
+      (rider) => rider.role == RideRole.tailEndCharlie,
+    );
+    expect(initialLeader.travelTrail.length, greaterThan(1));
+    expect(
+      initialLeader.travelTrail.first.latitude,
+      closeTo(tec.position.latitude, 1e-7),
+    );
+    expect(
+      initialLeader.travelTrail.first.longitude,
+      closeTo(tec.position.longitude, 1e-7),
+    );
 
     await simulation.advance(const Duration(seconds: 1));
 

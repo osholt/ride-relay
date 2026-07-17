@@ -106,12 +106,12 @@ void main() {
       final marker = ValueNotifier<MapJunctionMarkerOverlay?>(
         const MapJunctionMarkerOverlay(
           markerPoint: GeoPoint(latitude: 53, longitude: -1.01),
-          markerRiderName: 'Maya',
-          isLocalMarker: false,
+          markerRiderName: 'You',
+          isLocalMarker: true,
           ridersPassed: 2,
           ridersExpected: 3,
           tecDistanceMeters: 210,
-          instruction: 'Maya is holding the junction while riders pass.',
+          instruction: 'You are holding the junction while riders pass.',
           stage: MapJunctionMarkerStage.waitingForRiders,
         ),
       );
@@ -156,7 +156,7 @@ void main() {
 
       expect(find.byType(AppBar), findsNothing);
       expect(find.byKey(const Key('junction-marker-overlay')), findsOneWidget);
-      expect(find.text('Maya is holding this junction.'), findsOneWidget);
+      expect(find.text('You are holding this junction.'), findsOneWidget);
       expect(find.text('2/3 passed'), findsOneWidget);
       expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
       final overlayBounds = tester.getRect(
@@ -165,6 +165,41 @@ void main() {
       expect(overlayBounds.left, greaterThan(400));
       expect(overlayBounds.top, greaterThan(100));
       expect(overlayBounds.bottom, greaterThan(350));
+
+      marker.value = const MapJunctionMarkerOverlay(
+        markerPoint: GeoPoint(latitude: 53, longitude: -1.01),
+        markerRiderName: 'Maya',
+        isLocalMarker: false,
+        ridersPassed: 2,
+        ridersExpected: 3,
+        tecDistanceMeters: 210,
+        instruction: 'Maya is holding the junction while riders pass.',
+        stage: MapJunctionMarkerStage.waitingForRiders,
+      );
+      await tester.pump();
+
+      expect(find.byKey(const Key('junction-marker-overlay')), findsNothing);
+      expect(find.byType(AppBar), findsOneWidget);
+
+      tester.view.physicalSize = const Size(390, 844);
+      marker.value = const MapJunctionMarkerOverlay(
+        markerPoint: GeoPoint(latitude: 53, longitude: -1.01),
+        markerRiderName: 'You',
+        isLocalMarker: true,
+        ridersPassed: 2,
+        ridersExpected: 3,
+        tecDistanceMeters: 210,
+        instruction: 'You are holding the junction while riders pass.',
+        stage: MapJunctionMarkerStage.waitingForRiders,
+      );
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      final portraitBounds = tester.getRect(
+        find.byKey(const Key('junction-marker-overlay')),
+      );
+      expect(portraitBounds.left, greaterThanOrEqualTo(12));
+      expect(portraitBounds.right, lessThanOrEqualTo(378));
 
       marker.value = null;
       await tester.pump();

@@ -438,7 +438,11 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
 
   void _updateJunctionMarkerOverlay(RideSimulationController controller) {
     final hadOverlay = _junctionMarkerOverlay.value != null;
-    if (!controller.automaticMarkerActive) {
+    // Junction guidance is an instruction for the rider holding the turn. The
+    // rest of the group keeps their normal navigation view and never receives
+    // the stationary marker camera transition.
+    if (!controller.automaticMarkerActive ||
+        !controller.automaticMarkerIsLocal) {
       if (hadOverlay) {
         _junctionMarkerOverlay.value = null;
         setState(() {});
