@@ -25,6 +25,7 @@ import '../../services/offline_tile_cache.dart';
 import '../../services/road_routing.dart';
 import '../../services/route_geometry_enricher.dart';
 import '../../services/route_importer.dart';
+import '../../services/route_progress.dart';
 import 'destination_route_sheet.dart';
 import 'navigation_export_sheet.dart';
 
@@ -38,7 +39,9 @@ class RideMapFeature extends StatefulWidget {
   const RideMapFeature({
     super.key,
     this.currentPosition,
+    this.navigationPosition,
     this.overlayMarkers,
+    this.offRouteTraces,
     this.leaderStatus,
     this.onRouteChanged,
     this.acquireCurrentPosition,
@@ -49,14 +52,18 @@ class RideMapFeature extends StatefulWidget {
   factory RideMapFeature.fromEnvironment({
     Key? key,
     ValueListenable<GeoPoint?>? currentPosition,
+    ValueListenable<MapNavigationPosition?>? navigationPosition,
     ValueListenable<List<MapOverlayMarker>>? overlayMarkers,
+    ValueListenable<List<MapOverlayTrace>>? offRouteTraces,
     ValueListenable<LeaderRideStatus?>? leaderStatus,
     ValueChanged<ImportedRoute?>? onRouteChanged,
     Future<GeoPoint?> Function()? acquireCurrentPosition,
   }) => RideMapFeature(
     key: key,
     currentPosition: currentPosition,
+    navigationPosition: navigationPosition,
     overlayMarkers: overlayMarkers,
+    offRouteTraces: offRouteTraces,
     leaderStatus: leaderStatus,
     onRouteChanged: onRouteChanged,
     acquireCurrentPosition: acquireCurrentPosition,
@@ -64,7 +71,9 @@ class RideMapFeature extends StatefulWidget {
   );
 
   final ValueListenable<GeoPoint?>? currentPosition;
+  final ValueListenable<MapNavigationPosition?>? navigationPosition;
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
+  final ValueListenable<List<MapOverlayTrace>>? offRouteTraces;
   final ValueListenable<LeaderRideStatus?>? leaderStatus;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
@@ -129,7 +138,9 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         mapStyleString: dependencies.mapStyleString,
         disposeOfflineTileCache: true,
         currentPosition: widget.currentPosition,
+        navigationPosition: widget.navigationPosition,
         overlayMarkers: widget.overlayMarkers,
+        offRouteTraces: widget.offRouteTraces,
         leaderStatus: widget.leaderStatus,
         onRouteChanged: widget.onRouteChanged,
         acquireCurrentPosition: widget.acquireCurrentPosition,
@@ -163,7 +174,9 @@ class RideMapScreen extends StatefulWidget {
     this.mapLibreOfflineManager,
     this.mapStyleString = MapStyleRepository.fallbackStyle,
     this.currentPosition,
+    this.navigationPosition,
     this.overlayMarkers,
+    this.offRouteTraces,
     this.leaderStatus,
     this.onRouteChanged,
     this.acquireCurrentPosition,
@@ -180,7 +193,9 @@ class RideMapScreen extends StatefulWidget {
   final MapLibreOfflineManager? mapLibreOfflineManager;
   final String mapStyleString;
   final ValueListenable<GeoPoint?>? currentPosition;
+  final ValueListenable<MapNavigationPosition?>? navigationPosition;
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
+  final ValueListenable<List<MapOverlayTrace>>? offRouteTraces;
   final ValueListenable<LeaderRideStatus?>? leaderStatus;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
@@ -195,12 +210,15 @@ class RideMapScreen extends StatefulWidget {
 }
 
 class _RideMapScreenState extends State<RideMapScreen> {
-  static const _routeSource = 'ride-relay-route';
+  static const _remainingRouteSource = 'ride-relay-route-remaining';
+  static const _riddenRouteSource = 'ride-relay-route-ridden';
+  static const _offRouteTraceSource = 'ride-relay-off-route-traces';
   static const _waypointSource = 'ride-relay-waypoints';
   static const _positionSource = 'ride-relay-position';
   static const _overlaySource = 'ride-relay-overlays';
 
   final MapController _mapController = MapController();
+  final RouteProgressTracker _routeProgressTracker = RouteProgressTracker();
   late final http.Client _routingClient;
   late final DestinationRoutePlanner _defaultDestinationRoutePlanner;
   late final RouteGeometryEnricher _defaultRouteGeometryEnricher;
@@ -213,6 +231,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
   bool _importing = false;
   bool _exporting = false;
   bool _routing = false;
+  bool _navigationMode = false;
+  bool _autoFollowSuppressed = false;
+  double _lastHeadingDegrees = 0;
+  GeoPoint? _previousNavigationPoint;
+  RouteProgressGeometry _progressGeometry = const RouteProgressGeometry.empty();
   TileDownloadProgress? _downloadProgress;
   TileDownloadCancellationToken? _downloadCancellation;
 
@@ -246,8 +269,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _mapLibreOfflineManager =
         widget.mapLibreOfflineManager ??
         MapLibreOfflineManager(configuration: _basemap);
-    widget.currentPosition?.addListener(_onMapDataChanged);
-    widget.overlayMarkers?.addListener(_onMapDataChanged);
+    widget.currentPosition?.addListener(_onPositionChanged);
+    widget.navigationPosition?.addListener(_onPositionChanged);
+    widget.overlayMarkers?.addListener(_onOverlayDataChanged);
+    widget.offRouteTraces?.addListener(_onOverlayDataChanged);
     _loadPersistedRoute();
   }
 
@@ -255,20 +280,30 @@ class _RideMapScreenState extends State<RideMapScreen> {
   void didUpdateWidget(RideMapScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.currentPosition != widget.currentPosition) {
-      oldWidget.currentPosition?.removeListener(_onMapDataChanged);
-      widget.currentPosition?.addListener(_onMapDataChanged);
+      oldWidget.currentPosition?.removeListener(_onPositionChanged);
+      widget.currentPosition?.addListener(_onPositionChanged);
+    }
+    if (oldWidget.navigationPosition != widget.navigationPosition) {
+      oldWidget.navigationPosition?.removeListener(_onPositionChanged);
+      widget.navigationPosition?.addListener(_onPositionChanged);
     }
     if (oldWidget.overlayMarkers != widget.overlayMarkers) {
-      oldWidget.overlayMarkers?.removeListener(_onMapDataChanged);
-      widget.overlayMarkers?.addListener(_onMapDataChanged);
+      oldWidget.overlayMarkers?.removeListener(_onOverlayDataChanged);
+      widget.overlayMarkers?.addListener(_onOverlayDataChanged);
+    }
+    if (oldWidget.offRouteTraces != widget.offRouteTraces) {
+      oldWidget.offRouteTraces?.removeListener(_onOverlayDataChanged);
+      widget.offRouteTraces?.addListener(_onOverlayDataChanged);
     }
   }
 
   @override
   void dispose() {
     _downloadCancellation?.cancel();
-    widget.currentPosition?.removeListener(_onMapDataChanged);
-    widget.overlayMarkers?.removeListener(_onMapDataChanged);
+    widget.currentPosition?.removeListener(_onPositionChanged);
+    widget.navigationPosition?.removeListener(_onPositionChanged);
+    widget.overlayMarkers?.removeListener(_onOverlayDataChanged);
+    widget.offRouteTraces?.removeListener(_onOverlayDataChanged);
     _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
     _mapController.dispose();
     _routingClient.close();
@@ -282,9 +317,19 @@ class _RideMapScreenState extends State<RideMapScreen> {
       if (!mounted) return;
       setState(() {
         _route = route;
+        _progressGeometry = _routeProgressTracker.update(
+          route,
+          _effectivePosition,
+        );
+        _navigationMode = route != null && _isMoving;
         _loading = false;
       });
       widget.onRouteChanged?.call(route);
+      if (_navigationMode) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) unawaited(_followNavigationCamera());
+        });
+      }
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -296,88 +341,110 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final landscape =
+        MediaQuery.orientationOf(context) == Orientation.landscape;
+    final hideChrome = _navigationMode && _isMoving;
+    final compactDensity = landscape ? VisualDensity.compact : null;
     return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          _route?.name ?? 'Navigation',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        actions: [
-          IconButton(
-            tooltip: 'Plan a destination',
-            onPressed: _routing ? null : _planDestination,
-            icon: _routing
-                ? const SizedBox.square(
-                    dimension: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.add_road),
-          ),
-          if (_route == null)
-            IconButton(
-              tooltip: 'Import GPX route',
-              onPressed: _importing ? null : _importGpx,
-              icon: _importing
-                  ? const SizedBox.square(
-                      dimension: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.upload_file),
-            ),
-          if (_route != null)
-            IconButton(
-              tooltip: 'Navigate or export route',
-              onPressed: _exporting ? null : _openNavigationExport,
-              icon: _exporting
-                  ? const SizedBox.square(
-                      dimension: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.alt_route),
-            ),
-          IconButton(
-            tooltip: 'Fit route',
-            onPressed: _route == null ? null : _fitRoute,
-            icon: const Icon(Icons.fit_screen),
-          ),
-          PopupMenuButton<_MapAction>(
-            onSelected: _handleMenuAction,
-            itemBuilder: (context) => [
-              PopupMenuItem(
-                value: _MapAction.importGpx,
-                child: Text(
-                  _route == null ? 'Import GPX route' : 'Replace GPX route',
+      appBar: hideChrome
+          ? null
+          : AppBar(
+              toolbarHeight: landscape ? 42 : 52,
+              titleSpacing: 12,
+              title: Text(
+                _route?.name ?? 'Navigation',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: landscape
+                    ? Theme.of(context).textTheme.titleMedium
+                    : null,
+              ),
+              actions: [
+                IconButton(
+                  tooltip: 'Plan a destination',
+                  visualDensity: compactDensity,
+                  onPressed: _routing ? null : _planDestination,
+                  icon: _routing
+                      ? const SizedBox.square(
+                          dimension: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.add_road),
                 ),
-              ),
-              const PopupMenuItem(
-                value: _MapAction.loadDemo,
-                child: Text('Load demo route'),
-              ),
-              if (_route != null)
-                PopupMenuItem(
-                  value: _MapAction.downloadOffline,
-                  enabled:
-                      _basemap.canDownloadOffline && _downloadProgress == null,
-                  child: Text(
-                    _basemap.canDownloadOffline
-                        ? 'Download map for offline use'
-                        : 'Offline map download unavailable',
+                if (_route == null)
+                  IconButton(
+                    tooltip: 'Import GPX route',
+                    visualDensity: compactDensity,
+                    onPressed: _importing ? null : _importGpx,
+                    icon: _importing
+                        ? const SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.upload_file),
                   ),
+                if (_route != null)
+                  IconButton(
+                    tooltip: 'Navigate or export route',
+                    visualDensity: compactDensity,
+                    onPressed: _exporting ? null : _openNavigationExport,
+                    icon: _exporting
+                        ? const SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.alt_route),
+                  ),
+                IconButton(
+                  tooltip: 'Fit route',
+                  visualDensity: compactDensity,
+                  onPressed: _route == null ? null : _showWholeRoute,
+                  icon: const Icon(Icons.fit_screen),
                 ),
-              const PopupMenuItem(
-                value: _MapAction.clearOfflineTiles,
-                child: Text('Clear downloaded map data'),
-              ),
-              if (_route != null)
-                const PopupMenuItem(
-                  value: _MapAction.removeRoute,
-                  child: Text('Remove route'),
+                PopupMenuButton<_MapAction>(
+                  iconSize: landscape ? 22 : 24,
+                  padding: landscape
+                      ? EdgeInsets.zero
+                      : const EdgeInsets.all(8),
+                  onSelected: _handleMenuAction,
+                  itemBuilder: (context) => [
+                    PopupMenuItem(
+                      value: _MapAction.importGpx,
+                      child: Text(
+                        _route == null
+                            ? 'Import GPX route'
+                            : 'Replace GPX route',
+                      ),
+                    ),
+                    const PopupMenuItem(
+                      value: _MapAction.loadDemo,
+                      child: Text('Load demo route'),
+                    ),
+                    if (_route != null)
+                      PopupMenuItem(
+                        value: _MapAction.downloadOffline,
+                        enabled:
+                            _basemap.canDownloadOffline &&
+                            _downloadProgress == null,
+                        child: Text(
+                          _basemap.canDownloadOffline
+                              ? 'Download map for offline use'
+                              : 'Offline map download unavailable',
+                        ),
+                      ),
+                    const PopupMenuItem(
+                      value: _MapAction.clearOfflineTiles,
+                      child: Text('Clear downloaded map data'),
+                    ),
+                    if (_route != null)
+                      const PopupMenuItem(
+                        value: _MapAction.removeRoute,
+                        child: Text('Remove route'),
+                      ),
+                  ],
                 ),
-            ],
-          ),
-        ],
-      ),
+              ],
+            ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _loadError != null
@@ -399,14 +466,38 @@ class _RideMapScreenState extends State<RideMapScreen> {
                   ),
                 if (widget.leaderStatus != null)
                   Positioned(
-                    left: 12,
-                    right: 12,
-                    top: _downloadProgress == null ? 12 : 82,
+                    left: landscape ? 8 : 12,
+                    right: landscape ? 68 : 12,
+                    top: _downloadProgress == null ? 8 : 72,
                     child: ValueListenableBuilder<LeaderRideStatus?>(
                       valueListenable: widget.leaderStatus!,
                       builder: (context, status, _) => status == null
                           ? const SizedBox.shrink()
-                          : _LeaderMapStatus(status: status),
+                          : _LeaderMapStatus(
+                              status: status,
+                              compact: landscape || hideChrome,
+                            ),
+                    ),
+                  ),
+                if (_route != null)
+                  Positioned(
+                    right: 12,
+                    bottom: 12,
+                    child: FloatingActionButton.small(
+                      key: const Key('navigation-follow-button'),
+                      tooltip: _navigationMode
+                          ? 'Stop following position'
+                          : 'Follow position',
+                      onPressed: _toggleNavigationMode,
+                      backgroundColor: _navigationMode
+                          ? const Color(0xFF2F80ED)
+                          : const Color(0xE6252E39),
+                      foregroundColor: Colors.white,
+                      child: Icon(
+                        _navigationMode
+                            ? Icons.navigation
+                            : Icons.navigation_outlined,
+                      ),
                     ),
                   ),
                 if (_route == null)
@@ -436,10 +527,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
               padding: const EdgeInsets.all(42),
             ),
             initialZoom: 13,
+            onMapEvent: _onFlutterMapEvent,
           )
         : MapOptions(
             initialCenter: points.firstOrNull ?? const LatLng(54.5, -3.2),
             initialZoom: points.isEmpty ? 5 : 14,
+            onMapEvent: _onFlutterMapEvent,
           );
 
     final map = FlutterMap(
@@ -458,17 +551,36 @@ class _RideMapScreenState extends State<RideMapScreen> {
           ),
         if (route != null)
           PolylineLayer(
-            polylines: route.paths
-                .map(
-                  (path) => Polyline(
-                    points: path.points.map(_latLng).toList(growable: false),
-                    color: const Color(0xFFFF7A1A),
-                    strokeWidth: 5,
-                    borderColor: const Color(0xFF10151C),
-                    borderStrokeWidth: 2,
+            polylines: [
+              ..._progressGeometry.remainingPaths.map(
+                (path) => Polyline(
+                  points: path.map(_latLng).toList(growable: false),
+                  color: const Color(0x99FFB15C),
+                  strokeWidth: 5,
+                  pattern: const StrokePattern.dotted(spacingFactor: 1.8),
+                ),
+              ),
+              ..._progressGeometry.riddenPaths.map(
+                (path) => Polyline(
+                  points: path.map(_latLng).toList(growable: false),
+                  color: const Color(0xFFFF7A1A),
+                  strokeWidth: 5,
+                  borderColor: const Color(0xFF10151C),
+                  borderStrokeWidth: 2,
+                ),
+              ),
+              ...(widget.offRouteTraces?.value ?? const <MapOverlayTrace>[])
+                  .where((trace) => trace.points.length >= 2)
+                  .map(
+                    (trace) => Polyline(
+                      points: trace.points.map(_latLng).toList(growable: false),
+                      color: trace.color,
+                      strokeWidth: 5,
+                      borderColor: const Color(0xFF10151C),
+                      borderStrokeWidth: 2,
+                    ),
                   ),
-                )
-                .toList(growable: false),
+            ],
           ),
         if (route != null && route.waypoints.isNotEmpty)
           MarkerLayer(
@@ -491,21 +603,20 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 )
                 .toList(growable: false),
           ),
-        if (widget.currentPosition != null)
-          ValueListenableBuilder<GeoPoint?>(
-            valueListenable: widget.currentPosition!,
-            builder: (context, currentPosition, _) => currentPosition == null
-                ? const SizedBox.shrink()
-                : MarkerLayer(
-                    markers: [
-                      Marker(
-                        point: _latLng(currentPosition),
-                        width: 34,
-                        height: 34,
-                        child: const _CurrentPositionMarker(),
-                      ),
-                    ],
-                  ),
+        if (_effectivePosition case final currentPosition?)
+          MarkerLayer(
+            rotate: true,
+            markers: [
+              Marker(
+                point: _latLng(currentPosition),
+                width: 38,
+                height: 38,
+                child: _CurrentPositionMarker(
+                  navigationMode: _navigationMode,
+                  headingDegrees: _lastHeadingDegrees,
+                ),
+              ),
+            ],
           ),
         if (widget.overlayMarkers != null)
           ValueListenableBuilder<List<MapOverlayMarker>>(
@@ -596,15 +707,158 @@ class _RideMapScreenState extends State<RideMapScreen> {
     controller.onFeatureTapped.add(_onMapLibreFeatureTapped);
   }
 
+  MapNavigationPosition? get _navigationFix => widget.navigationPosition?.value;
+
+  GeoPoint? get _effectivePosition =>
+      _navigationFix?.point ?? widget.currentPosition?.value;
+
+  bool get _isMoving => _navigationFix?.isMoving ?? false;
+
+  void _onPositionChanged() {
+    if (!mounted) return;
+    final position = _effectivePosition;
+    final suppliedHeading = _navigationFix?.headingDegrees;
+    if (suppliedHeading != null && suppliedHeading.isFinite) {
+      _lastHeadingDegrees = suppliedHeading;
+    } else if (position != null &&
+        _previousNavigationPoint != null &&
+        _pointsDiffer(position, _previousNavigationPoint!)) {
+      _lastHeadingDegrees = _bearingDegrees(
+        _previousNavigationPoint!,
+        position,
+      );
+    }
+    _previousNavigationPoint = position;
+
+    if (!_isMoving) _autoFollowSuppressed = false;
+    final autoFollow = _route != null && _isMoving && !_autoFollowSuppressed;
+    setState(() {
+      _progressGeometry = _routeProgressTracker.update(_route, position);
+      if (autoFollow) _navigationMode = true;
+    });
+    unawaited(_syncMapLibreSources());
+    if (_navigationMode && position != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_followNavigationCamera());
+      });
+    }
+  }
+
+  void _onOverlayDataChanged() {
+    if (!mounted) return;
+    setState(() {});
+    unawaited(_syncMapLibreSources());
+  }
+
+  void _onFlutterMapEvent(MapEvent event) {
+    if (!_navigationMode ||
+        event.source == MapEventSource.mapController ||
+        event.source == MapEventSource.nonRotatedSizeChange) {
+      return;
+    }
+    if (event.source == MapEventSource.dragStart ||
+        event.source == MapEventSource.multiFingerGestureStart ||
+        event.source == MapEventSource.doubleTap ||
+        event.source == MapEventSource.scrollWheel) {
+      _stopFollowing(suppressAutomatic: _isMoving);
+    }
+  }
+
+  Future<void> _toggleNavigationMode() async {
+    if (_navigationMode) {
+      _stopFollowing(suppressAutomatic: _isMoving);
+      return;
+    }
+    if (_effectivePosition == null) {
+      final acquired = await widget.acquireCurrentPosition?.call();
+      if (!mounted) return;
+      if (acquired == null && _effectivePosition == null) {
+        _showMessage('Allow location access to use the close navigation view.');
+        return;
+      }
+    }
+    setState(() {
+      _navigationMode = true;
+      _autoFollowSuppressed = false;
+    });
+    unawaited(_followNavigationCamera());
+  }
+
+  void _stopFollowing({required bool suppressAutomatic}) {
+    if (!mounted) return;
+    setState(() {
+      _navigationMode = false;
+      _autoFollowSuppressed = suppressAutomatic;
+    });
+  }
+
+  void _showWholeRoute() {
+    _stopFollowing(suppressAutomatic: _isMoving);
+    _fitRoute();
+  }
+
+  Future<void> _followNavigationCamera() async {
+    if (!_navigationMode) return;
+    final position = _effectivePosition;
+    if (position == null) return;
+    final target = _pointAhead(position, _lastHeadingDegrees, 90);
+    if (_basemap.usesMapLibre) {
+      final controller = _mapLibreController;
+      if (controller == null) return;
+      await controller.animateCamera(
+        ml.CameraUpdate.newCameraPosition(
+          ml.CameraPosition(
+            target: ml.LatLng(target.latitude, target.longitude),
+            zoom: 16.5,
+            tilt: 45,
+            bearing: _lastHeadingDegrees,
+          ),
+        ),
+        duration: const Duration(milliseconds: 650),
+      );
+      return;
+    }
+    try {
+      _mapController.moveAndRotate(
+        _latLng(target),
+        16.5,
+        _lastHeadingDegrees,
+        id: 'navigation-follow',
+      );
+    } on StateError {
+      // The first position may arrive before FlutterMap has attached.
+    }
+  }
+
   Future<void> _prepareMapLibreStyle() async {
     final controller = _mapLibreController;
     if (controller == null) return;
     _mapLibreStyleReady = false;
     try {
-      await controller.addGeoJsonSource(_routeSource, MapGeoJson.route(_route));
+      await controller.addGeoJsonSource(
+        _remainingRouteSource,
+        _remainingRouteGeoJson(),
+      );
       await controller.addLineLayer(
-        _routeSource,
-        'ride-relay-route-border',
+        _remainingRouteSource,
+        'ride-relay-route-remaining',
+        const ml.LineLayerProperties(
+          lineColor: '#FFB15C',
+          lineOpacity: 0.6,
+          lineWidth: 5,
+          lineDasharray: [0.1, 1.8],
+          lineCap: 'round',
+          lineJoin: 'round',
+        ),
+        enableInteraction: false,
+      );
+      await controller.addGeoJsonSource(
+        _riddenRouteSource,
+        _riddenRouteGeoJson(),
+      );
+      await controller.addLineLayer(
+        _riddenRouteSource,
+        'ride-relay-route-ridden-border',
         const ml.LineLayerProperties(
           lineColor: '#10151C',
           lineWidth: 9,
@@ -614,10 +868,36 @@ class _RideMapScreenState extends State<RideMapScreen> {
         enableInteraction: false,
       );
       await controller.addLineLayer(
-        _routeSource,
-        'ride-relay-route-line',
+        _riddenRouteSource,
+        'ride-relay-route-ridden',
         const ml.LineLayerProperties(
           lineColor: '#FF7A1A',
+          lineWidth: 5,
+          lineCap: 'round',
+          lineJoin: 'round',
+        ),
+        enableInteraction: false,
+      );
+      await controller.addGeoJsonSource(
+        _offRouteTraceSource,
+        _offRouteTraceGeoJson(),
+      );
+      await controller.addLineLayer(
+        _offRouteTraceSource,
+        'ride-relay-off-route-border',
+        const ml.LineLayerProperties(
+          lineColor: '#10151C',
+          lineWidth: 9,
+          lineCap: 'round',
+          lineJoin: 'round',
+        ),
+        enableInteraction: false,
+      );
+      await controller.addLineLayer(
+        _offRouteTraceSource,
+        'ride-relay-off-route-line',
+        const ml.LineLayerProperties(
+          lineColor: '#E244C7',
           lineWidth: 5,
           lineCap: 'round',
           lineJoin: 'round',
@@ -660,19 +940,32 @@ class _RideMapScreenState extends State<RideMapScreen> {
       );
       _mapLibreStyleReady = true;
       await _syncMapLibreSources();
-      _fitRoute();
+      if (_navigationMode) {
+        await _followNavigationCamera();
+      } else {
+        _fitRoute();
+      }
     } on Object catch (error, stackTrace) {
       debugPrint('Could not prepare MapLibre ride layers: $error\n$stackTrace');
     }
   }
 
-  void _onMapDataChanged() => unawaited(_syncMapLibreSources());
-
   Future<void> _syncMapLibreSources() async {
     final controller = _mapLibreController;
     if (!_mapLibreStyleReady || controller == null) return;
     try {
-      await controller.setGeoJsonSource(_routeSource, MapGeoJson.route(_route));
+      await controller.setGeoJsonSource(
+        _remainingRouteSource,
+        _remainingRouteGeoJson(),
+      );
+      await controller.setGeoJsonSource(
+        _riddenRouteSource,
+        _riddenRouteGeoJson(),
+      );
+      await controller.setGeoJsonSource(
+        _offRouteTraceSource,
+        _offRouteTraceGeoJson(),
+      );
       await controller.setGeoJsonSource(_waypointSource, _waypointGeoJson());
       await controller.setGeoJsonSource(_positionSource, _positionGeoJson());
       await controller.setGeoJsonSource(_overlaySource, _overlayGeoJson());
@@ -680,6 +973,21 @@ class _RideMapScreenState extends State<RideMapScreen> {
       debugPrint('Could not refresh MapLibre ride layers: $error');
     }
   }
+
+  Map<String, dynamic> _remainingRouteGeoJson() => MapGeoJson.lines(
+    _progressGeometry.remainingPaths,
+    idPrefix: 'remaining-route',
+  );
+
+  Map<String, dynamic> _riddenRouteGeoJson() =>
+      MapGeoJson.lines(_progressGeometry.riddenPaths, idPrefix: 'ridden-route');
+
+  Map<String, dynamic> _offRouteTraceGeoJson() => MapGeoJson.lines(
+    (widget.offRouteTraces?.value ?? const <MapOverlayTrace>[]).map(
+      (trace) => trace.points,
+    ),
+    idPrefix: 'off-route-trace',
+  );
 
   Map<String, dynamic> _waypointGeoJson() => MapGeoJson.points(
     _route?.waypoints
@@ -696,7 +1004,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   );
 
   Map<String, dynamic> _positionGeoJson() {
-    final point = widget.currentPosition?.value;
+    final point = _effectivePosition;
     return MapGeoJson.points(
       point == null
           ? const <MapGeoJsonPoint>[]
@@ -763,9 +1071,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
     if (request == null || !mounted) return;
     setState(() => _routing = true);
     try {
-      var origin = widget.currentPosition?.value;
+      var origin = _effectivePosition;
       origin ??= await widget.acquireCurrentPosition?.call();
-      origin ??= widget.currentPosition?.value;
+      origin ??= _effectivePosition;
       if (origin == null) {
         throw const FormatException(
           'A current location is required. Allow location access and try again.',
@@ -813,9 +1121,18 @@ class _RideMapScreenState extends State<RideMapScreen> {
     final activeRoute = enrichment.route;
     await widget.routeStore.saveActiveRoute(activeRoute);
     if (!mounted) return activeRoute;
-    setState(() => _route = activeRoute);
+    _routeProgressTracker.reset();
+    setState(() {
+      _route = activeRoute;
+      _progressGeometry = _routeProgressTracker.update(
+        activeRoute,
+        _effectivePosition,
+      );
+      if (_isMoving && !_autoFollowSuppressed) _navigationMode = true;
+    });
     await _syncMapLibreSources();
     _fitRoute();
+    if (_navigationMode) unawaited(_followNavigationCamera());
     widget.onRouteChanged?.call(activeRoute);
     final routeMessage = enrichment.changed
         ? '${activeRoute.name}: matched to roads and stored offline '
@@ -965,7 +1282,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
       case _MapAction.removeRoute:
         await widget.routeStore.clearActiveRoute();
         if (mounted) {
-          setState(() => _route = null);
+          _routeProgressTracker.reset();
+          setState(() {
+            _route = null;
+            _progressGeometry = const RouteProgressGeometry.empty();
+            _navigationMode = false;
+          });
           await _syncMapLibreSources();
           widget.onRouteChanged?.call(null);
         }
@@ -994,6 +1316,36 @@ enum _MapAction {
 
 /// Neutral presentation model for hazards, group riders, markers, or other
 /// feature-owned map overlays. Callers retain ownership of their domain models.
+class MapNavigationPosition {
+  const MapNavigationPosition({
+    required this.point,
+    required this.recordedAt,
+    this.speedMetersPerSecond,
+    this.headingDegrees,
+  });
+
+  final GeoPoint point;
+  final DateTime recordedAt;
+  final double? speedMetersPerSecond;
+  final double? headingDegrees;
+
+  bool get isMoving => (speedMetersPerSecond ?? 0) >= 2.5;
+}
+
+class MapOverlayTrace {
+  const MapOverlayTrace({
+    required this.id,
+    required this.points,
+    required this.label,
+    this.color = const Color(0xFFE244C7),
+  });
+
+  final String id;
+  final List<GeoPoint> points;
+  final String label;
+  final Color color;
+}
+
 class MapOverlayMarker {
   const MapOverlayMarker({
     required this.id,
@@ -1011,6 +1363,44 @@ class MapOverlayMarker {
 }
 
 LatLng _latLng(GeoPoint point) => LatLng(point.latitude, point.longitude);
+
+bool _pointsDiffer(GeoPoint first, GeoPoint second) =>
+    (first.latitude - second.latitude).abs() > 1e-7 ||
+    (first.longitude - second.longitude).abs() > 1e-7;
+
+double _bearingDegrees(GeoPoint from, GeoPoint to) {
+  final fromLatitude = from.latitude * math.pi / 180;
+  final toLatitude = to.latitude * math.pi / 180;
+  final longitudeDelta = (to.longitude - from.longitude) * math.pi / 180;
+  final y = math.sin(longitudeDelta) * math.cos(toLatitude);
+  final x =
+      math.cos(fromLatitude) * math.sin(toLatitude) -
+      math.sin(fromLatitude) * math.cos(toLatitude) * math.cos(longitudeDelta);
+  return (math.atan2(y, x) * 180 / math.pi + 360) % 360;
+}
+
+GeoPoint _pointAhead(GeoPoint from, double bearingDegrees, double meters) {
+  const earthRadiusMeters = 6371008.8;
+  final angularDistance = meters / earthRadiusMeters;
+  final bearing = bearingDegrees * math.pi / 180;
+  final latitude = from.latitude * math.pi / 180;
+  final longitude = from.longitude * math.pi / 180;
+  final targetLatitude = math.asin(
+    math.sin(latitude) * math.cos(angularDistance) +
+        math.cos(latitude) * math.sin(angularDistance) * math.cos(bearing),
+  );
+  final targetLongitude =
+      longitude +
+      math.atan2(
+        math.sin(bearing) * math.sin(angularDistance) * math.cos(latitude),
+        math.cos(angularDistance) -
+            math.sin(latitude) * math.sin(targetLatitude),
+      );
+  return GeoPoint(
+    latitude: targetLatitude * 180 / math.pi,
+    longitude: ((targetLongitude * 180 / math.pi + 540) % 360) - 180,
+  );
+}
 
 ml.LatLngBounds _mapLibreBounds(List<GeoPoint> points) {
   var south = points.first.latitude;
@@ -1104,9 +1494,10 @@ class _EmptyRoutePrompt extends StatelessWidget {
 }
 
 class _LeaderMapStatus extends StatelessWidget {
-  const _LeaderMapStatus({required this.status});
+  const _LeaderMapStatus({required this.status, required this.compact});
 
   final LeaderRideStatus status;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) => Align(
@@ -1117,10 +1508,10 @@ class _LeaderMapStatus extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (status.offCourseAlerts.isNotEmpty) ...[
-            _OffCourseBanner(alerts: status.offCourseAlerts),
-            const SizedBox(height: 8),
+            _OffCourseBanner(alerts: status.offCourseAlerts, compact: compact),
+            SizedBox(height: compact ? 4 : 8),
           ],
-          _TecGapCard(status: status),
+          _TecGapCard(status: status, compact: compact),
         ],
       ),
     ),
@@ -1128,9 +1519,10 @@ class _LeaderMapStatus extends StatelessWidget {
 }
 
 class _OffCourseBanner extends StatelessWidget {
-  const _OffCourseBanner({required this.alerts});
+  const _OffCourseBanner({required this.alerts, required this.compact});
 
   final List<LeaderOffCourseAlert> alerts;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -1144,7 +1536,10 @@ class _OffCourseBanner extends StatelessWidget {
       color: const Color(0xFFE2445C),
       margin: EdgeInsets.zero,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 10 : 14,
+          vertical: compact ? 6 : 11,
+        ),
         child: Row(
           children: [
             const Icon(Icons.warning_rounded, color: Colors.white),
@@ -1176,9 +1571,10 @@ class _OffCourseBanner extends StatelessWidget {
 }
 
 class _TecGapCard extends StatelessWidget {
-  const _TecGapCard({required this.status});
+  const _TecGapCard({required this.status, required this.compact});
 
   final LeaderRideStatus status;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -1196,7 +1592,10 @@ class _TecGapCard extends StatelessWidget {
       margin: EdgeInsets.zero,
       color: const Color(0xE6252E39),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 10 : 14,
+          vertical: compact ? 5 : 10,
+        ),
         child: Row(
           children: [
             const Icon(Icons.two_wheeler, color: Color(0xFF6ED89A)),
@@ -1265,15 +1664,25 @@ class _DownloadProgress extends StatelessWidget {
 }
 
 class _CurrentPositionMarker extends StatelessWidget {
-  const _CurrentPositionMarker();
+  const _CurrentPositionMarker({
+    required this.navigationMode,
+    required this.headingDegrees,
+  });
+
+  final bool navigationMode;
+  final double headingDegrees;
 
   @override
-  Widget build(BuildContext context) => DecoratedBox(
-    decoration: BoxDecoration(
-      color: const Color(0xFF4AA3FF),
-      shape: BoxShape.circle,
-      border: Border.all(color: Colors.white, width: 3),
-      boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 5)],
+  Widget build(BuildContext context) => Transform.rotate(
+    angle: navigationMode ? 0 : headingDegrees * math.pi / 180,
+    child: DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF2F80ED),
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white, width: 3),
+        boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 5)],
+      ),
+      child: const Icon(Icons.navigation, color: Colors.white, size: 22),
     ),
   );
 }

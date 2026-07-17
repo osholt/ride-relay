@@ -15,26 +15,32 @@ class MapGeoJsonPoint {
 class MapGeoJson {
   const MapGeoJson._();
 
-  static Map<String, dynamic> route(ImportedRoute? route) => {
+  static Map<String, dynamic> route(ImportedRoute? route) => lines(
+    route?.paths.map((path) => path.points) ?? const [],
+    idPrefix: 'route-path',
+  );
+
+  static Map<String, dynamic> lines(
+    Iterable<List<GeoPoint>> lines, {
+    String idPrefix = 'line',
+  }) => {
     'type': 'FeatureCollection',
-    'features': route == null
-        ? <Map<String, dynamic>>[]
-        : route.paths.indexed
-              .where((entry) => entry.$2.points.length >= 2)
-              .map(
-                (entry) => <String, dynamic>{
-                  'type': 'Feature',
-                  'id': 'route-path-${entry.$1}',
-                  'properties': const <String, Object?>{},
-                  'geometry': {
-                    'type': 'LineString',
-                    'coordinates': entry.$2.points
-                        .map((point) => [point.longitude, point.latitude])
-                        .toList(growable: false),
-                  },
-                },
-              )
-              .toList(growable: false),
+    'features': lines.indexed
+        .where((entry) => entry.$2.length >= 2)
+        .map(
+          (entry) => <String, dynamic>{
+            'type': 'Feature',
+            'id': '$idPrefix-${entry.$1}',
+            'properties': const <String, Object?>{},
+            'geometry': {
+              'type': 'LineString',
+              'coordinates': entry.$2
+                  .map((point) => [point.longitude, point.latitude])
+                  .toList(growable: false),
+            },
+          },
+        )
+        .toList(growable: false),
   };
 
   static Map<String, dynamic> points(Iterable<MapGeoJsonPoint> points) => {

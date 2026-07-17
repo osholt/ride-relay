@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -85,6 +86,99 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
   });
+
+  testWidgets(
+    'landscape moving mode hides chrome and styles progress and off-route trail',
+    (tester) async {
+      tester.view.physicalSize = const Size(844, 390);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final directory = Directory.systemTemp.createTempSync(
+        'landscape-map-test',
+      );
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final navigation = ValueNotifier<MapNavigationPosition?>(
+        MapNavigationPosition(
+          point: const GeoPoint(latitude: 53, longitude: -1.01),
+          recordedAt: DateTime.utc(2026, 7, 17, 12),
+          speedMetersPerSecond: 12,
+          headingDegrees: 90,
+        ),
+      );
+      addTearDown(navigation.dispose);
+      final traces = ValueNotifier<List<MapOverlayTrace>>([
+        const MapOverlayTrace(
+          id: 'off-route-alex',
+          label: 'Alex off-route trace',
+          points: [
+            GeoPoint(latitude: 53, longitude: -1.01),
+            GeoPoint(latitude: 53.001, longitude: -1.011),
+          ],
+        ),
+      ]);
+      addTearDown(traces.dispose);
+      final route = ImportedRoute(
+        id: 'route',
+        name: 'Landscape route',
+        importedAt: DateTime.utc(2026, 7, 17),
+        sourceFileName: 'route.gpx',
+        paths: const [
+          RoutePath(
+            kind: RoutePathKind.track,
+            points: [
+              GeoPoint(latitude: 53, longitude: -1.02),
+              GeoPoint(latitude: 53, longitude: -1.01),
+              GeoPoint(latitude: 53, longitude: -1.00),
+            ],
+          ),
+        ],
+        waypoints: const [],
+      );
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(route),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            navigationPosition: navigation,
+            offRouteTraces: traces,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.byType(AppBar), findsNothing);
+      expect(find.byKey(const Key('navigation-follow-button')), findsOneWidget);
+      final layer = tester.widget<PolylineLayer>(find.byType(PolylineLayer));
+      expect(
+        layer.polylines.any(
+          (line) =>
+              line.pattern == const StrokePattern.dotted(spacingFactor: 1.8),
+        ),
+        isTrue,
+      );
+      expect(
+        layer.polylines.any((line) => line.color == const Color(0xFFFF7A1A)),
+        isTrue,
+      );
+      expect(
+        layer.polylines.any((line) => line.color == const Color(0xFFE244C7)),
+        isTrue,
+      );
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    },
+  );
 }
 
 class _NoFileSource implements GpxImportSource {

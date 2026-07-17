@@ -53,8 +53,11 @@ class ActiveRideShell extends StatefulWidget {
 
 class _ActiveRideShellState extends State<ActiveRideShell> {
   final _mapPosition = ValueNotifier<route_domain.GeoPoint?>(null);
+  final _mapNavigationPosition = ValueNotifier<MapNavigationPosition?>(null);
   final _mapOverlays = ValueNotifier<List<MapOverlayMarker>>(const []);
+  final _offRouteTraces = ValueNotifier<List<MapOverlayTrace>>(const []);
   final _leaderStatus = ValueNotifier<LeaderRideStatus?>(null);
+  final _riderTrails = <String, List<route_domain.GeoPoint>>{};
   final _publishedEventIds = <String>{};
   final _warnings = <String>{};
 
@@ -253,6 +256,8 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     _awarenessController = controller;
     _markerAssistanceController = markerController;
     _routeFingerprint = fingerprint;
+    _riderTrails.clear();
+    _offRouteTraces.value = const [];
     controller.addListener(_onAwarenessChanged);
     previous?.dispose();
     _updateMapOverlays();
@@ -289,6 +294,16 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
             longitude: localLocation.sample.position.longitude,
             recordedAt: localLocation.sample.recordedAt,
           );
+    _mapNavigationPosition.value = localLocation == null
+        ? null
+        : MapNavigationPosition(
+            point: _mapPosition.value!,
+            recordedAt: localLocation.sample.recordedAt,
+            speedMetersPerSecond: localLocation.sample.speedMetersPerSecond,
+            headingDegrees: localLocation.sample.headingDegrees,
+          );
+
+    _updateOffRouteTraces(awareness);
 
     final overlays = <MapOverlayMarker>[
       ...awareness.activeHazards.map(
@@ -341,6 +356,47 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
             route: awareness.route,
           );
   }
+
+  void _updateOffRouteTraces(SituationalAwarenessController awareness) {
+    final alerts = {
+      for (final alert in awareness.routeAlerts) alert.riderId: alert,
+    };
+    final traces = <MapOverlayTrace>[];
+    for (final location in awareness.riderLocations) {
+      final point = route_domain.GeoPoint(
+        latitude: location.sample.position.latitude,
+        longitude: location.sample.position.longitude,
+        recordedAt: location.sample.recordedAt,
+      );
+      final trail = _riderTrails.putIfAbsent(location.riderId, () => []);
+      if (trail.isEmpty || _trailPointChanged(trail.last, point)) {
+        trail.add(point);
+        if (trail.length > 120) trail.removeRange(0, trail.length - 120);
+      }
+      final state = alerts[location.riderId]?.assessment.state;
+      final isOffRoute =
+          state == RouteTrackingState.suspectedOffRoute ||
+          state == RouteTrackingState.offRoute ||
+          state == RouteTrackingState.recovering;
+      if (isOffRoute && trail.length >= 2) {
+        traces.add(
+          MapOverlayTrace(
+            id: 'off-route-${location.riderId}',
+            points: List.unmodifiable(trail),
+            label: '${location.displayName} off-route trace',
+          ),
+        );
+      }
+    }
+    _offRouteTraces.value = List.unmodifiable(traces);
+  }
+
+  static bool _trailPointChanged(
+    route_domain.GeoPoint first,
+    route_domain.GeoPoint second,
+  ) =>
+      (first.latitude - second.latitude).abs() > 1e-7 ||
+      (first.longitude - second.longitude).abs() > 1e-7;
 
   static Color _hazardColor(HazardSeverity severity) => switch (severity) {
     HazardSeverity.advisory => const Color(0xFF8EA7C4),
@@ -462,30 +518,43 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       _ => _buildAwareness(),
     };
 
-    return Scaffold(
-      body: body,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) =>
-            setState(() => _selectedIndex = index),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.map_outlined),
-            selectedIcon: Icon(Icons.map),
-            label: 'Map',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.tune_outlined),
-            selectedIcon: Icon(Icons.tune),
-            label: 'Details',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.health_and_safety_outlined),
-            selectedIcon: Icon(Icons.health_and_safety),
-            label: 'Safety',
-          ),
-        ],
-      ),
+    return ValueListenableBuilder<MapNavigationPosition?>(
+      valueListenable: _mapNavigationPosition,
+      builder: (context, navigationPosition, _) {
+        final landscape =
+            MediaQuery.orientationOf(context) == Orientation.landscape;
+        final hideWhileMoving =
+            _selectedIndex == 0 && navigationPosition?.isMoving == true;
+        return Scaffold(
+          body: body,
+          bottomNavigationBar: hideWhileMoving
+              ? null
+              : NavigationBar(
+                  height: landscape ? 48 : 56,
+                  labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
+                  selectedIndex: _selectedIndex,
+                  onDestinationSelected: (index) =>
+                      setState(() => _selectedIndex = index),
+                  destinations: const [
+                    NavigationDestination(
+                      icon: Icon(Icons.map_outlined),
+                      selectedIcon: Icon(Icons.map),
+                      label: 'Map',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.tune_outlined),
+                      selectedIcon: Icon(Icons.tune),
+                      label: 'Details',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.health_and_safety_outlined),
+                      selectedIcon: Icon(Icons.health_and_safety),
+                      label: 'Safety',
+                    ),
+                  ],
+                ),
+        );
+      },
     );
   }
 
@@ -498,7 +567,9 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     }
     return RideMapFeature.fromEnvironment(
       currentPosition: _mapPosition,
+      navigationPosition: _mapNavigationPosition,
       overlayMarkers: _mapOverlays,
+      offRouteTraces: _offRouteTraces,
       leaderStatus: _leaderStatus,
       onRouteChanged: _onRouteChanged,
       acquireCurrentPosition: _acquireCurrentPosition,
@@ -573,7 +644,9 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     unawaited(_relayController?.close());
     unawaited(_internetRelayController?.close());
     _mapPosition.dispose();
+    _mapNavigationPosition.dispose();
     _mapOverlays.dispose();
+    _offRouteTraces.dispose();
     _leaderStatus.dispose();
     super.dispose();
   }

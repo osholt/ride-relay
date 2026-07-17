@@ -33,6 +33,9 @@ phones when mobile coverage disappears.
   hazard overlays, and detect sustained route deviation with stale-GPS handling.
 - Give the ride lead a compact along-route distance/ETA to Tail End Charlie and
   an immediate map alert for confirmed unacknowledged off-course riders.
+- Switch into a compact, heading-up follow camera while moving, with reduced
+  landscape chrome, solid ridden route progress, a faded dotted route ahead,
+  and a contrasting trace for riders currently off route.
 - Queue authenticated events for store-and-forward delivery over native Google
   Nearby Connections transports with reconnect, expiry, ACK, and replay safety.
 - Batch authenticated events through an optional HTTPS relay with durable

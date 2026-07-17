@@ -30,11 +30,11 @@ void main() {
 
     expect(find.text('Navigation'), findsOneWidget);
     expect(find.text('Navigation map'), findsOneWidget);
-    expect(find.text('Map'), findsOneWidget);
-    expect(find.text('Details'), findsOneWidget);
-    expect(find.text('Safety'), findsOneWidget);
+    expect(find.byIcon(Icons.map), findsOneWidget);
+    expect(find.byIcon(Icons.tune_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.health_and_safety_outlined), findsOneWidget);
 
-    await tester.tap(find.text('Details'));
+    await tester.tap(find.byIcon(Icons.tune_outlined));
     await tester.pumpAndSettle();
 
     expect(find.text('Oliver'), findsOneWidget);
@@ -43,15 +43,45 @@ void main() {
     expect(find.byTooltip('Share ride summary'), findsOneWidget);
     expect(find.text('MARKING STATS'), findsOneWidget);
 
-    await tester.drag(find.byType(ListView).first, const Offset(0, -500));
-    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('QUICK MESSAGES'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('QUICK MESSAGES'), findsOneWidget);
 
-    await tester.tap(find.text('Safety'));
+    await tester.tap(find.byIcon(Icons.health_and_safety_outlined));
     await tester.pumpAndSettle();
 
     expect(find.text('Ride awareness'), findsOneWidget);
     expect(find.text('ACTIVE HAZARDS'), findsOneWidget);
+
+    controller.dispose();
+  });
+
+  testWidgets('active ride uses compact navigation chrome in landscape', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(844, 390);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final controller = await _controller();
+    await controller.createRide('Oliver');
+
+    await tester.pumpWidget(
+      RideRelayApp(controller: controller, enableNativeServices: false),
+    );
+    await tester.pumpAndSettle();
+
+    final navigationBar = tester.widget<NavigationBar>(
+      find.byType(NavigationBar),
+    );
+    expect(navigationBar.height, 48);
+    expect(
+      navigationBar.labelBehavior,
+      NavigationDestinationLabelBehavior.alwaysHide,
+    );
 
     controller.dispose();
   });
@@ -64,7 +94,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Details'));
+    await tester.tap(find.byIcon(Icons.tune_outlined));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Leave or switch ride'));
     await tester.pumpAndSettle();
@@ -90,7 +120,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Details'));
+    await tester.tap(find.byIcon(Icons.tune_outlined));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('End ride'));
     await tester.pumpAndSettle();
@@ -113,7 +143,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Details'));
+    await tester.tap(find.byIcon(Icons.tune_outlined));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('End ride'));
     await tester.pumpAndSettle();

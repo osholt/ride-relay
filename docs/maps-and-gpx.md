@@ -18,6 +18,20 @@ not bulk-download from the public OpenStreetMap tile servers.
   GPX remains usable and is stored unchanged.
 - Includes a valid 36.2 km Peak District GPX track following mapped roads.
 
+## Riding display
+
+The map uses foreground GPS speed and heading to enter a close, heading-up
+follow view while moving. In that state the top and bottom navigation chrome is
+hidden; stationary landscape mode retains compact controls. The follow button
+can also enable or dismiss this view manually.
+
+The primary route is split at the rider's monotonic along-route progress. The
+completed section is solid orange and the route ahead is a translucent dotted
+orange line. Suspected, confirmed, or recovering off-route riders receive a
+magenta trail with a dark outline so their actual path is visually distinct
+from the planned route. Rider trails are capped in memory and are not added to
+the imported GPX.
+
 ## Destination and road routing
 
 The map's destination action performs one user-submitted place/postcode search
