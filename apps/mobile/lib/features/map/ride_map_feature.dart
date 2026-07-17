@@ -55,6 +55,8 @@ class RideMapFeature extends StatefulWidget {
     this.ridePaused = false,
     this.canToggleRidePause = false,
     this.onToggleRidePause,
+    this.canEndRide = false,
+    this.onEndRide,
     this.onOpenRideMenu,
     this.onRouteChanged,
     this.acquireCurrentPosition,
@@ -81,6 +83,8 @@ class RideMapFeature extends StatefulWidget {
     bool ridePaused = false,
     bool canToggleRidePause = false,
     Future<void> Function()? onToggleRidePause,
+    bool canEndRide = false,
+    Future<void> Function()? onEndRide,
     Future<void> Function()? onOpenRideMenu,
     ValueChanged<ImportedRoute?>? onRouteChanged,
     Future<GeoPoint?> Function()? acquireCurrentPosition,
@@ -100,6 +104,8 @@ class RideMapFeature extends StatefulWidget {
     ridePaused: ridePaused,
     canToggleRidePause: canToggleRidePause,
     onToggleRidePause: onToggleRidePause,
+    canEndRide: canEndRide,
+    onEndRide: onEndRide,
     onOpenRideMenu: onOpenRideMenu,
     onRouteChanged: onRouteChanged,
     acquireCurrentPosition: acquireCurrentPosition,
@@ -120,6 +126,8 @@ class RideMapFeature extends StatefulWidget {
   final bool ridePaused;
   final bool canToggleRidePause;
   final Future<void> Function()? onToggleRidePause;
+  final bool canEndRide;
+  final Future<void> Function()? onEndRide;
   final Future<void> Function()? onOpenRideMenu;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
@@ -220,6 +228,8 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         ridePaused: widget.ridePaused,
         canToggleRidePause: widget.canToggleRidePause,
         onToggleRidePause: widget.onToggleRidePause,
+        canEndRide: widget.canEndRide,
+        onEndRide: widget.onEndRide,
         onOpenRideMenu: widget.onOpenRideMenu,
         onRouteChanged: widget.onRouteChanged,
         acquireCurrentPosition: widget.acquireCurrentPosition,
@@ -265,6 +275,8 @@ class RideMapScreen extends StatefulWidget {
     this.ridePaused = false,
     this.canToggleRidePause = false,
     this.onToggleRidePause,
+    this.canEndRide = false,
+    this.onEndRide,
     this.onOpenRideMenu,
     this.onRouteChanged,
     this.acquireCurrentPosition,
@@ -293,6 +305,8 @@ class RideMapScreen extends StatefulWidget {
   final bool ridePaused;
   final bool canToggleRidePause;
   final Future<void> Function()? onToggleRidePause;
+  final bool canEndRide;
+  final Future<void> Function()? onEndRide;
   final Future<void> Function()? onOpenRideMenu;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
@@ -788,6 +802,23 @@ class _RideMapScreenState extends State<RideMapScreen> {
                         widget.ridePaused ? Icons.play_arrow : Icons.pause,
                       ),
                       label: Text(widget.ridePaused ? 'RESUME' : 'PAUSE'),
+                    ),
+                  ),
+                if (_route != null &&
+                    widget.canEndRide &&
+                    widget.onEndRide != null)
+                  Positioned(
+                    left: overlayLeft + 12,
+                    bottom: emergencyBottom + 124,
+                    child: FloatingActionButton.extended(
+                      key: const Key('ride-end-button'),
+                      heroTag: 'ride-relay-end',
+                      tooltip: 'End group ride',
+                      onPressed: widget.onEndRide,
+                      backgroundColor: const Color(0xFF9D2639),
+                      foregroundColor: Colors.white,
+                      icon: const Icon(Icons.stop_circle_outlined),
+                      label: const Text('END RIDE'),
                     ),
                   ),
                 if (_route != null && widget.ridePaused)

@@ -1114,6 +1114,8 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       ridePaused: widget.rideController.ridePaused,
       canToggleRidePause: widget.rideController.session?.role == RideRole.lead,
       onToggleRidePause: _toggleRidePause,
+      canEndRide: widget.rideController.session?.role == RideRole.lead,
+      onEndRide: _confirmEndRideFromMap,
       onOpenRideMenu: _openRideMenu,
       onRouteChanged: _onRouteChanged,
       acquireCurrentPosition: _isSimulation
@@ -1173,6 +1175,33 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       await widget.rideController.resumeRide();
     } else {
       await widget.rideController.pauseRide();
+    }
+  }
+
+  Future<void> _confirmEndRideFromMap() async {
+    if (widget.rideController.session?.role != RideRole.lead) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('End this ride?'),
+        content: const Text(
+          'This ends the group ride for everyone. Location sharing stops, '
+          'but relay recovery remains available for final queued events.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('End ride'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed ?? false) {
+      await widget.rideController.endRide();
     }
   }
 

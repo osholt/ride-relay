@@ -517,6 +517,7 @@ void main() {
       waypoints: const [],
     );
     var toggles = 0;
+    var ends = 0;
 
     await tester.pumpWidget(
       MaterialApp(
@@ -528,6 +529,8 @@ void main() {
           ridePaused: true,
           canToggleRidePause: true,
           onToggleRidePause: () async => toggles += 1,
+          canEndRide: true,
+          onEndRide: () async => ends += 1,
         ),
       ),
     );
@@ -539,6 +542,10 @@ void main() {
     await tester.tap(find.byKey(const Key('ride-pause-button')));
     await tester.pump();
     expect(toggles, 1);
+    expect(find.byKey(const Key('ride-end-button')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('ride-end-button')));
+    await tester.pump();
+    expect(ends, 1);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
