@@ -9,6 +9,7 @@ import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/route_store.dart';
 import 'package:ride_relay/domain/route_alert.dart';
+import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/features/map/ride_map.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/gpx_import_source.dart';
@@ -297,8 +298,18 @@ void main() {
 
       expect(find.byType(AppBar), findsNothing);
       expect(find.byKey(const Key('group-mini-map')), findsOneWidget);
-      expect(find.text('GROUP 3'), findsOneWidget);
+      expect(find.text('3 RIDERS'), findsOneWidget);
       expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
+      tester.view.physicalSize = const Size(390, 844);
+      await tester.pump();
+      expect(find.byKey(const Key('group-mini-map')), findsOneWidget);
+      final portraitMiniMap = tester.getRect(
+        find.byKey(const Key('group-mini-map')),
+      );
+      expect(portraitMiniMap.width, 150);
+      expect(portraitMiniMap.height, 104);
+      tester.view.physicalSize = const Size(844, 390);
+      await tester.pump();
       final layer = tester.widget<PolylineLayer>(find.byType(PolylineLayer));
       expect(
         layer.polylines.any(
@@ -331,6 +342,75 @@ void main() {
       await tester.pump();
     },
   );
+
+  testWidgets('shows a stopped-rider assistance sheet after an alert', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync('emergency-map-test');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final route = ImportedRoute(
+      id: 'route',
+      name: 'Emergency route',
+      importedAt: DateTime.utc(2026, 7, 17),
+      sourceFileName: 'route.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 53, longitude: -1.02),
+            GeoPoint(latitude: 53, longitude: -1.00),
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    var alerts = 0;
+    final sentIssues = <String>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(route),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          emergencyContacts: const [
+            MapEmergencyContact(
+              riderId: 'lead',
+              displayName: 'Oliver',
+              role: RideRole.lead,
+            ),
+            MapEmergencyContact(
+              riderId: 'tec',
+              displayName: 'Charlie',
+              role: RideRole.tailEndCharlie,
+            ),
+          ],
+          onEmergencyAlert: () async => alerts += 1,
+          onEmergencyIssue: (message) async => sentIssues.add(message.name),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    await tester.tap(find.byKey(const Key('emergency-alert-button')));
+    await tester.pumpAndSettle();
+
+    expect(alerts, 1);
+    expect(find.text('You are stopped'), findsOneWidget);
+    await tester.tap(find.text('Mechanical'));
+    await tester.pumpAndSettle();
+    expect(sentIssues, ['mechanical']);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
 }
 
 class _NoFileSource implements GpxImportSource {

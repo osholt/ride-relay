@@ -8,11 +8,14 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
+import 'package:url_launcher/url_launcher.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../data/json_file_route_store.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/imported_route.dart';
+import '../../domain/quick_message.dart';
+import '../../domain/ride_role.dart';
 import '../../domain/route_store.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/demo_route_loader.dart';
@@ -46,6 +49,9 @@ class RideMapFeature extends StatefulWidget {
     this.offRouteTraces,
     this.leaderStatus,
     this.junctionMarkerOverlay,
+    this.emergencyContacts = const [],
+    this.onEmergencyAlert,
+    this.onEmergencyIssue,
     this.onRouteChanged,
     this.acquireCurrentPosition,
     this.navigationExportCoordinator,
@@ -62,6 +68,9 @@ class RideMapFeature extends StatefulWidget {
     ValueListenable<List<MapOverlayTrace>>? offRouteTraces,
     ValueListenable<LeaderRideStatus?>? leaderStatus,
     ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay,
+    List<MapEmergencyContact> emergencyContacts = const [],
+    Future<void> Function()? onEmergencyAlert,
+    Future<void> Function(QuickMessage message)? onEmergencyIssue,
     ValueChanged<ImportedRoute?>? onRouteChanged,
     Future<GeoPoint?> Function()? acquireCurrentPosition,
     RouteStore? routeStore,
@@ -74,6 +83,9 @@ class RideMapFeature extends StatefulWidget {
     offRouteTraces: offRouteTraces,
     leaderStatus: leaderStatus,
     junctionMarkerOverlay: junctionMarkerOverlay,
+    emergencyContacts: emergencyContacts,
+    onEmergencyAlert: onEmergencyAlert,
+    onEmergencyIssue: onEmergencyIssue,
     onRouteChanged: onRouteChanged,
     acquireCurrentPosition: acquireCurrentPosition,
     routeStore: routeStore,
@@ -87,6 +99,9 @@ class RideMapFeature extends StatefulWidget {
   final ValueListenable<List<MapOverlayTrace>>? offRouteTraces;
   final ValueListenable<LeaderRideStatus?>? leaderStatus;
   final ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay;
+  final List<MapEmergencyContact> emergencyContacts;
+  final Future<void> Function()? onEmergencyAlert;
+  final Future<void> Function(QuickMessage message)? onEmergencyIssue;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
@@ -157,6 +172,9 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         offRouteTraces: widget.offRouteTraces,
         leaderStatus: widget.leaderStatus,
         junctionMarkerOverlay: widget.junctionMarkerOverlay,
+        emergencyContacts: widget.emergencyContacts,
+        onEmergencyAlert: widget.onEmergencyAlert,
+        onEmergencyIssue: widget.onEmergencyIssue,
         onRouteChanged: widget.onRouteChanged,
         acquireCurrentPosition: widget.acquireCurrentPosition,
         navigationExportCoordinator: widget.navigationExportCoordinator,
@@ -195,6 +213,9 @@ class RideMapScreen extends StatefulWidget {
     this.offRouteTraces,
     this.leaderStatus,
     this.junctionMarkerOverlay,
+    this.emergencyContacts = const [],
+    this.onEmergencyAlert,
+    this.onEmergencyIssue,
     this.onRouteChanged,
     this.acquireCurrentPosition,
     this.navigationExportCoordinator,
@@ -216,6 +237,9 @@ class RideMapScreen extends StatefulWidget {
   final ValueListenable<List<MapOverlayTrace>>? offRouteTraces;
   final ValueListenable<LeaderRideStatus?>? leaderStatus;
   final ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay;
+  final List<MapEmergencyContact> emergencyContacts;
+  final Future<void> Function()? onEmergencyAlert;
+  final Future<void> Function(QuickMessage message)? onEmergencyIssue;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
@@ -256,6 +280,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
   bool _navigationCanvasActive = false;
   bool _markerOverviewVisible = false;
   bool _autoFollowSuppressed = false;
+  bool _emergencyAlertSending = false;
+  bool _emergencyAlertSent = false;
+  bool _emergencyActionsOpen = false;
+  bool _emergencyActionsDismissed = false;
   double _lastHeadingDegrees = 0;
   GeoPoint? _previousNavigationPoint;
   MapNavigationPosition? _lastHandledNavigationFix;
@@ -421,8 +449,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
         .toList(growable: false);
     final groupSize = groupRiders.length + (_effectivePosition == null ? 0 : 1);
     final showGroupMiniMap =
-        landscape && _route != null && groupSize > 1 && !markerOverviewActive;
-    const groupMiniMapWidth = 196.0;
+        _route != null && groupSize > 1 && !markerOverviewActive;
+    final groupMiniMapWidth = landscape ? 196.0 : 150.0;
     final statusRight = showGroupMiniMap
         ? overlayRight + groupMiniMapWidth + 16
         : overlayRight + (landscape ? 68 : 12);
@@ -579,6 +607,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     top: statusTop,
                     child: _GroupMiniMap(
                       width: groupMiniMapWidth,
+                      height: landscape ? 116 : 104,
                       routePaths: _route!.paths
                           .map((path) => path.points)
                           .where((points) => points.length >= 2)
@@ -629,6 +658,35 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       foregroundColor: Colors.white,
                       icon: const Icon(Icons.my_location),
                       label: const Text('Re-centre'),
+                    ),
+                  ),
+                if (_route != null && widget.onEmergencyAlert != null)
+                  Positioned(
+                    left: overlayLeft + 12,
+                    bottom: overlayBottom + 54,
+                    child: FloatingActionButton.extended(
+                      key: const Key('emergency-alert-button'),
+                      heroTag: 'ride-relay-emergency-alert',
+                      tooltip: 'Alert leader and TEC',
+                      onPressed: _emergencyAlertSending
+                          ? null
+                          : _triggerEmergencyAlert,
+                      backgroundColor: const Color(0xFFD9304F),
+                      foregroundColor: Colors.white,
+                      icon: _emergencyAlertSending
+                          ? const SizedBox.square(
+                              dimension: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : Icon(
+                              _emergencyAlertSent
+                                  ? Icons.check_circle
+                                  : Icons.sos,
+                            ),
+                      label: Text(_emergencyAlertSent ? 'ALERT SENT' : 'ALERT'),
                     ),
                   ),
                 if (_route == null)
@@ -886,6 +944,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
     if (refreshMapLibrePosition) _lastMapLibrePositionSyncAt = progressNow;
 
     if (!_isMoving) _autoFollowSuppressed = false;
+    final offerEmergencyActions =
+        _emergencyAlertSent &&
+        !_isMoving &&
+        !_emergencyActionsOpen &&
+        !_emergencyActionsDismissed;
     final autoFollow = _route != null && _isMoving && !_autoFollowSuppressed;
     final enableNavigationMode = autoFollow && !_navigationMode;
     if (refreshProgress) {
@@ -910,6 +973,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
     if (_navigationMode && position != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) unawaited(_followNavigationCamera());
+      });
+    }
+    if (offerEmergencyActions) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_showEmergencyActions());
       });
     }
   }
@@ -1048,6 +1116,76 @@ class _RideMapScreenState extends State<RideMapScreen> {
       // plugin; the next navigation-state transition retries the request.
       _screenAwake = !enabled;
       debugPrint('Could not change navigation wake lock: $error');
+    }
+  }
+
+  Future<void> _triggerEmergencyAlert() async {
+    final send = widget.onEmergencyAlert;
+    if (send == null || _emergencyAlertSending) return;
+    setState(() => _emergencyAlertSending = true);
+    try {
+      await send();
+      if (!mounted) return;
+      setState(() {
+        _emergencyAlertSending = false;
+        _emergencyAlertSent = true;
+        _emergencyActionsDismissed = false;
+      });
+      _showMessage('Emergency alert sent to ${_emergencyContactLabel()}.');
+      if (!_isMoving) unawaited(_showEmergencyActions());
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() => _emergencyAlertSending = false);
+      _showMessage('Could not send emergency alert: $error');
+    }
+  }
+
+  String _emergencyContactLabel() {
+    final contacts = widget.emergencyContacts;
+    if (contacts.isEmpty) return 'the ride group';
+    return contacts.map((contact) => contact.shortRoleLabel).join(' and ');
+  }
+
+  Future<void> _showEmergencyActions() async {
+    if (!_emergencyAlertSent || _isMoving || _emergencyActionsOpen) return;
+    _emergencyActionsOpen = true;
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (context) => _EmergencyActionsSheet(
+          contacts: widget.emergencyContacts,
+          onIssueSelected: _sendEmergencyIssue,
+          onOpenMessages: _openEmergencyMessages,
+        ),
+      );
+    } finally {
+      _emergencyActionsOpen = false;
+      _emergencyActionsDismissed = true;
+    }
+  }
+
+  Future<void> _sendEmergencyIssue(QuickMessage message) async {
+    final send = widget.onEmergencyIssue;
+    if (send == null) return;
+    await send(message);
+    if (!mounted) return;
+    _showMessage('${message.label} sent to ${_emergencyContactLabel()}.');
+  }
+
+  Future<void> _openEmergencyMessages() async {
+    final opened = await launchUrl(
+      Uri(
+        scheme: 'sms',
+        queryParameters: {
+          'body': 'Ride Relay: I have stopped and need assistance.',
+        },
+      ),
+      mode: LaunchMode.externalApplication,
+    );
+    if (!opened && mounted) {
+      _showMessage('Could not open Messages on this device.');
     }
   }
 
@@ -1876,6 +2014,31 @@ class MapJunctionMarkerOverlay {
   final MapJunctionMarkerStage stage;
 }
 
+/// A ride role that should receive urgent assistance requests.
+///
+/// Phone numbers are deliberately optional: the ride roster does not currently
+/// exchange personal contact details, so the UI can safely offer Messages
+/// without silently exposing anyone's number to the rest of the group.
+class MapEmergencyContact {
+  const MapEmergencyContact({
+    required this.riderId,
+    required this.displayName,
+    required this.role,
+    this.phoneNumber,
+  });
+
+  final String riderId;
+  final String displayName;
+  final RideRole role;
+  final String? phoneNumber;
+
+  String get shortRoleLabel => switch (role) {
+    RideRole.lead => 'the leader',
+    RideRole.tailEndCharlie => 'the TEC',
+    _ => displayName,
+  };
+}
+
 class MapOverlayTrace {
   const MapOverlayTrace({
     required this.id,
@@ -2059,9 +2222,124 @@ class _EmptyRoutePrompt extends StatelessWidget {
   );
 }
 
+class _EmergencyActionsSheet extends StatefulWidget {
+  const _EmergencyActionsSheet({
+    required this.contacts,
+    required this.onIssueSelected,
+    required this.onOpenMessages,
+  });
+
+  final List<MapEmergencyContact> contacts;
+  final Future<void> Function(QuickMessage message) onIssueSelected;
+  final Future<void> Function() onOpenMessages;
+
+  @override
+  State<_EmergencyActionsSheet> createState() => _EmergencyActionsSheetState();
+}
+
+class _EmergencyActionsSheetState extends State<_EmergencyActionsSheet> {
+  bool _sending = false;
+
+  Future<void> _selectIssue(QuickMessage message) async {
+    if (_sending) return;
+    setState(() => _sending = true);
+    try {
+      await widget.onIssueSelected(message);
+      if (mounted) Navigator.of(context).pop();
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  Future<void> _openMessages() async {
+    if (_sending) return;
+    setState(() => _sending = true);
+    try {
+      await widget.onOpenMessages();
+      if (mounted) Navigator.of(context).pop();
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final contacts = widget.contacts;
+    final recipientLabel = contacts.isEmpty
+        ? 'the ride group'
+        : contacts.map((contact) => contact.shortRoleLabel).join(' and ');
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'You are stopped',
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 6),
+            Text('The emergency alert has been sent to $recipientLabel.'),
+            const SizedBox(height: 20),
+            Text(
+              'What do you need?',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final message in const [
+                  QuickMessage.mechanical,
+                  QuickMessage.assistance,
+                  QuickMessage.routeBlocked,
+                  QuickMessage.fuel,
+                ])
+                  OutlinedButton.icon(
+                    onPressed: _sending
+                        ? null
+                        : () => unawaited(_selectIssue(message)),
+                    icon: Icon(_iconForIssue(message), size: 18),
+                    label: Text(message.label),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            OutlinedButton.icon(
+              key: const Key('emergency-open-messages-button'),
+              onPressed: _sending ? null : () => unawaited(_openMessages()),
+              icon: const Icon(Icons.sms_outlined),
+              label: const Text('Open Messages'),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Contact numbers are not shared by the ride invite. Choose the '
+              'leader or TEC from your phone contacts if you need to call.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Color(0xFF98A3B1), fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  IconData _iconForIssue(QuickMessage message) => switch (message) {
+    QuickMessage.mechanical => Icons.build_outlined,
+    QuickMessage.assistance => Icons.volunteer_activism_outlined,
+    QuickMessage.routeBlocked => Icons.block_outlined,
+    QuickMessage.fuel => Icons.local_gas_station_outlined,
+    _ => Icons.info_outline,
+  };
+}
+
 class _GroupMiniMap extends StatefulWidget {
   const _GroupMiniMap({
     required this.width,
+    required this.height,
     required this.routePaths,
     required this.currentPosition,
     required this.riders,
@@ -2070,6 +2348,7 @@ class _GroupMiniMap extends StatefulWidget {
   });
 
   final double width;
+  final double height;
   final List<List<GeoPoint>> routePaths;
   final GeoPoint? currentPosition;
   final List<MapOverlayMarker> riders;
@@ -2134,7 +2413,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     return Container(
       key: const Key('group-mini-map'),
       width: widget.width,
-      height: 116,
+      height: widget.height,
       decoration: BoxDecoration(
         color: const Color(0xF2111820),
         borderRadius: BorderRadius.circular(14),
@@ -2172,7 +2451,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
                     vertical: 3,
                   ),
                   child: Text(
-                    'GROUP $riderCount',
+                    '$riderCount RIDERS',
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 10,
@@ -2289,6 +2568,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     _refreshing = true;
     try {
       await controller.setGeoJsonSource(_riderSource, _riderGeoJson());
+      await _fitGroup();
     } on Object catch (error) {
       debugPrint('Could not refresh group mini-map: $error');
     } finally {
@@ -2310,6 +2590,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
           ml.LatLng(points.single.latitude, points.single.longitude),
           14.5,
         ),
+        duration: const Duration(milliseconds: 500),
       );
       return;
     }
@@ -2321,6 +2602,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
         right: 20,
         bottom: 16,
       ),
+      duration: const Duration(milliseconds: 500),
     );
   }
 

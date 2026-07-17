@@ -3,6 +3,7 @@ export 'ride_map_feature.dart'
         MapNavigationPosition,
         MapJunctionMarkerOverlay,
         MapJunctionMarkerStage,
+        MapEmergencyContact,
         MapOverlayMarker,
         MapOverlayTrace,
         RideMapFeature,

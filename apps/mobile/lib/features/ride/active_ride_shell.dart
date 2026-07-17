@@ -17,6 +17,7 @@ import '../../domain/event_store.dart';
 import '../../domain/geo_point.dart' as awareness_geo;
 import '../../domain/hazard.dart';
 import '../../domain/imported_route.dart' as route_domain;
+import '../../domain/quick_message.dart';
 import '../../domain/ride_event.dart';
 import '../../domain/ride_role.dart';
 import '../../domain/route_alert.dart';
@@ -33,6 +34,7 @@ import '../../services/demo_route_loader.dart';
 import '../../services/external_hazard_provider.dart';
 import '../../services/leader_ride_status.dart';
 import '../../services/route_decision_point_extractor.dart';
+import '../../services/ride_completion_detector.dart';
 import '../map/ride_map.dart';
 import '../situational_awareness/situational_awareness_screen.dart';
 import '../simulation/ride_simulation_screen.dart';
@@ -70,6 +72,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   final _riderTrails = <String, List<route_domain.GeoPoint>>{};
   final _publishedEventIds = <String>{};
   final _warnings = <String>{};
+  final _rideCompletionDetector = RideCompletionDetector();
 
   SituationalAwarenessController? _awarenessController;
   ForegroundLocationController? _locationController;
@@ -83,9 +86,11 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   StreamSubscription<RideEvent>? _internetReceivedEventSubscription;
   Timer? _stalenessTimer;
   Timer? _simulationAwarenessTimer;
+  Timer? _markerExitChromeTimer;
   Future<void> _publishChain = Future.value();
   String? _routeFingerprint;
   String? _simulationRouteFingerprint;
+  route_domain.ImportedRoute? _activeRoute;
   int _routeGeneration = 0;
   int _selectedIndex = 0;
   int _handledAutomaticMarkerActivation = 0;
@@ -96,6 +101,8 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   bool _relayConfigured = false;
   bool _refreshingRideEvents = false;
   bool _rideEndHandled = false;
+  bool _holdingNavigationChromeForMarkerExit = false;
+  bool _autoEndingRide = false;
 
   bool get _isSimulation => widget.rideController.session?.isSimulation == true;
 
@@ -128,6 +135,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       }
     }
 
+    _activeRoute = route;
     await _replaceAwarenessController(route, notify: false);
     if (_isSimulation) {
       await _replaceSimulationController(route, notify: false);
@@ -309,6 +317,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   }
 
   Future<void> _handleRouteChanged(route_domain.ImportedRoute? route) async {
+    _activeRoute = route;
     await _replaceAwarenessController(route);
     if (_isSimulation) await _replaceSimulationController(route);
   }
@@ -444,6 +453,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     if (!controller.automaticMarkerActive ||
         !controller.automaticMarkerIsLocal) {
       if (hadOverlay) {
+        _holdNavigationChromeAfterMarkerExit();
         _junctionMarkerOverlay.value = null;
         setState(() {});
       }
@@ -476,6 +486,15 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       stage: stage,
     );
     if (!hadOverlay) setState(() {});
+  }
+
+  void _holdNavigationChromeAfterMarkerExit() {
+    _markerExitChromeTimer?.cancel();
+    _holdingNavigationChromeForMarkerExit = true;
+    _markerExitChromeTimer = Timer(const Duration(milliseconds: 900), () {
+      if (!mounted) return;
+      setState(() => _holdingNavigationChromeForMarkerExit = false);
+    });
   }
 
   void _onAwarenessChanged() {
@@ -654,6 +673,49 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
               route: awareness.route,
             );
     }
+    unawaited(_maybeAutomaticallyEndRide(awareness));
+  }
+
+  Future<void> _maybeAutomaticallyEndRide(
+    SituationalAwarenessController awareness,
+  ) async {
+    if (_autoEndingRide ||
+        widget.rideController.rideEnded ||
+        widget.rideController.markerActive) {
+      return;
+    }
+    final session = widget.rideController.session;
+    if (session == null || session.role != RideRole.lead) return;
+    final route = _activeRoute;
+    final destination = _routeDestination(route);
+    if (destination == null) return;
+    final arrived = _rideCompletionDetector.everyoneReachedDestination(
+      destination: awareness_geo.GeoPoint(
+        latitude: destination.latitude,
+        longitude: destination.longitude,
+      ),
+      riderLocations: awareness.riderLocations,
+      now: DateTime.now(),
+    );
+    if (!arrived) return;
+    _autoEndingRide = true;
+    try {
+      await widget.rideController.endRide();
+    } catch (error, stackTrace) {
+      debugPrint('Could not automatically end ride: $error\n$stackTrace');
+    } finally {
+      _autoEndingRide = false;
+    }
+  }
+
+  static route_domain.GeoPoint? _routeDestination(
+    route_domain.ImportedRoute? route,
+  ) {
+    if (route == null) return null;
+    for (final path in route.paths.reversed) {
+      if (path.points.isNotEmpty) return path.points.last;
+    }
+    return route.waypoints.isEmpty ? null : route.waypoints.last.point;
   }
 
   void _updateSimulationOffRouteTraces(List<SimulatedRiderSnapshot> riders) {
@@ -867,12 +929,11 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         final landscape =
             MediaQuery.orientationOf(context) == Orientation.landscape;
         final hideWhileMoving =
-            (_selectedIndex == 0 &&
-                navigationPosition?.isMoving == true &&
-                !_isSimulation) ||
+            (_selectedIndex == 0 && navigationPosition?.isMoving == true) ||
             (_isSimulation &&
                 _selectedIndex == 0 &&
-                _junctionMarkerOverlay.value != null);
+                (_junctionMarkerOverlay.value != null ||
+                    _holdingNavigationChromeForMarkerExit));
         final destinations = <NavigationDestination>[
           const NavigationDestination(
             icon: Icon(Icons.map_outlined),
@@ -960,12 +1021,59 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       offRouteTraces: _offRouteTraces,
       leaderStatus: _leaderStatus,
       junctionMarkerOverlay: _junctionMarkerOverlay,
+      emergencyContacts: _emergencyContacts,
+      onEmergencyAlert: _sendEmergencyMapAlert,
+      onEmergencyIssue: _sendEmergencyMapIssue,
       onRouteChanged: _onRouteChanged,
       acquireCurrentPosition: _isSimulation
           ? () async => _mapPosition.value
           : _acquireCurrentPosition,
       routeStore: _simulationRouteStore,
       distanceUnit: widget.distanceUnits.value,
+    );
+  }
+
+  List<MapEmergencyContact> get _emergencyContacts {
+    final contacts = <String, MapEmergencyContact>{};
+    final session = widget.rideController.session;
+    if (session != null &&
+        (session.role == RideRole.lead ||
+            session.role == RideRole.tailEndCharlie)) {
+      contacts[session.localRiderId] = MapEmergencyContact(
+        riderId: session.localRiderId,
+        displayName: session.displayName,
+        role: session.role,
+      );
+    }
+    for (final rider in _awarenessController?.riderLocations ?? const []) {
+      if (rider.role != RideRole.lead &&
+          rider.role != RideRole.tailEndCharlie) {
+        continue;
+      }
+      contacts[rider.riderId] = MapEmergencyContact(
+        riderId: rider.riderId,
+        displayName: rider.displayName,
+        role: rider.role,
+      );
+    }
+    return contacts.values.toList(growable: false);
+  }
+
+  Future<void> _sendEmergencyMapAlert() =>
+      _sendEmergencyQuickMessage(QuickMessage.emergencyStop);
+
+  Future<void> _sendEmergencyMapIssue(QuickMessage message) =>
+      _sendEmergencyQuickMessage(message);
+
+  Future<void> _sendEmergencyQuickMessage(QuickMessage message) async {
+    final session = widget.rideController.session;
+    final recipients = _emergencyContacts
+        .where((contact) => contact.riderId != session?.localRiderId)
+        .map((contact) => contact.riderId)
+        .toList(growable: false);
+    await widget.rideController.sendQuickMessage(
+      message,
+      recipientRiderIds: recipients,
     );
   }
 
@@ -1133,6 +1241,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     unawaited(_receivedEventSubscription?.cancel());
     unawaited(_internetReceivedEventSubscription?.cancel());
     _stalenessTimer?.cancel();
+    _markerExitChromeTimer?.cancel();
     _locationController?.dispose();
     unawaited(_relayController?.close());
     unawaited(_internetRelayController?.close());

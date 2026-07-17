@@ -438,7 +438,9 @@ class RideSimulationController extends ChangeNotifier {
       if (agent.isOffRoute) _recordOffRouteTrail(agent);
     }
     _updateAutomaticMarkerPhase(realElapsed);
-    final completed = _agents.first.progressMeters >= routeDistanceMeters;
+    final completed = _agents.every(
+      (agent) => agent.progressMeters >= routeDistanceMeters,
+    );
     if (completed) _state = RideSimulationState.completed;
     if (completed) {
       _timer?.cancel();

@@ -127,15 +127,19 @@ void main() {
     },
   );
 
-  test('quick messages are durable, prioritised events', () async {
+  test('quick messages are durable, prioritised directed events', () async {
     await controller.createRide('Oliver');
-    await controller.sendQuickMessage(QuickMessage.emergencyStop);
+    await controller.sendQuickMessage(
+      QuickMessage.emergencyStop,
+      recipientRiderIds: const ['lead', 'tec', 'lead'],
+    );
 
     final pending = await eventStore.pendingEvents(controller.session!.rideId);
     final message = pending.last;
     expect(message.type, RideEventType.statusMessage);
     expect(message.priority, EventPriority.critical);
     expect(message.payload['message'], 'emergencyStop');
+    expect(message.payload['recipientRiderIds'], const ['lead', 'tec']);
   });
 
   test('marker counts each rider once', () async {

@@ -243,13 +243,21 @@ class RideController extends ChangeNotifier {
     });
   }
 
-  Future<void> sendQuickMessage(QuickMessage message) async {
+  Future<void> sendQuickMessage(
+    QuickMessage message, {
+    Iterable<String> recipientRiderIds = const [],
+  }) async {
     await _run(() async {
+      final recipients = recipientRiderIds.toSet().toList(growable: false);
       await _record(
         type: RideEventType.statusMessage,
         priority: message.priority,
         expiresAt: _clock().add(const Duration(hours: 2)),
-        payload: {'message': message.name, 'label': message.label},
+        payload: {
+          'message': message.name,
+          'label': message.label,
+          if (recipients.isNotEmpty) 'recipientRiderIds': recipients,
+        },
       );
     });
   }

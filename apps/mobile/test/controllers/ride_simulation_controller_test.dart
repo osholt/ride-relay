@@ -371,7 +371,12 @@ void main() {
 
   test('completion publishes stopped GPS fixes', () async {
     simulation.setTimeScale(16);
-    await simulation.advance(const Duration(hours: 1));
+    // A marker can be released during one visual step, then needs the next
+    // step to rejoin the fleet. Completion is intentionally group-wide.
+    for (var index = 0; index < 3; index += 1) {
+      await simulation.advance(const Duration(minutes: 1));
+      if (simulation.state == RideSimulationState.completed) break;
+    }
 
     expect(simulation.state, RideSimulationState.completed);
     expect(
