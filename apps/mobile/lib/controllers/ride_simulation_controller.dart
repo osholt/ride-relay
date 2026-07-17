@@ -200,9 +200,10 @@ class RideSimulationController extends ChangeNotifier {
         agent.progressMeters + _speedFor(agent) * seconds,
       );
     }
+    final completed = _agents.first.progressMeters >= routeDistanceMeters;
+    if (completed) _state = RideSimulationState.completed;
     await _emitPositions();
-    if (_agents.first.progressMeters >= routeDistanceMeters) {
-      _state = RideSimulationState.completed;
+    if (completed) {
       _timer?.cancel();
       _timer = null;
     }
@@ -273,6 +274,7 @@ class RideSimulationController extends ChangeNotifier {
   }
 
   double _speedFor(_SimulatedAgent agent) {
+    if (_state == RideSimulationState.completed) return 0;
     if (agent.id == tecRiderId && _tecDelayed) {
       return _baseSpeedMetersPerSecond * 0.45;
     }

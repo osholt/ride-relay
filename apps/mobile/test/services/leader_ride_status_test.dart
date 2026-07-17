@@ -44,6 +44,46 @@ void main() {
     expect(status.estimatedTimeToTec!.inSeconds, inInclusiveRange(105, 115));
   });
 
+  test('closed loop uses the short gap across its start and finish', () {
+    final status = const LeaderRideStatusCalculator().calculate(
+      localRole: RideRole.lead,
+      localRiderId: 'lead',
+      localLocation: _location(
+        id: 'lead',
+        name: 'Lead',
+        role: RideRole.lead,
+        longitude: 0,
+        speed: 10,
+        at: now,
+      ),
+      riderLocations: [
+        RiderLocation(
+          riderId: 'tec',
+          displayName: 'Charlie',
+          role: RideRole.tailEndCharlie,
+          sample: LocationSample(
+            position: const GeoPoint(latitude: 0.005, longitude: 0),
+            recordedAt: now,
+            accuracyMeters: 5,
+            speedMetersPerSecond: 10,
+          ),
+          receivedAt: now,
+        ),
+      ],
+      routeAlerts: const [],
+      route: const [
+        GeoPoint(latitude: 0, longitude: 0),
+        GeoPoint(latitude: 0, longitude: 0.02),
+        GeoPoint(latitude: 0.02, longitude: 0.02),
+        GeoPoint(latitude: 0.02, longitude: 0),
+        GeoPoint(latitude: 0, longitude: 0),
+      ],
+      now: now,
+    );
+
+    expect(status!.distanceToTecMeters, closeTo(556, 15));
+  });
+
   test('leader receives simple unacknowledged off-course alerts', () {
     final status = const LeaderRideStatusCalculator().calculate(
       localRole: RideRole.lead,

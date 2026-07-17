@@ -109,4 +109,21 @@ void main() {
     await simulation.reportRoadworks();
     expect(awareness.activeHazards.single.details, contains('Ride Lab'));
   });
+
+  test('completion publishes stopped GPS fixes', () async {
+    simulation.setTimeScale(16);
+    await simulation.advance(const Duration(hours: 1));
+
+    expect(simulation.state, RideSimulationState.completed);
+    expect(
+      simulation.riders.every((rider) => rider.speedMetersPerSecond == 0),
+      isTrue,
+    );
+    expect(
+      awareness.riderLocations.every(
+        (location) => location.sample.speedMetersPerSecond == 0,
+      ),
+      isTrue,
+    );
+  });
 }

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import '../domain/geo_point.dart';
 import '../domain/ride_role.dart';
 import '../domain/rider_location.dart';
@@ -135,9 +137,24 @@ class LeaderRideStatusCalculator {
               maximumOnRouteDistanceMeters &&
           tecProjection.distanceFromRouteMeters <=
               maximumOnRouteDistanceMeters) {
-        return (leadProjection.distanceAlongRouteMeters -
-                tecProjection.distanceAlongRouteMeters)
-            .abs();
+        final alongRouteDistance =
+            (leadProjection.distanceAlongRouteMeters -
+                    tecProjection.distanceAlongRouteMeters)
+                .abs();
+        if (GeoCalculations.distanceMeters(route.first, route.last) <= 25) {
+          var routeDistance = 0.0;
+          for (var index = 1; index < route.length; index += 1) {
+            routeDistance += GeoCalculations.distanceMeters(
+              route[index - 1],
+              route[index],
+            );
+          }
+          return math.min(
+            alongRouteDistance,
+            math.max(0, routeDistance - alongRouteDistance),
+          );
+        }
+        return alongRouteDistance;
       }
     }
     return GeoCalculations.distanceMeters(
