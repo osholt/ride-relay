@@ -14,7 +14,7 @@ void main() {
       expect(request.url.queryParameters['geometries'], 'geojson');
       expect(request.url.queryParameters['overview'], 'full');
       expect(request.url.queryParameters['steps'], 'true');
-      expect(request.headers['User-Agent'], contains('RideRelay'));
+      expect(request.headers['User-Agent'], contains('TailEndCharlie'));
       return http.Response(
         jsonEncode({
           'code': 'Ok',
