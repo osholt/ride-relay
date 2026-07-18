@@ -93,7 +93,9 @@ jobs:
           test -n "$API_PRIVATE_KEY_BASE64"
           mkdir -p "$HOME/.appstoreconnect/private_keys"
           printf '%s' "$API_PRIVATE_KEY_BASE64" | base64 -D > "$HOME/.appstoreconnect/private_keys/AuthKey_$API_KEY_ID.p8"
-          xcrun altool --upload-package build/ios/ipa/ride_relay.ipa \
+          xcrun altool --upload-app \
+            -f build/ios/ipa/ride_relay.ipa \
+            -t ios \
             --apiKey "$API_KEY_ID" \
             --apiIssuer "$API_ISSUER_ID"
       - if: always()
