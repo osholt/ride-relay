@@ -56,16 +56,18 @@ void main() {
   });
 
   test('simulation ride is explicitly tagged and restartable', () async {
-    await controller.createSimulationRide();
+    await controller.createSimulationRide(riderCount: 30);
 
     final firstRideId = controller.session!.rideId;
     expect(controller.session?.isSimulation, isTrue);
+    expect(controller.session?.simulationRiderCount, 30);
     expect(controller.session?.displayName, 'Demo Lead');
     expect(controller.events.single.payload['simulation'], isTrue);
 
-    await controller.restartSimulationRide();
+    await controller.restartSimulationRide(riderCount: 12);
 
     expect(controller.session?.isSimulation, isTrue);
+    expect(controller.session?.simulationRiderCount, 12);
     expect(controller.session?.rideId, isNot(firstRideId));
     expect(await eventStore.eventsForRide(firstRideId), isEmpty);
   });

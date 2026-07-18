@@ -70,61 +70,20 @@ class RideSimulationController extends ChangeNotifier {
     List<GeoPoint> fallbackJunctions = const [],
     this.tickInterval = const Duration(milliseconds: 100),
     this.eventInterval = const Duration(seconds: 2),
+    this.riderCount = RideSession.defaultSimulationRiderCount,
   }) : assert(session.isSimulation),
        assert(route.length >= 2),
+       assert(
+         riderCount >= RideSession.minimumSimulationRiderCount &&
+             riderCount <= RideSession.maximumSimulationRiderCount,
+       ),
        _session = session,
        _routeSampler = _RouteSampler(route),
        _selectedLocalRole = session.role == RideRole.marker
            ? RideRole.rider
            : session.role {
     final leadStart = _routeSampler.totalDistanceMeters * 0.06;
-    _agents = [
-      _SimulatedAgent(
-        id: session.localRiderId,
-        displayName: session.displayName,
-        role: _selectedLocalRole,
-        progressMeters: leadStart,
-        speedFactor: 1,
-        isLocal: true,
-        trafficPhaseSeconds: 3,
-      ),
-      _SimulatedAgent(
-        id: 'ride-lab-maya',
-        displayName: 'Maya',
-        role: _selectedLocalRole == RideRole.lead
-            ? RideRole.rider
-            : RideRole.lead,
-        progressMeters: math.max(0, leadStart - 120),
-        speedFactor: 0.98,
-        trafficPhaseSeconds: 15,
-      ),
-      _SimulatedAgent(
-        id: offRouteRiderId,
-        displayName: 'Alex',
-        role: RideRole.rider,
-        progressMeters: math.max(0, leadStart - 320),
-        speedFactor: 0.92,
-        trafficPhaseSeconds: 27,
-      ),
-      _SimulatedAgent(
-        id: 'ride-lab-jordan',
-        displayName: 'Jordan',
-        role: RideRole.rider,
-        progressMeters: math.max(0, leadStart - 540),
-        speedFactor: 0.86,
-        trafficPhaseSeconds: 39,
-      ),
-      _SimulatedAgent(
-        id: tecRiderId,
-        displayName: 'Charlie',
-        role: _selectedLocalRole == RideRole.tailEndCharlie
-            ? RideRole.rider
-            : RideRole.tailEndCharlie,
-        progressMeters: math.max(0, leadStart - 860),
-        speedFactor: 0.8,
-        trafficPhaseSeconds: 51,
-      ),
-    ];
+    _agents = _buildAgents(leadStart);
     List<double> usableJunctions(List<GeoPoint> points) => _routeSampler
         .progressesFor(points)
         .where(
@@ -158,6 +117,7 @@ class RideSimulationController extends ChangeNotifier {
   final _RouteSampler _routeSampler;
   final Duration tickInterval;
   final Duration eventInterval;
+  final int riderCount;
   late final List<_SimulatedAgent> _agents;
   late final List<double> _markerJunctionProgresses;
   RideRole _selectedLocalRole;
@@ -261,6 +221,87 @@ class RideSimulationController extends ChangeNotifier {
       );
     }),
   );
+
+  List<_SimulatedAgent> _buildAgents(double leadStart) {
+    final trailingSpan = math.min(860, math.max(160, leadStart * 0.82));
+    double initialProgress(int index) => math.max(
+      0,
+      leadStart - trailingSpan * index / (riderCount - 1),
+    );
+    _SimulatedAgent rider({
+      required String id,
+      required String displayName,
+      required int index,
+      required RideRole role,
+      bool isLocal = false,
+    }) => _SimulatedAgent(
+      id: id,
+      displayName: displayName,
+      role: role,
+      progressMeters: initialProgress(index),
+      speedFactor: 1 - (0.2 * index / (riderCount - 1)),
+      trafficPhaseSeconds: (3 + index * 12) % 58,
+      isLocal: isLocal,
+    );
+
+    final agents = <_SimulatedAgent>[
+      rider(
+        id: _session.localRiderId,
+        displayName: _session.displayName,
+        index: 0,
+        role: _selectedLocalRole,
+        isLocal: true,
+      ),
+      rider(
+        id: 'ride-lab-maya',
+        displayName: 'Maya',
+        index: 1,
+        role: _selectedLocalRole == RideRole.lead
+            ? RideRole.rider
+            : RideRole.lead,
+      ),
+      rider(
+        id: offRouteRiderId,
+        displayName: 'Alex',
+        index: 2,
+        role: RideRole.rider,
+      ),
+    ];
+    var nextIndex = 3;
+    if (riderCount >= 5) {
+      agents.add(
+        rider(
+          id: 'ride-lab-jordan',
+          displayName: 'Jordan',
+          index: nextIndex++,
+          role: RideRole.rider,
+        ),
+      );
+    }
+    var riderNumber = 1;
+    while (agents.length < riderCount - 1) {
+      agents.add(
+        rider(
+          id: 'ride-lab-rider-$riderNumber',
+          displayName: 'Rider $riderNumber',
+          index: nextIndex++,
+          role: RideRole.rider,
+        ),
+      );
+      riderNumber += 1;
+    }
+    agents.add(
+      rider(
+        id: tecRiderId,
+        displayName: 'Charlie',
+        index: riderCount - 1,
+        role: _selectedLocalRole == RideRole.tailEndCharlie
+            ? RideRole.rider
+            : RideRole.tailEndCharlie,
+      ),
+    );
+    return agents;
+  }
 
   List<GeoPoint> _displayTrailFor(_SimulatedAgent agent) {
     if (agent.role != RideRole.lead) return agent.travelTrail;

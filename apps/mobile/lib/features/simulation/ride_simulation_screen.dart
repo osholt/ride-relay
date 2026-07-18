@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../controllers/ride_simulation_controller.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/ride_role.dart';
+import '../../domain/ride_session.dart';
 import '../../services/measurement_formatter.dart';
 
 class RideSimulationScreen extends StatelessWidget {
@@ -17,6 +18,7 @@ class RideSimulationScreen extends StatelessWidget {
     required this.onRoleChanged,
     required this.onToggleMarker,
     required this.onRideOff,
+    required this.onRiderCountChanged,
     this.markerPassCount = 0,
     this.tecPassedMarker = false,
   });
@@ -28,6 +30,7 @@ class RideSimulationScreen extends StatelessWidget {
   final Future<void> Function(RideRole role) onRoleChanged;
   final Future<void> Function() onToggleMarker;
   final Future<void> Function() onRideOff;
+  final Future<void> Function(int riderCount) onRiderCountChanged;
   final int markerPassCount;
   final bool tecPassedMarker;
 
@@ -63,6 +66,7 @@ class RideSimulationScreen extends StatelessWidget {
               onRoleChanged: onRoleChanged,
               onToggleMarker: onToggleMarker,
               onRideOff: onRideOff,
+              onRiderCountChanged: onRiderCountChanged,
               markerPassCount: markerPassCount,
               tecPassedMarker: tecPassedMarker,
             );
@@ -100,6 +104,7 @@ class _SimulationControls extends StatelessWidget {
     required this.onRoleChanged,
     required this.onToggleMarker,
     required this.onRideOff,
+    required this.onRiderCountChanged,
     required this.markerPassCount,
     required this.tecPassedMarker,
   });
@@ -108,6 +113,7 @@ class _SimulationControls extends StatelessWidget {
   final Future<void> Function(RideRole role) onRoleChanged;
   final Future<void> Function() onToggleMarker;
   final Future<void> Function() onRideOff;
+  final Future<void> Function(int riderCount) onRiderCountChanged;
   final int markerPassCount;
   final bool tecPassedMarker;
 
@@ -144,10 +150,11 @@ class _SimulationControls extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 10),
-            const Text(
-              'Five virtual bikes use the real navigation, TEC and off-course '
-              'logic. Device GPS, internet relay and nearby radios are off.',
-              style: TextStyle(color: Color(0xFFADB7C4), height: 1.35),
+            Text(
+              '${controller.riderCount} virtual bikes use the real navigation, '
+              'TEC and off-course logic. Device GPS, internet relay and nearby '
+              'radios are off.',
+              style: const TextStyle(color: Color(0xFFADB7C4), height: 1.35),
             ),
             if (controller.automaticMarkerActive) ...[
               const SizedBox(height: 14),
@@ -201,6 +208,41 @@ class _SimulationControls extends StatelessWidget {
               '${(controller.progress * 100).round()}% route · '
               '${_duration(controller.simulatedElapsed)} simulated',
               style: const TextStyle(color: Color(0xFF8F9BAA)),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Virtual riders',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                DropdownButton<int>(
+                  key: const Key('simulation-rider-count'),
+                  value: controller.riderCount,
+                  items: [
+                    for (
+                      var count = RideSession.minimumSimulationRiderCount;
+                      count <= RideSession.maximumSimulationRiderCount;
+                      count += 1
+                    )
+                      DropdownMenuItem(
+                        value: count,
+                        child: Text('$count riders'),
+                      ),
+                  ],
+                  onChanged: (count) {
+                    if (count != null && count != controller.riderCount) {
+                      unawaited(onRiderCountChanged(count));
+                    }
+                  },
+                ),
+              ],
+            ),
+            const Text(
+              'Changing the fleet starts a clean simulation.',
+              style: TextStyle(color: Color(0xFF8F9BAA), fontSize: 12),
             ),
             const SizedBox(height: 16),
             Row(

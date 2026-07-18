@@ -11,8 +11,10 @@ without requiring several phones or physical travel.
 
 The bundled 17.5 km GPX from the King's Oak Academy car park to the Cross Hands
 Hotel car park is loaded automatically. Its 484-point track follows the routed
-roads through Kingswood, Pucklechurch and Old Sodbury. Five synthetic bikes
-start as a moving group: a lead, three riders, and a Tail End Charlie.
+roads through Kingswood, Pucklechurch and Old Sodbury. The Ride Lab fleet picker
+supports four to thirty synthetic bikes. It always keeps a lead, a second bike,
+Alex for the off-route scenario, and a Tail End Charlie; any extra riders are
+distributed between them.
 
 Ride Lab can:
 
@@ -29,8 +31,8 @@ Visual positions advance at 10 Hz while signed, durable situational events are
 written at 2 Hz. This keeps map motion continuous without turning the event
 journal into a rendering loop.
 
-Restart creates a clean simulation ride and resets route progress, events,
-alerts, and trails.
+Changing the fleet size or restarting creates a clean simulation ride and resets
+route progress, events, alerts, and trails.
 
 ## Isolation and limitations
 

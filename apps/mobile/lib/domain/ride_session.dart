@@ -1,6 +1,10 @@
 import 'ride_role.dart';
 
 class RideSession {
+  static const minimumSimulationRiderCount = 4;
+  static const maximumSimulationRiderCount = 30;
+  static const defaultSimulationRiderCount = 5;
+
   const RideSession({
     required this.rideId,
     required this.rideCode,
@@ -10,7 +14,12 @@ class RideSession {
     required this.role,
     required this.joinedAt,
     this.isSimulation = false,
-  });
+    this.simulationRiderCount = defaultSimulationRiderCount,
+  }) : assert(
+         !isSimulation ||
+             (simulationRiderCount >= minimumSimulationRiderCount &&
+                 simulationRiderCount <= maximumSimulationRiderCount),
+       );
 
   final String rideId;
   final String rideCode;
@@ -20,8 +29,13 @@ class RideSession {
   final RideRole role;
   final DateTime joinedAt;
   final bool isSimulation;
+  final int simulationRiderCount;
 
-  RideSession copyWith({RideRole? role, String? rideCode}) => RideSession(
+  RideSession copyWith({
+    RideRole? role,
+    String? rideCode,
+    int? simulationRiderCount,
+  }) => RideSession(
     rideId: rideId,
     rideCode: rideCode ?? this.rideCode,
     inviteSecret: inviteSecret,
@@ -30,6 +44,7 @@ class RideSession {
     role: role ?? this.role,
     joinedAt: joinedAt,
     isSimulation: isSimulation,
+    simulationRiderCount: simulationRiderCount ?? this.simulationRiderCount,
   );
 
   Map<String, Object?> toJson() => {
@@ -41,6 +56,7 @@ class RideSession {
     'role': role.name,
     'joinedAt': joinedAt.toUtc().toIso8601String(),
     if (isSimulation) 'isSimulation': true,
+    if (isSimulation) 'simulationRiderCount': simulationRiderCount,
   };
 
   factory RideSession.fromJson(Map<String, Object?> json) => RideSession(
@@ -52,5 +68,13 @@ class RideSession {
     role: RideRole.values.byName(json['role']! as String),
     joinedAt: DateTime.parse(json['joinedAt']! as String).toLocal(),
     isSimulation: json['isSimulation'] as bool? ?? false,
+    simulationRiderCount: _simulationRiderCount(json['simulationRiderCount']),
   );
+
+  static int _simulationRiderCount(Object? value) {
+    if (value is! int) return defaultSimulationRiderCount;
+    return value
+        .clamp(minimumSimulationRiderCount, maximumSimulationRiderCount)
+        .toInt();
+  }
 }

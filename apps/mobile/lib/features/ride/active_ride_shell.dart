@@ -429,6 +429,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       route: simulationRoute,
       markerJunctions: markerJunctions,
       fallbackJunctions: derivedJunctions,
+      riderCount: session.simulationRiderCount,
     );
     _simulationController = controller;
     controller.addListener(_onSimulationVisualChanged);
@@ -1306,6 +1307,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       onRoleChanged: _setSimulationRole,
       onToggleMarker: _toggleSimulationMarker,
       onRideOff: _rideOffSimulationMarker,
+      onRiderCountChanged: _restartSimulationWithRiderCount,
       markerPassCount: widget.rideController.markerPassCount,
       tecPassedMarker: widget.rideController.tecPassedCurrentMarker,
     );
@@ -1378,6 +1380,13 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   Future<void> _restartSimulation() async {
     _simulationController?.pause();
     await widget.rideController.restartSimulationRide();
+  }
+
+  Future<void> _restartSimulationWithRiderCount(int riderCount) async {
+    final simulation = _simulationController;
+    if (simulation == null || riderCount == simulation.riderCount) return;
+    simulation.pause();
+    await widget.rideController.restartSimulationRide(riderCount: riderCount);
   }
 
   Widget _buildDetails() => RideDashboard(

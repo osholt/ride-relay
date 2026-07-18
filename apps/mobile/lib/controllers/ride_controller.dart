@@ -177,13 +177,19 @@ class RideController extends ChangeNotifier {
     });
   }
 
-  Future<void> createSimulationRide() async {
+  Future<void> createSimulationRide({
+    int riderCount = RideSession.defaultSimulationRiderCount,
+  }) async {
     await _run(() async {
-      await _createRide(displayName: 'Demo Lead', isSimulation: true);
+      await _createRide(
+        displayName: 'Demo Lead',
+        isSimulation: true,
+        simulationRiderCount: _validatedSimulationRiderCount(riderCount),
+      );
     });
   }
 
-  Future<void> restartSimulationRide() async {
+  Future<void> restartSimulationRide({int? riderCount}) async {
     await _run(() async {
       final activeSession = _requireSession();
       if (!activeSession.isSimulation) {
@@ -194,7 +200,13 @@ class RideController extends ChangeNotifier {
       _session = null;
       _events = const [];
       _roleBeforeMarker = null;
-      await _createRide(displayName: 'Demo Lead', isSimulation: true);
+      await _createRide(
+        displayName: 'Demo Lead',
+        isSimulation: true,
+        simulationRiderCount: _validatedSimulationRiderCount(
+          riderCount ?? activeSession.simulationRiderCount,
+        ),
+      );
     });
   }
 
@@ -470,6 +482,7 @@ class RideController extends ChangeNotifier {
   Future<void> _createRide({
     required String displayName,
     bool isSimulation = false,
+    int simulationRiderCount = RideSession.defaultSimulationRiderCount,
   }) async {
     final now = _clock();
     final session = RideSession(
@@ -481,6 +494,7 @@ class RideController extends ChangeNotifier {
       role: RideRole.lead,
       joinedAt: now,
       isSimulation: isSimulation,
+      simulationRiderCount: simulationRiderCount,
     );
     _session = session;
     await _sessionStore.save(session);
@@ -492,6 +506,17 @@ class RideController extends ChangeNotifier {
         if (isSimulation) 'simulation': true,
       },
     );
+  }
+
+  int _validatedSimulationRiderCount(int value) {
+    if (value < RideSession.minimumSimulationRiderCount ||
+        value > RideSession.maximumSimulationRiderCount) {
+      throw FormatException(
+        'Choose between ${RideSession.minimumSimulationRiderCount} and '
+        '${RideSession.maximumSimulationRiderCount} simulated riders.',
+      );
+    }
+    return value;
   }
 
   Future<void> _run(Future<void> Function() operation) async {

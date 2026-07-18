@@ -92,6 +92,48 @@ void main() {
     expect(smoothSimulation.eventInterval, const Duration(seconds: 2));
   });
 
+  test('supports a configurable thirty-rider fleet', () async {
+    final largeFleet = RideSimulationController(
+      awareness,
+      session: RideSession(
+        rideId: 'sim-ride',
+        rideCode: 'SIM123',
+        inviteSecret: 'simulation-secret-that-is-long-enough',
+        localRiderId: 'lead',
+        displayName: 'Demo Lead',
+        role: RideRole.lead,
+        joinedAt: DateTime.utc(2026, 7, 17),
+        isSimulation: true,
+        simulationRiderCount: 30,
+      ),
+      route: const [
+        GeoPoint(latitude: 51, longitude: -1),
+        GeoPoint(latitude: 51, longitude: -0.9),
+      ],
+      riderCount: 30,
+      tickInterval: const Duration(days: 1),
+    );
+    addTearDown(largeFleet.dispose);
+    await largeFleet.initialize();
+
+    expect(largeFleet.riderCount, 30);
+    expect(largeFleet.riders, hasLength(30));
+    expect(largeFleet.riders.map((rider) => rider.id).toSet(), hasLength(30));
+    expect(
+      largeFleet.riders
+          .where((rider) => rider.role == RideRole.tailEndCharlie),
+      hasLength(1),
+    );
+    largeFleet.setAlexOffRoute(true);
+    await largeFleet.advance(const Duration(seconds: 1));
+    expect(
+      largeFleet.riders
+          .singleWhere((rider) => rider.id == RideSimulationController.offRouteRiderId)
+          .isOffRoute,
+      isTrue,
+    );
+  });
+
   test('retains a recent trail for the simulated leader', () async {
     final initialLeader = simulation.riders.singleWhere(
       (rider) => rider.role == RideRole.lead,

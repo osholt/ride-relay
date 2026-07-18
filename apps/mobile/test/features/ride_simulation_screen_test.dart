@@ -58,6 +58,7 @@ void main() {
           onToggleMarker: () async =>
               simulation.setMarkerMode(!simulation.markerMode),
           onRideOff: () async => simulation.rideOff(),
+          onRiderCountChanged: (_) async {},
         ),
       ),
     );
@@ -70,6 +71,7 @@ void main() {
     expect(find.byKey(const Key('simulation-role')), findsOneWidget);
     expect(find.text('Follower'), findsOneWidget);
     expect(find.byKey(const Key('simulation-marker-mode')), findsOneWidget);
+    expect(find.byKey(const Key('simulation-rider-count')), findsOneWidget);
 
     await tester.ensureVisible(find.byKey(const Key('simulation-off-route')));
     await tester.pumpAndSettle();
@@ -145,6 +147,7 @@ void main() {
           onToggleMarker: () async =>
               simulation.setMarkerMode(!simulation.markerMode),
           onRideOff: () async => simulation.rideOff(),
+          onRiderCountChanged: (_) async {},
         ),
       ),
     );
