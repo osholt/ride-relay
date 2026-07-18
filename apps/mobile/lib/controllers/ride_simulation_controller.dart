@@ -224,10 +224,8 @@ class RideSimulationController extends ChangeNotifier {
 
   List<_SimulatedAgent> _buildAgents(double leadStart) {
     final trailingSpan = math.min(860, math.max(160, leadStart * 0.82));
-    double initialProgress(int index) => math.max(
-      0,
-      leadStart - trailingSpan * index / (riderCount - 1),
-    );
+    double initialProgress(int index) =>
+        math.max(0, leadStart - trailingSpan * index / (riderCount - 1));
     _SimulatedAgent rider({
       required String id,
       required String displayName,

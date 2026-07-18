@@ -120,15 +120,16 @@ void main() {
     expect(largeFleet.riders, hasLength(30));
     expect(largeFleet.riders.map((rider) => rider.id).toSet(), hasLength(30));
     expect(
-      largeFleet.riders
-          .where((rider) => rider.role == RideRole.tailEndCharlie),
+      largeFleet.riders.where((rider) => rider.role == RideRole.tailEndCharlie),
       hasLength(1),
     );
     largeFleet.setAlexOffRoute(true);
     await largeFleet.advance(const Duration(seconds: 1));
     expect(
       largeFleet.riders
-          .singleWhere((rider) => rider.id == RideSimulationController.offRouteRiderId)
+          .singleWhere(
+            (rider) => rider.id == RideSimulationController.offRouteRiderId,
+          )
           .isOffRoute,
       isTrue,
     );
