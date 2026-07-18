@@ -379,7 +379,7 @@ class DestinationRoutePlanner {
 
 const _requestHeaders = {
   'Accept': 'application/json',
-  'User-Agent': 'RideRelay/1.0 (https://github.com/osholt/ride-relay)',
+  'User-Agent': 'TailEndCharlie/1.0 (https://github.com/osholt/tailendcharlie)',
 };
 
 String _basePath(Uri base) {
