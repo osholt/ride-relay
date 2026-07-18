@@ -14,3 +14,9 @@ preferred over broad feature additions.
 
 Never commit signing keys, provisioning profiles, credentials, precise field
 ride traces, or real emergency-contact details.
+
+## Licence for contributions
+
+By submitting a contribution, you confirm that you have the right to submit
+it and license it under the repository's PolyForm Noncommercial License 1.0.0.
+Do not submit material with incompatible terms.

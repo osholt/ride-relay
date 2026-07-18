@@ -34,3 +34,9 @@ key.properties
 
 # Local test output
 test-results/
+
+# Regenerable marketing-video production inputs
+marketing/video/*-raw.mp4
+marketing/video/segment-*.mp4
+marketing/video/overlay-*.png
+marketing/video/end-card.png

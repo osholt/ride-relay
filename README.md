@@ -137,4 +137,10 @@ evidence remain release gates.
 
 ## License
 
-[MIT](./LICENSE)
+Ride Relay is source-available under the [PolyForm Noncommercial License
+1.0.0](./LICENSE). You may use, modify, and distribute it for permitted
+noncommercial purposes. Commercial use requires separate permission from the
+copyright holder.
+
+This licence applies to future releases. Earlier copies that were received
+under MIT remain available under their original terms.
