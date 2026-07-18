@@ -31,7 +31,10 @@ globally unique event ID.
 
 Every frame is protocol-versioned and authenticated with HMAC-SHA256 using the
 ride invite secret. The decoder validates the authentication tag before it
-accepts an event. It also enforces:
+accepts an event. The signed envelope uses recursively sorted JSON keys, so the
+schema, identifiers, type, timestamps, priority and payload cannot be changed
+without invalidating the tag. The `acknowledged` flag is excluded because it is
+per-device local delivery metadata, not a group event property. It also enforces:
 
 - 28 KiB maximum frame size (below the documented 32 KiB cross-platform byte
   payload limit);

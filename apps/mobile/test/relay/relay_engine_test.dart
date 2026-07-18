@@ -73,7 +73,7 @@ void main() {
       priority: EventPriority.critical,
       createdAt: now,
       payload: const {'message': 'emergencyStop'},
-      signature: 'legacy-event-signature',
+      signature: 'a' * 64,
     );
     await storeA.append(event);
     await engineA.enqueueLocal(event);
@@ -148,7 +148,7 @@ void main() {
         priority: EventPriority.important,
         createdAt: now,
         payload: const {},
-        signature: 'signature',
+        signature: 'a' * 64,
       ),
     );
     await _drain();

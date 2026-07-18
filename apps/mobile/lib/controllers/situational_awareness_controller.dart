@@ -441,7 +441,9 @@ class SituationalAwarenessController extends ChangeNotifier {
       _errorMessage = error.message;
     } on Object catch (error, stackTrace) {
       _errorMessage = 'Situational awareness could not be updated.';
-      debugPrint('Situational awareness failed: $error\n$stackTrace');
+      if (kDebugMode) {
+        debugPrint('Situational awareness failed: $error\n$stackTrace');
+      }
     } finally {
       _busy = false;
       notifyListeners();

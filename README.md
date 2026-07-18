@@ -125,10 +125,15 @@ signing and all private key material are intentionally absent from the repo.
 
 Do not use the current preview for real emergency coordination. See
 [SECURITY.md](./SECURITY.md) for vulnerability reporting. Location events are
-ride-scoped and locally persisted. The reference server encrypts retained event
-bodies and enforces bounded deletion, but group-scoped credentials are not
-per-device identity or end-to-end payload encryption. Security/privacy review
-and physical-device evidence remain release gates.
+ride-scoped and locally persisted. A completed ride is retained locally for at
+most 24 hours for final relay recovery, then its session, secure group secret,
+and event journal are deleted automatically; it can also be removed immediately
+from the app. The reference server encrypts retained event bodies and enforces
+bounded deletion, but group-scoped credentials are not per-device identity or
+end-to-end payload encryption. The six-digit join code is deliberately a
+rate-limited, private-tailnet development-alpha bootstrap credential, not a
+public-internet security boundary. Security/privacy review and physical-device
+evidence remain release gates.
 
 ## License
 

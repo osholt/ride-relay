@@ -1316,7 +1316,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
       // The map remains usable in widget tests or on platforms without the
       // plugin; the next navigation-state transition retries the request.
       _screenAwake = !enabled;
-      debugPrint('Could not change navigation wake lock: $error');
+      if (kDebugMode) {
+        debugPrint('Could not change navigation wake lock: $error');
+      }
     }
   }
 
@@ -1667,7 +1669,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _fitRoute();
       }
     } on Object catch (error, stackTrace) {
-      debugPrint('Could not prepare MapLibre ride layers: $error\n$stackTrace');
+      if (kDebugMode) {
+        debugPrint(
+          'Could not prepare MapLibre ride layers: $error\n$stackTrace',
+        );
+      }
     }
   }
 
@@ -1691,7 +1697,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
       await controller.setGeoJsonSource(_positionSource, _positionGeoJson());
       await controller.setGeoJsonSource(_overlaySource, _overlayGeoJson());
     } on Object catch (error) {
-      debugPrint('Could not refresh MapLibre ride layers: $error');
+      if (kDebugMode) {
+        debugPrint('Could not refresh MapLibre ride layers: $error');
+      }
     }
   }
 
@@ -1747,7 +1755,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
         await controller.setGeoJsonSource(_overlaySource, _overlayGeoJson());
       }
     } on Object catch (error) {
-      debugPrint('Could not refresh scheduled MapLibre layers: $error');
+      if (kDebugMode) {
+        debugPrint('Could not refresh scheduled MapLibre layers: $error');
+      }
     } finally {
       _mapLibreSyncRunning = false;
     }
@@ -2759,7 +2769,9 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
       await _refreshMap();
       await _fitGroup();
     } on Object catch (error) {
-      debugPrint('Could not prepare group mini-map: $error');
+      if (kDebugMode) {
+        debugPrint('Could not prepare group mini-map: $error');
+      }
     }
   }
 
@@ -2771,7 +2783,9 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
       await controller.setGeoJsonSource(_riderSource, _riderGeoJson());
       await _fitGroup();
     } on Object catch (error) {
-      debugPrint('Could not refresh group mini-map: $error');
+      if (kDebugMode) {
+        debugPrint('Could not refresh group mini-map: $error');
+      }
     } finally {
       _refreshing = false;
     }

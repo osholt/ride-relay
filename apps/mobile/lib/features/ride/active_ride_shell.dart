@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
@@ -774,7 +775,9 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     try {
       await widget.rideController.endRide();
     } catch (error, stackTrace) {
-      debugPrint('Could not automatically end ride: $error\n$stackTrace');
+      if (kDebugMode) {
+        debugPrint('Could not automatically end ride: $error\n$stackTrace');
+      }
     } finally {
       _autoEndingRide = false;
     }
@@ -904,7 +907,11 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       try {
         await _awarenessController?.ingestRemoteEvent(event);
       } on Object catch (error, stackTrace) {
-        debugPrint('Rejected received situational event: $error\n$stackTrace');
+        if (kDebugMode) {
+          debugPrint(
+            'Rejected received situational event: $error\n$stackTrace',
+          );
+        }
       }
     }
     await widget.rideController.reloadEvents();
@@ -985,7 +992,9 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         await relay.publish(event);
         _publishedEventIds.add(event.id);
       } on Object catch (error) {
-        debugPrint('Could not queue ${event.id} for nearby relay: $error');
+        if (kDebugMode) {
+          debugPrint('Could not queue ${event.id} for nearby relay: $error');
+        }
       }
     }
   }

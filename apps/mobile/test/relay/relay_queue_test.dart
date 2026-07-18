@@ -50,7 +50,7 @@ QueuedRelayEvent _item(String id, EventPriority priority, DateTime now) =>
         priority: priority,
         createdAt: now,
         payload: const {},
-        signature: 'signature',
+        signature: 'a' * 64,
       ),
       firstSeenAt: now,
       expiresAt: now.add(const Duration(hours: 1)),

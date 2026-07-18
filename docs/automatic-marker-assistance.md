@@ -49,7 +49,9 @@ per-marker-session summaries. Session identifiers prevent interleaved relay
 events from different markers absorbing or closing each other. The local
 dashboard shows local-device marking time, sessions, verified passes and verified
 TEC passages. `rideEnded` persists the summary and keeps the durable ride session
-available for final relay recovery until the user explicitly removes it.
+available for final relay recovery for up to 24 hours. The rider can remove it
+immediately; after that window the local session, group secret and event journal
+are deleted automatically.
 
 ## Field-calibration gates
 

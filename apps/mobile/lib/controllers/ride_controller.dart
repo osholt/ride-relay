@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -35,6 +36,8 @@ class RideController extends ChangeNotifier {
        _rideCodeDirectory =
            rideCodeDirectory ?? HttpRideCodeDirectory.fromEnvironment();
 
+  static const endedRideRecoveryWindow = Duration(hours: 24);
+
   final EventStore _eventStore;
   final SessionStore _sessionStore;
   final NearbyBridge _nearbyBridge;
@@ -50,6 +53,7 @@ class RideController extends ChangeNotifier {
   bool _busy = false;
   String? _errorMessage;
   RideRole? _roleBeforeMarker;
+  Timer? _endedRideCleanupTimer;
 
   RideSession? get session => _session;
   EventStore get eventStore => _eventStore;
@@ -151,6 +155,7 @@ class RideController extends ChangeNotifier {
     final activeSession = _session;
     if (activeSession != null) {
       _events = await _eventStore.eventsForRide(activeSession.rideId);
+      await _expireEndedRideIfDue();
       _roleBeforeMarker = _activeMarkerPreviousRole();
     }
     notifyListeners();
@@ -162,6 +167,7 @@ class RideController extends ChangeNotifier {
       return;
     }
     _events = await _eventStore.eventsForRide(activeSession.rideId);
+    await _expireEndedRideIfDue();
     notifyListeners();
   }
 
@@ -401,29 +407,20 @@ class RideController extends ChangeNotifier {
         payload: {'markingSummary': summary.toJson()},
       );
       _roleBeforeMarker = null;
+      await _expireEndedRideIfDue();
     });
   }
 
   Future<void> clearEndedRide() async {
     if (!rideEnded) return;
     await _run(() async {
-      final rideId = _requireSession().rideId;
-      await _eventStore.deleteRide(rideId);
-      await _sessionStore.clear();
-      _session = null;
-      _events = const [];
-      _roleBeforeMarker = null;
+      await _removeRideData();
     });
   }
 
   Future<void> leaveRide() async {
     await _run(() async {
-      final rideId = _requireSession().rideId;
-      await _eventStore.deleteRide(rideId);
-      await _sessionStore.clear();
-      _session = null;
-      _events = const [];
-      _roleBeforeMarker = null;
+      await _removeRideData();
     });
   }
 
@@ -512,7 +509,9 @@ class RideController extends ChangeNotifier {
       _errorMessage = error.message;
     } on Object catch (error, stackTrace) {
       _errorMessage = 'That action could not be saved. Please try again.';
-      debugPrint('Ride action failed: $error\n$stackTrace');
+      if (kDebugMode) {
+        debugPrint('Ride action failed: $error\n$stackTrace');
+      }
     } finally {
       _busy = false;
       notifyListeners();
@@ -541,6 +540,41 @@ class RideController extends ChangeNotifier {
       .encode(List<int>.generate(32, (_) => _random.nextInt(256)))
       .replaceAll('=', '');
 
+  DateTime? get _rideEndedAt {
+    for (final event in _events.reversed) {
+      if (event.type == RideEventType.rideEnded) return event.createdAt;
+    }
+    return null;
+  }
+
+  Future<void> _expireEndedRideIfDue() async {
+    _endedRideCleanupTimer?.cancel();
+    _endedRideCleanupTimer = null;
+    final endedAt = _rideEndedAt;
+    if (endedAt == null || _session == null) return;
+    final expiresAt = endedAt.add(endedRideRecoveryWindow);
+    final delay = expiresAt.difference(_clock());
+    if (delay <= Duration.zero) {
+      await _removeRideData();
+      notifyListeners();
+      return;
+    }
+    _endedRideCleanupTimer = Timer(delay, () {
+      unawaited(_expireEndedRideIfDue());
+    });
+  }
+
+  Future<void> _removeRideData() async {
+    _endedRideCleanupTimer?.cancel();
+    _endedRideCleanupTimer = null;
+    final rideId = _requireSession().rideId;
+    await _eventStore.deleteRide(rideId);
+    await _sessionStore.clear();
+    _session = null;
+    _events = const [];
+    _roleBeforeMarker = null;
+  }
+
   RideRole? _activeMarkerPreviousRole() {
     final localDeviceId = _session?.localRiderId;
     if (localDeviceId == null || !markerActive) return null;
@@ -562,6 +596,7 @@ class RideController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _endedRideCleanupTimer?.cancel();
     _rideCodeDirectory.close();
     _eventStore.close();
     super.dispose();

@@ -95,7 +95,7 @@ RelayFrame _eventFrame(DateTime now) => RelayFrame(
         createdAt: now,
         expiresAt: now.add(const Duration(hours: 1)),
         payload: const {'message': 'emergencyStop'},
-        signature: 'legacy-event-signature',
+        signature: 'a' * 64,
       ),
       firstSeenAt: now,
       expiresAt: now.add(const Duration(hours: 1)),

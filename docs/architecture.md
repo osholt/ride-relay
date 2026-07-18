@@ -37,9 +37,10 @@ The initial envelope contains:
 
 New events use one canonical ride-secret HMAC body. Verification retains
 read-compatibility with the earlier development-alpha body. Downloaded internet
-events are verified before storage. This group HMAC is not the final security
-design: device identity, key rotation, and application-layer encryption remain
-production gates.
+events are verified before storage. The local `acknowledged` delivery flag is
+intentionally not signed because each phone changes it after successful relay.
+This group HMAC is not the final security design: device identity, key rotation,
+and application-layer encryption remain production gates.
 
 ## Relay transport
 

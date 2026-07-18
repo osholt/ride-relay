@@ -6,10 +6,19 @@ import 'package:ride_relay/domain/ride_event.dart';
 import 'package:ride_relay/services/ride_event_authenticator.dart';
 
 void main() {
-  test('verifies current signatures and rejects changed payloads', () {
-    final unsigned = _event(signature: '');
+  test('canonically signs the complete envelope and rejects tampering', () {
+    final unsigned = _event(
+      signature: '',
+      expiresAt: DateTime.utc(2026, 7, 16, 12),
+      payload: const {
+        'z': 'last',
+        'nested': {'z': true, 'a': false},
+      },
+    );
     final signed = _event(
       signature: RideEventAuthenticator.sign(unsigned, _secret),
+      expiresAt: unsigned.expiresAt,
+      payload: unsigned.payload,
     );
 
     expect(RideEventAuthenticator.verify(signed, _secret), isTrue);
@@ -19,6 +28,31 @@ void main() {
         _secret,
       ),
       isFalse,
+    );
+    expect(
+      RideEventAuthenticator.verify(
+        _event(
+          signature: signed.signature,
+          expiresAt: DateTime.utc(2026, 7, 16, 13),
+          payload: signed.payload,
+        ),
+        _secret,
+      ),
+      isFalse,
+    );
+    expect(
+      RideEventAuthenticator.verify(
+        _event(
+          signature: signed.signature,
+          expiresAt: signed.expiresAt,
+          payload: const {
+            'nested': {'a': false, 'z': true},
+            'z': 'last',
+          },
+        ),
+        _secret,
+      ),
+      isTrue,
     );
   });
 
@@ -53,6 +87,7 @@ const _secret = '0123456789abcdef0123456789abcdef';
 RideEvent _event({
   required String signature,
   Map<String, Object?> payload = const {'message': 'OK'},
+  DateTime? expiresAt,
 }) => RideEvent(
   id: 'event-1',
   rideId: 'ride-alpha',
@@ -60,6 +95,7 @@ RideEvent _event({
   type: RideEventType.statusMessage,
   priority: EventPriority.routine,
   createdAt: DateTime.utc(2026, 7, 16, 10),
+  expiresAt: expiresAt,
   payload: payload,
   signature: signature,
 );

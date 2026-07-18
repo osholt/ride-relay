@@ -318,6 +318,44 @@ void main() {
     expect(await eventStore.eventsForRide(rideId), isEmpty);
   });
 
+  test('expired ended ride data is deleted when the app is reopened', () async {
+    var now = DateTime.utc(2026, 7, 16, 12);
+    var seedId = 0;
+    final seed = RideController(
+      eventStore,
+      sessionStore,
+      const _FakeNearbyBridge(),
+      clock: () => now,
+      idFactory: () => 'retention-${seedId++}',
+      random: Random(1),
+      rideCodeDirectory: rideCodes,
+    );
+    await seed.initialize();
+    await seed.createRide('Oliver');
+    final rideId = seed.session!.rideId;
+    await seed.endRide();
+    seed.dispose();
+
+    now = now
+        .add(RideController.endedRideRecoveryWindow)
+        .add(const Duration(seconds: 1));
+    final reopened = RideController(
+      eventStore,
+      sessionStore,
+      const _FakeNearbyBridge(),
+      clock: () => now,
+      idFactory: () => 'reopened-${seedId++}',
+      random: Random(2),
+      rideCodeDirectory: rideCodes,
+    );
+    await reopened.initialize();
+
+    expect(reopened.hasActiveRide, isFalse);
+    expect(await sessionStore.load(), isNull);
+    expect(await eventStore.eventsForRide(rideId), isEmpty);
+    reopened.dispose();
+  });
+
   test('leaving an active ride clears its local session and events', () async {
     await controller.createRide('Oliver');
     final rideId = controller.session!.rideId;

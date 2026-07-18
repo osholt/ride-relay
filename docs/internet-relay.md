@@ -82,6 +82,12 @@ group. Lookup attempts are deliberately rate limited. Joining needs a signal
 once; after that the ordinary authenticated internet and nearby relays work as
 before.
 
+Six digits intentionally favour roadside usability over high entropy. The
+current flow is suitable only for the private-tailnet development alpha. A
+public-internet release needs a stronger bootstrap mechanism (for example a
+second high-entropy secret or a time-limited QR credential) in addition to rate
+limiting.
+
 ## Server behaviour
 
 The first valid request atomically claims its high-entropy ride ID for the
