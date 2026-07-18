@@ -30,7 +30,7 @@ from .database import (
     session_dependency,
 )
 from .rate_limit import SlidingWindowRateLimiter
-from .schemas import SyncRequest
+from .schemas import JoinCodeResponse, RegisterJoinCodeRequest, SyncRequest
 from .service import RelayService, RelayServiceError
 
 
@@ -48,6 +48,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         maximum_requests=settings.rate_limit_requests,
         window_seconds=settings.rate_limit_window_seconds,
     )
+    join_code_limiter = SlidingWindowRateLimiter(
+        maximum_requests=settings.join_code_lookup_rate_limit_requests,
+        window_seconds=settings.join_code_lookup_rate_limit_window_seconds,
+    )
     registry = CollectorRegistry()
     sync_requests = Counter(
         "ride_relay_sync_requests_total",
@@ -58,6 +62,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     sync_duration = Histogram(
         "ride_relay_sync_duration_seconds",
         "Internet relay synchronization duration",
+        registry=registry,
+    )
+    join_code_requests = Counter(
+        "ride_relay_join_code_requests_total",
+        "Six-digit ride-code lookup requests",
+        ("outcome",),
         registry=registry,
     )
 
@@ -117,6 +127,56 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/metrics", include_in_schema=False)
     def metrics() -> Response:
         return Response(content=generate_latest(registry), media_type=CONTENT_TYPE_LATEST)
+
+    def join_code_rate_limit(request: Request) -> Response | None:
+        client_ip = request.client.host if request.client is not None else "unknown"
+        retry_after = join_code_limiter.check(f"join-code-ip:{client_ip}")
+        if retry_after is None:
+            return None
+        join_code_requests.labels(outcome="rate_limited").inc()
+        return JSONResponse(
+            status_code=429,
+            headers={"retry-after": str(min(retry_after, 300))},
+            content={"error": "Ride-code lookup rate limit exceeded"},
+        )
+
+    @app.put("/api/v1/join-codes/{ride_code}", include_in_schema=False)
+    def register_join_code(
+        ride_code: str,
+        payload: RegisterJoinCodeRequest,
+        request: Request,
+        session: Session = Depends(database_session),
+    ) -> Response:
+        authorization = request.headers.get("authorization", "")
+        if not authorization.startswith("Bearer "):
+            raise RelayServiceError(401, "Ride credential required")
+        service.register_join_code(
+            session,
+            ride_code=ride_code,
+            ride_id=payload.rideId,
+            invite_secret=payload.inviteSecret,
+            bearer_token=authorization[7:],
+        )
+        join_code_requests.labels(outcome="registered").inc()
+        return Response(status_code=204)
+
+    @app.get(
+        "/api/v1/join-codes/{ride_code}",
+        include_in_schema=False,
+        response_model=None,
+    )
+    def resolve_join_code(
+        ride_code: str,
+        request: Request,
+        session: Session = Depends(database_session),
+    ) -> Response:
+        if len(ride_code) != 6 or not ride_code.isascii() or not ride_code.isdecimal():
+            raise RelayServiceError(400, "Ride code must be six digits")
+        if limited := join_code_rate_limit(request):
+            return limited
+        result = service.resolve_join_code(session, ride_code=ride_code)
+        join_code_requests.labels(outcome="resolved").inc()
+        return JSONResponse(content=JoinCodeResponse.model_validate(result).model_dump())
 
     @app.post("/api/v1/rides/{ride_id}/events:sync", include_in_schema=False)
     async def synchronize(

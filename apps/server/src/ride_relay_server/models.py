@@ -38,6 +38,20 @@ class Ride(Base):
     )
 
 
+class RideJoinCode(Base):
+    """A short-lived, encrypted lookup record for a six-digit ride code."""
+
+    __tablename__ = "ride_join_codes"
+    __table_args__ = (Index("ix_ride_join_codes_expiry", "expires_at"),)
+
+    code: Mapped[str] = mapped_column(String(6), primary_key=True)
+    ride_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    token_hash: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
+    secret_ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class StoredEvent(Base):
     __tablename__ = "ride_events"
     __table_args__ = (

@@ -10,6 +10,7 @@ import 'package:ride_relay/domain/geo_point.dart';
 import 'package:ride_relay/domain/ride_event.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/ride_session.dart';
+import 'package:ride_relay/internet/internet_relay_client.dart';
 import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/services/nearby_bridge.dart';
 import 'package:ride_relay/services/situation_event_factory.dart';
@@ -18,11 +19,13 @@ void main() {
   late InMemoryEventStore eventStore;
   late InMemorySessionStore sessionStore;
   late RideController controller;
+  late _InMemoryRideCodeDirectory rideCodes;
   late int id;
 
   setUp(() async {
     eventStore = InMemoryEventStore();
     sessionStore = InMemorySessionStore();
+    rideCodes = _InMemoryRideCodeDirectory();
     id = 0;
     controller = RideController(
       eventStore,
@@ -31,6 +34,7 @@ void main() {
       clock: () => DateTime.utc(2026, 7, 16, 12),
       idFactory: () => 'id-${id++}',
       random: Random(42),
+      rideCodeDirectory: rideCodes,
     );
     await controller.initialize();
   });
@@ -42,7 +46,7 @@ void main() {
 
     expect(controller.session?.role, RideRole.lead);
     expect(controller.session?.displayName, 'Oliver');
-    expect(controller.session?.rideCode, hasLength(6));
+    expect(controller.session?.rideCode, matches(RegExp(r'^\d{6}$')));
     expect(controller.events, hasLength(1));
     expect(controller.events.single.type, RideEventType.rideCreated);
     expect(controller.events.single.signature, hasLength(64));
@@ -70,24 +74,13 @@ void main() {
     await controller.joinRide('123', 'Oliver');
 
     expect(controller.hasActiveRide, isFalse);
-    expect(controller.errorMessage, contains('complete private invite'));
+    expect(controller.errorMessage, contains('six-digit'));
   });
 
-  test(
-    'ride code alone is rejected because it cannot authenticate relay',
-    () async {
-      await controller.joinRide('ABC234', 'Oliver');
-
-      expect(controller.hasActiveRide, isFalse);
-      expect(controller.errorMessage, contains('code alone'));
-    },
-  );
-
-  test('private invite joins the leader ride with its relay secret', () async {
+  test('six-digit ride code resolves the leader ride credentials', () async {
     await controller.createRide('Lead');
     final leaderSession = controller.session!;
-    final invitation = controller.inviteText;
-    expect(controller.inviteUri.queryParameters['ride'], leaderSession.rideId);
+    await controller.publishRideCode();
 
     final follower = RideController(
       InMemoryEventStore(),
@@ -96,9 +89,32 @@ void main() {
       clock: () => DateTime.utc(2026, 7, 16, 12),
       idFactory: () => 'follower-id',
       random: Random(7),
+      rideCodeDirectory: rideCodes,
     );
     await follower.initialize();
-    await follower.joinRide(invitation, 'Follower');
+    await follower.joinRide(leaderSession.rideCode, 'Follower');
+
+    expect(follower.session?.rideId, leaderSession.rideId);
+    expect(follower.session?.inviteSecret, leaderSession.inviteSecret);
+    follower.dispose();
+  });
+
+  test('ride code joins the leader ride with its relay secret', () async {
+    await controller.createRide('Lead');
+    final leaderSession = controller.session!;
+    await controller.publishRideCode();
+
+    final follower = RideController(
+      InMemoryEventStore(),
+      InMemorySessionStore(),
+      const _FakeNearbyBridge(),
+      clock: () => DateTime.utc(2026, 7, 16, 12),
+      idFactory: () => 'follower-id',
+      random: Random(7),
+      rideCodeDirectory: rideCodes,
+    );
+    await follower.initialize();
+    await follower.joinRide(leaderSession.rideCode, 'Follower');
 
     expect(follower.session?.rideId, leaderSession.rideId);
     expect(follower.session?.rideCode, leaderSession.rideCode);
@@ -114,18 +130,12 @@ void main() {
     follower.dispose();
   });
 
-  test(
-    'invalid private invite never falls back to code-only joining',
-    () async {
-      await controller.joinRide(
-        'riderelay://join?ride=ride-1&code=ABC234&secret=short',
-        'Oliver',
-      );
+  test('non-numeric ride code is rejected before lookup', () async {
+    await controller.joinRide('ABC234', 'Oliver');
 
-      expect(controller.hasActiveRide, isFalse);
-      expect(controller.errorMessage, contains('private invite'));
-    },
-  );
+    expect(controller.hasActiveRide, isFalse);
+    expect(controller.errorMessage, contains('six-digit'));
+  });
 
   test('quick messages are durable, prioritised directed events', () async {
     await controller.createRide('Oliver');
@@ -372,4 +382,36 @@ class _FakeNearbyBridge extends NearbyBridge {
     nearbyApiLinked: false,
     status: 'phase0',
   );
+}
+
+class _InMemoryRideCodeDirectory implements RideCodeDirectory {
+  final _credentials = <String, RideCodeCredentials>{};
+
+  @override
+  Future<void> register(RideSession session) async {
+    final existing = _credentials[session.rideCode];
+    if (existing != null && existing.rideId != session.rideId) {
+      throw const RideCodeDirectoryException(
+        'Ride code is already in use.',
+        codeConflict: true,
+      );
+    }
+    _credentials[session.rideCode] = RideCodeCredentials(
+      rideId: session.rideId,
+      rideCode: session.rideCode,
+      inviteSecret: session.inviteSecret,
+    );
+  }
+
+  @override
+  Future<RideCodeCredentials> resolve(String rideCode) async {
+    final credentials = _credentials[rideCode];
+    if (credentials == null) {
+      throw const RideCodeDirectoryException('That ride code is not active.');
+    }
+    return credentials;
+  }
+
+  @override
+  void close() {}
 }

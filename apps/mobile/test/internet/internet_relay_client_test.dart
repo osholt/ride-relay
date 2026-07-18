@@ -165,6 +165,54 @@ void main() {
       client.close();
     });
   });
+
+  group('HttpRideCodeDirectory', () {
+    test(
+      'registers and resolves a six-digit code over the configured relay',
+      () async {
+        final requests = <http.Request>[];
+        final transport = MockClient((request) async {
+          requests.add(request);
+          if (request.method == 'PUT') {
+            return http.Response('', 204);
+          }
+          return http.Response(
+            jsonEncode({
+              'rideId': _session.rideId,
+              'rideCode': '123456',
+              'inviteSecret': _session.inviteSecret,
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        });
+        final directory = HttpRideCodeDirectory(
+          configuration: InternetRelayConfiguration(
+            baseUri: Uri.parse('https://relay.example/base'),
+          ),
+          client: transport,
+        );
+        final leader = _session.copyWith(rideCode: '123456');
+
+        await directory.register(leader);
+        final resolved = await directory.resolve('123456');
+
+        expect(resolved.rideId, _session.rideId);
+        expect(resolved.rideCode, '123456');
+        expect(resolved.inviteSecret, _session.inviteSecret);
+        expect(requests, hasLength(2));
+        expect(requests.first.method, 'PUT');
+        expect(requests.first.url.path, '/base/v1/join-codes/123456');
+        expect(requests.first.followRedirects, isFalse);
+        expect(jsonDecode(requests.first.body), {
+          'rideId': _session.rideId,
+          'inviteSecret': _session.inviteSecret,
+        });
+        expect(requests.last.method, 'GET');
+        directory.close();
+      },
+    );
+  });
 }
 
 class _NeverRespondingClient extends http.BaseClient {

@@ -59,17 +59,36 @@ X-Ride-Relay-Device: <device-id>
 }
 ```
 
-The bearer credential is derived locally as HMAC-SHA256 with the invitation
-secret over `ride-relay-internet-token-v1\n<rideId>`. The secret itself is
-stored in the iOS Keychain or Android encrypted storage and is never sent to
-the server.
+The bearer credential is derived locally as HMAC-SHA256 with the ride secret
+over `ride-relay-internet-token-v1\n<rideId>`. The secret is stored in the iOS
+Keychain or Android encrypted storage and is never sent on event-sync calls.
+
+## Six-digit ride codes
+
+The lead shares only a six-digit numeric code. When creating a non-simulated
+ride, the app registers this short-lived lookup record with the configured
+relay:
+
+```text
+PUT {base}/v1/join-codes/{six-digit-code}
+Authorization: Bearer rr1_<derived-ride-token>
+```
+
+The request contains the ride ID and its bootstrap secret. The relay encrypts
+that record at rest, expires it with the ride-retention window, and returns it
+only from `GET {base}/v1/join-codes/{six-digit-code}`. The code is therefore a
+group credential, not a public identifier: share it only with the intended
+group. Lookup attempts are deliberately rate limited. Joining needs a signal
+once; after that the ordinary authenticated internet and nearby relays work as
+before.
 
 ## Server behaviour
 
 The first valid request atomically claims its high-entropy ride ID for the
 derived bearer token. Subsequent requests must use that credential. The server:
 
-- stores only a SHA-256 token hash, not the invitation secret;
+- stores a SHA-256 token hash for event relay, and encrypts the temporary
+  bootstrap secret needed to resolve a six-digit ride code;
 - encrypts event and idempotency-response JSON with AES-256-GCM at rest;
 - signs opaque, ride-bound sequence cursors;
 - accepts a valid batch atomically or returns a bounded error;
@@ -82,9 +101,8 @@ derived bearer token. Subsequent requests must use that credential. The server:
 
 This is group-scoped authentication, not individual rider identity or
 application-layer payload encryption. Receiving phones provide the final event
-HMAC check because the server intentionally does not know the invitation
-secret. Per-device keys, member revocation, and a formal security/privacy review
-remain release gates.
+HMAC check. Per-device keys, member revocation, and a formal security/privacy
+review remain release gates.
 
 ## Run locally
 

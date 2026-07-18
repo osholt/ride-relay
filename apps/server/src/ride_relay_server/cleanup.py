@@ -12,13 +12,14 @@ def main() -> None:
     engine = create_database_engine(settings)
     factory = create_session_factory(engine)
     with factory() as session:
-        events, replays, rides = purge_expired(session)
+        events, replays, rides, join_codes = purge_expired(session)
     logging.basicConfig(level=logging.INFO)
     logging.info(
-        "relay cleanup complete events=%d replays=%d rides=%d",
+        "relay cleanup complete events=%d replays=%d rides=%d join_codes=%d",
         events,
         replays,
         rides,
+        join_codes,
     )
     engine.dispose()
 

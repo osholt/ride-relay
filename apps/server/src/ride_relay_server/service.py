@@ -13,11 +13,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .config import Settings
-from .crypto import CursorCodec, DataCipher, sha256, token_hash
-from .models import IdempotencyReplay, Ride, StoredEvent
+from .crypto import CursorCodec, DataCipher, base64url, sha256, token_hash
+from .models import IdempotencyReplay, Ride, RideJoinCode, StoredEvent
 from .schemas import SyncRequest, SyncResponse
 
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+JOIN_CODE = re.compile(r"^\d{6}$")
 TOKEN = re.compile(r"^rr1_[A-Za-z0-9_-]{43}$")
 IDEMPOTENCY_KEY = re.compile(r"^rr1-[A-Za-z0-9_-]{43}$")
 SIGNATURE = re.compile(r"^[0-9a-f]{64}$")
@@ -159,6 +160,103 @@ class RelayService:
             if ride.ended_at is None:
                 ride.delete_after = now + timedelta(hours=self._settings.ride_retention_hours)
             return response
+
+    def register_join_code(
+        self,
+        session: Session,
+        *,
+        ride_code: str,
+        ride_id: str,
+        invite_secret: str,
+        bearer_token: str,
+        now: datetime | None = None,
+    ) -> None:
+        now = now or datetime.now(UTC)
+        self._validate_join_code(ride_code)
+        self._validate_join_credential(ride_id, invite_secret, bearer_token)
+        credential_hash = token_hash(bearer_token)
+        with session.begin():
+            session.execute(delete(RideJoinCode).where(RideJoinCode.expires_at <= now))
+            existing = session.get(RideJoinCode, ride_code)
+            if existing is not None:
+                same_ride = existing.ride_id == ride_id
+                same_credential = hmac.compare_digest(existing.token_hash, credential_hash)
+                if same_ride and same_credential:
+                    return
+                raise RelayServiceError(409, "Ride code is already in use")
+            session.add(
+                RideJoinCode(
+                    code=ride_code,
+                    ride_id=ride_id,
+                    token_hash=credential_hash,
+                    secret_ciphertext=self._cipher.encrypt_json(
+                        {"inviteSecret": invite_secret},
+                        associated_data=self._join_code_aad(ride_code),
+                    ),
+                    created_at=now,
+                    expires_at=now + timedelta(hours=self._settings.ride_retention_hours),
+                )
+            )
+
+    def resolve_join_code(
+        self,
+        session: Session,
+        *,
+        ride_code: str,
+        now: datetime | None = None,
+    ) -> dict[str, str]:
+        now = now or datetime.now(UTC)
+        self._validate_join_code(ride_code)
+        with session.begin():
+            record = session.get(RideJoinCode, ride_code)
+            if record is None or self._as_utc(record.expires_at) <= now:
+                if record is not None:
+                    session.delete(record)
+                raise RelayServiceError(404, "Ride code is not active")
+            try:
+                value = self._cipher.decrypt_json(
+                    record.secret_ciphertext,
+                    associated_data=self._join_code_aad(ride_code),
+                )
+            except ValueError as error:
+                raise RelayServiceError(500, "Ride code record is invalid") from error
+            secret = value.get("inviteSecret") if isinstance(value, dict) else None
+            if not isinstance(secret, str) or not 16 <= len(secret) <= 512:
+                raise RelayServiceError(500, "Ride code record is invalid")
+            return {
+                "rideId": record.ride_id,
+                "rideCode": record.code,
+                "inviteSecret": secret,
+            }
+
+    @staticmethod
+    def _validate_join_code(ride_code: str) -> None:
+        if not JOIN_CODE.fullmatch(ride_code):
+            raise RelayServiceError(400, "Ride code must be six digits")
+
+    @staticmethod
+    def _validate_join_credential(
+        ride_id: str,
+        invite_secret: str,
+        bearer_token: str,
+    ) -> None:
+        if not IDENTIFIER.fullmatch(ride_id):
+            raise RelayServiceError(400, "Invalid ride identity")
+        if not 16 <= len(invite_secret) <= 512:
+            raise RelayServiceError(400, "Invalid ride credential")
+        expected = "rr1_" + base64url(
+            hmac.new(
+                invite_secret.encode(),
+                f"ride-relay-internet-token-v1\n{ride_id}".encode(),
+                "sha256",
+            ).digest()
+        )
+        if not hmac.compare_digest(bearer_token, expected):
+            raise RelayServiceError(403, "Ride credential rejected")
+
+    @staticmethod
+    def _join_code_aad(ride_code: str) -> bytes:
+        return f"join-code:{ride_code}".encode()
 
     def _store_replay(
         self,
@@ -510,7 +608,7 @@ class RelayService:
         return f"replay:{ride_id}:{idempotency_key}".encode()
 
 
-def purge_expired(session: Session, now: datetime | None = None) -> tuple[int, int, int]:
+def purge_expired(session: Session, now: datetime | None = None) -> tuple[int, int, int, int]:
     now = now or datetime.now(UTC)
     with session.begin():
         events = session.execute(delete(StoredEvent).where(StoredEvent.expires_at <= now))
@@ -518,4 +616,10 @@ def purge_expired(session: Session, now: datetime | None = None) -> tuple[int, i
             delete(IdempotencyReplay).where(IdempotencyReplay.expires_at <= now)
         )
         rides = session.execute(delete(Ride).where(Ride.delete_after <= now))
-    return events.rowcount or 0, replays.rowcount or 0, rides.rowcount or 0
+        join_codes = session.execute(delete(RideJoinCode).where(RideJoinCode.expires_at <= now))
+    return (
+        events.rowcount or 0,
+        replays.rowcount or 0,
+        rides.rowcount or 0,
+        join_codes.rowcount or 0,
+    )

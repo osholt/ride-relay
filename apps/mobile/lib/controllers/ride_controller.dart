@@ -14,8 +14,8 @@ import '../domain/session_store.dart';
 import '../services/nearby_bridge.dart';
 import '../services/marker_statistics.dart';
 import '../services/ride_event_authenticator.dart';
-import '../services/ride_invite.dart';
 import '../services/situation_event_factory.dart';
+import '../internet/internet_relay_client.dart';
 
 typedef Clock = DateTime Function();
 typedef IdFactory = String Function();
@@ -28,11 +28,12 @@ class RideController extends ChangeNotifier {
     Clock? clock,
     IdFactory? idFactory,
     Random? random,
+    RideCodeDirectory? rideCodeDirectory,
   }) : _clock = clock ?? DateTime.now,
        _idFactory = idFactory ?? const Uuid().v7,
-       _random = random ?? Random.secure();
-
-  static const _codeAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+       _random = random ?? Random.secure(),
+       _rideCodeDirectory =
+           rideCodeDirectory ?? HttpRideCodeDirectory.fromEnvironment();
 
   final EventStore _eventStore;
   final SessionStore _sessionStore;
@@ -40,6 +41,7 @@ class RideController extends ChangeNotifier {
   final Clock _clock;
   final IdFactory _idFactory;
   final Random _random;
+  final RideCodeDirectory _rideCodeDirectory;
 
   RideSession? _session;
   List<RideEvent> _events = const [];
@@ -137,20 +139,10 @@ class RideController extends ChangeNotifier {
   int get pendingEventCount =>
       _events.where((event) => !event.acknowledged).length;
 
-  String get inviteText {
+  String get rideCodeShareText {
     final activeSession = _requireSession();
-    final uri = inviteUri;
-    return 'Join my Ride Relay group with code '
-        '${activeSession.rideCode}\n$uri';
-  }
-
-  Uri get inviteUri {
-    final activeSession = _requireSession();
-    return RideInvite(
-      rideId: activeSession.rideId,
-      rideCode: activeSession.rideCode,
-      secret: activeSession.inviteSecret,
-    ).uri;
+    return 'Join my Ride Relay group. Enter ride code '
+        '${activeSession.rideCode} in the app.';
   }
 
   Future<void> initialize() async {
@@ -200,31 +192,41 @@ class RideController extends ChangeNotifier {
     });
   }
 
-  Future<void> joinRide(String codeOrInvite, String displayName) async {
+  /// Publishes the leader's short code once the optional internet relay is
+  /// reachable. The code only resolves the bootstrap credentials; subsequent
+  /// event traffic continues to use the authenticated relay protocols.
+  Future<void> publishRideCode() async {
+    final activeSession = _requireSession();
+    if (activeSession.isSimulation || activeSession.role != RideRole.lead) {
+      return;
+    }
+    var session = activeSession;
+    for (var attempt = 0; attempt < 8; attempt++) {
+      try {
+        await _rideCodeDirectory.register(session);
+        return;
+      } on RideCodeDirectoryException catch (error) {
+        if (!error.codeConflict || attempt == 7) rethrow;
+        session = session.copyWith(rideCode: _generateCode());
+        _session = session;
+        await _sessionStore.save(session);
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> joinRide(String rideCode, String displayName) async {
     await _run(() async {
-      final invite = RideInvite.tryParse(codeOrInvite);
-      if (invite == null) {
-        if (codeOrInvite.toLowerCase().contains('riderelay:')) {
-          throw const FormatException(
-            'That private invite is incomplete or invalid. Ask the ride lead to share it again.',
-          );
-        }
-        throw const FormatException(
-          'Paste the complete private invite link from the ride lead. A six-character code alone cannot authenticate shared relay.',
-        );
+      final normalisedCode = rideCode.trim();
+      if (!RegExp(r'^\d{6}$').hasMatch(normalisedCode)) {
+        throw const FormatException('Enter a valid six-digit ride code.');
       }
-      final normalisedCode = invite.rideCode;
-      if (normalisedCode.length != 6 ||
-          normalisedCode
-              .split('')
-              .any((character) => !_codeAlphabet.contains(character))) {
-        throw const FormatException('Enter a valid six-character ride code.');
-      }
+      final credentials = await _rideCodeDirectory.resolve(normalisedCode);
       final now = _clock();
       final session = RideSession(
-        rideId: invite.rideId,
-        rideCode: normalisedCode,
-        inviteSecret: invite.secret,
+        rideId: credentials.rideId,
+        rideCode: credentials.rideCode,
+        inviteSecret: credentials.inviteSecret,
         localRiderId: _idFactory(),
         displayName: _normaliseName(displayName),
         role: RideRole.rider,
@@ -506,6 +508,8 @@ class RideController extends ChangeNotifier {
       await operation();
     } on FormatException catch (error) {
       _errorMessage = error.message;
+    } on RideCodeDirectoryException catch (error) {
+      _errorMessage = error.message;
     } on Object catch (error, stackTrace) {
       _errorMessage = 'That action could not be saved. Please try again.';
       debugPrint('Ride action failed: $error\n$stackTrace');
@@ -531,10 +535,7 @@ class RideController extends ChangeNotifier {
     return name.length <= 24 ? name : name.substring(0, 24);
   }
 
-  String _generateCode() => List.generate(
-    6,
-    (_) => _codeAlphabet[_random.nextInt(_codeAlphabet.length)],
-  ).join();
+  String _generateCode() => List.generate(6, (_) => _random.nextInt(10)).join();
 
   String _generateInviteSecret() => base64Url
       .encode(List<int>.generate(32, (_) => _random.nextInt(256)))
@@ -561,6 +562,7 @@ class RideController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _rideCodeDirectory.close();
     _eventStore.close();
     super.dispose();
   }

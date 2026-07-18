@@ -5,9 +5,12 @@ The online store-and-forward service for Ride Relay. It implements the mobile
 storage, authenticated opaque cursors, idempotent batches, bounded pagination,
 rate limits and automatic retention.
 
-The service deliberately stores only a hash of the ride bearer credential. It
-never receives the invitation secret and therefore leaves final event-HMAC
-verification to receiving phones.
+The event store deliberately keeps only a hash of the ride bearer credential,
+leaving final event-HMAC verification to receiving phones. To support the
+six-digit numeric join flow, the server also holds an encrypted bootstrap
+credential indexed by that short code for the bounded ride-retention window.
+The code is the join credential, so it should only be shared with the intended
+group; lookup attempts are rate limited.
 
 ## Development
 

@@ -37,7 +37,7 @@ class HomeScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 12),
                       Text(
-                        'Create a group or join with a private invite. You will go '
+                        'Create a group or join with a six-digit ride code. You will go '
                         'straight to the navigation map.',
                         style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                           color: const Color(0xFFB7C0CC),
@@ -191,8 +191,8 @@ class _RideFormState extends State<_RideForm> {
             const SizedBox(height: 8),
             Text(
               widget.creating
-                  ? 'You will become the ride lead and get a private invite code.'
-                  : 'Paste the complete private invite shared by the ride lead. It identifies the ride and authenticates relay traffic.',
+                  ? 'You will become the ride lead and get a six-digit code to share.'
+                  : 'Enter the six-digit code shared by the ride lead. You need a connection once to join, then the app keeps using the secure relay.',
               style: const TextStyle(color: Color(0xFFABB5C1)),
             ),
             const SizedBox(height: 24),
@@ -211,16 +211,20 @@ class _RideFormState extends State<_RideForm> {
               const SizedBox(height: 12),
               TextField(
                 controller: _codeController,
-                textCapitalization: TextCapitalization.characters,
+                keyboardType: TextInputType.number,
                 autocorrect: false,
-                minLines: 1,
-                maxLines: 3,
+                maxLength: 6,
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(6),
+                ],
                 decoration: InputDecoration(
-                  labelText: 'Private ride invite',
-                  hintText: 'riderelay://join?ride=…',
+                  labelText: 'Six-digit ride code',
+                  hintText: '123456',
+                  counterText: '',
                   suffixIcon: IconButton(
-                    tooltip: 'Paste private invite',
-                    onPressed: _pasteInvite,
+                    tooltip: 'Paste ride code',
+                    onPressed: _pasteRideCode,
                     icon: const Icon(Icons.content_paste),
                   ),
                 ),
@@ -263,7 +267,7 @@ class _RideFormState extends State<_RideForm> {
     }
   }
 
-  Future<void> _pasteInvite() async {
+  Future<void> _pasteRideCode() async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final text = data?.text?.trim();
     if (text == null || text.isEmpty || !mounted) return;

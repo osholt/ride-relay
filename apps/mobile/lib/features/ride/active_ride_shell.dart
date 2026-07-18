@@ -201,6 +201,14 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     if (!mounted) return;
 
     if (widget.enableNativeServices && !_isSimulation) {
+      final session = widget.rideController.session;
+      if (session?.role == RideRole.lead) {
+        try {
+          await widget.rideController.publishRideCode();
+        } on RideCodeDirectoryException catch (error) {
+          _warnings.add('Ride code is not ready yet: ${error.message}');
+        }
+      }
       _stalenessTimer = Timer.periodic(const Duration(seconds: 15), (_) {
         final awareness = _awarenessController;
         if (awareness != null) unawaited(awareness.refreshStaleness());
@@ -223,7 +231,6 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         _warnings.add('Location capability check failed: $error');
       }
 
-      final session = widget.rideController.session;
       if (session != null) {
         final cursorStore = SharedPreferencesInternetCursorStore();
         _internetCursorStore = cursorStore;
@@ -261,11 +268,6 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         } on Object catch (error) {
           _warnings.add('Nearby relay could not start: $error');
         }
-      } else {
-        _warnings.add(
-          'Nearby relay needs the shared private invitation; a '
-          'manually entered ride code cannot establish the shared secret.',
-        );
       }
     }
 

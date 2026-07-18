@@ -21,9 +21,9 @@ class RideSession {
   final DateTime joinedAt;
   final bool isSimulation;
 
-  RideSession copyWith({RideRole? role}) => RideSession(
+  RideSession copyWith({RideRole? role, String? rideCode}) => RideSession(
     rideId: rideId,
-    rideCode: rideCode,
+    rideCode: rideCode ?? this.rideCode,
     inviteSecret: inviteSecret,
     localRiderId: localRiderId,
     displayName: displayName,

@@ -16,14 +16,14 @@ phones when mobile coverage disappears.
 
 ## Current vertical slice
 
-- Create a private ride, share its authenticated invitation, or join local-only
-  with a six-character code.
+- Create a ride and share its six-digit numeric code. A rider uses the code
+  once while connected to join the authenticated group relay.
 - Resume the active ride after restarting the app.
 - Store immutable, HMAC-tagged ride events in an idempotent SQLite journal.
 - Record roles, confirmation-based marker suggestions, authenticated unique
   marker passes, marking-time statistics, and priority quick messages.
-- Generate and share a private invitation link, paste it to join, and display it
-  as a QR code. OS link handling and in-app QR scanning remain release work.
+- Show, copy, or share a simple six-digit numeric ride code. The service holds
+  its encrypted bootstrap record only for the bounded ride-retention window.
 - Import and persist GPX 1.1 routes, render them with MapLibre on both platforms,
   match sparse route/waypoint files to roads when online, and download bounded
   native offline regions when an approved style is configured.

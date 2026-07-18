@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:qr_flutter/qr_flutter.dart';
+import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../controllers/distance_unit_controller.dart';
@@ -122,7 +122,7 @@ class RideDashboard extends StatelessWidget {
                 const SizedBox(height: 10),
                 _QuickMessageGrid(controller: controller),
                 const SizedBox(height: 22),
-                _InviteCard(controller: controller),
+                _RideCodeCard(controller: controller),
                 const SizedBox(height: 22),
                 _EventTimeline(controller: controller),
               ],
@@ -514,15 +514,15 @@ class _QuickMessageGrid extends StatelessWidget {
   }
 }
 
-class _InviteCard extends StatelessWidget {
-  const _InviteCard({required this.controller});
+class _RideCodeCard extends StatelessWidget {
+  const _RideCodeCard({required this.controller});
 
   final RideController controller;
 
   @override
   Widget build(BuildContext context) {
     final session = controller.session!;
-    if (session.role != RideRole.lead || session.inviteSecret.isEmpty) {
+    if (session.role != RideRole.lead) {
       return const SizedBox.shrink();
     }
     return Card(
@@ -530,28 +530,12 @@ class _InviteCard extends StatelessWidget {
         padding: const EdgeInsets.all(18),
         child: Row(
           children: [
-            Container(
-              width: 98,
-              height: 98,
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: QrImageView(
-                data: controller.inviteUri.toString(),
-                padding: EdgeInsets.zero,
-                eyeStyle: const QrEyeStyle(color: Colors.black),
-                dataModuleStyle: const QrDataModuleStyle(color: Colors.black),
-              ),
-            ),
-            const SizedBox(width: 18),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Invite your group',
+                    'Share this ride code',
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                   const SizedBox(height: 5),
@@ -565,15 +549,27 @@ class _InviteCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  TextButton.icon(
-                    onPressed: () => SharePlus.instance.share(
-                      ShareParams(
-                        text: controller.inviteText,
-                        subject: 'Join my Ride Relay group',
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      TextButton.icon(
+                        onPressed: () => Clipboard.setData(
+                          ClipboardData(text: session.rideCode),
+                        ),
+                        icon: const Icon(Icons.copy_outlined),
+                        label: const Text('Copy code'),
                       ),
-                    ),
-                    icon: const Icon(Icons.ios_share),
-                    label: const Text('Share invite'),
+                      TextButton.icon(
+                        onPressed: () => SharePlus.instance.share(
+                          ShareParams(
+                            text: controller.rideCodeShareText,
+                            subject: 'Join my Ride Relay group',
+                          ),
+                        ),
+                        icon: const Icon(Icons.ios_share),
+                        label: const Text('Share code'),
+                      ),
+                    ],
                   ),
                 ],
               ),

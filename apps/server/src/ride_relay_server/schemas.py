@@ -21,3 +21,18 @@ class SyncResponse(BaseModel):
     cursor: str
     acceptedEventIds: list[str]
     events: list[dict[str, Any]]
+
+
+class RegisterJoinCodeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rideId: str = Field(min_length=1, max_length=128)
+    inviteSecret: str = Field(min_length=16, max_length=512)
+
+
+class JoinCodeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rideId: str
+    rideCode: str
+    inviteSecret: str
