@@ -380,7 +380,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
   DateTime? _lastCameraUpdateAt;
   DateTime? _lastProgressUpdateAt;
   DateTime? _lastMapLibrePositionSyncAt;
-  DateTime? _lastMapUiRefreshAt;
   Duration _cameraTransitionDuration = const Duration(milliseconds: 450);
   bool _cameraUpdateInFlight = false;
   bool _cameraUpdateQueued = false;
@@ -488,7 +487,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
           _effectivePosition,
         );
         _navigationMode = route != null && _isMoving && !_markerOverviewVisible;
-        _navigationCanvasActive = _navigationMode;
+        // Once we have a route and a position, keep the map canvas at its
+        // navigation size. Tying this to the instantaneous speed made the
+        // AppBar appear briefly whenever a GPS update arrived while stopped.
+        _navigationCanvasActive = route != null && _effectivePosition != null;
         _initialCameraPositioned = false;
         _loading = false;
       });
@@ -533,13 +535,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
     final overlayRight = hideChrome ? safeInsets.right : 0.0;
     final overlayBottom = hideChrome ? safeInsets.bottom : 0.0;
     final compactDensity = landscape ? VisualDensity.compact : null;
-    final groupRiders = (widget.overlayMarkers?.value ?? const [])
-        .where((marker) => marker.id.startsWith('rider-'))
-        .toList(growable: false);
-    final groupSize = groupRiders.length + (_effectivePosition == null ? 0 : 1);
-    final showGroupMiniMap =
-        _route != null && groupSize > 1 && !markerOverviewActive;
+    // The group mini-map owns its own ValueListenableBuilder below. This
+    // avoids relying on a parent platform-map rebuild to notice rider updates,
+    // which left the portrait mini-map absent in the live simulator.
+    final canShowGroupMiniMap =
+        _route != null &&
+        widget.overlayMarkers != null &&
+        !markerOverviewActive;
     final groupMiniMapWidth = landscape ? 196.0 : 150.0;
+    final groupMiniMapHeight = landscape ? 116.0 : 104.0;
     final showRideMenu = hideChrome && widget.onOpenRideMenu != null;
     final statusLeft =
         overlayLeft +
@@ -548,7 +552,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
             : landscape
             ? 8
             : 12);
-    final statusRight = showGroupMiniMap
+    final statusRight = landscape && canShowGroupMiniMap
         ? overlayRight + groupMiniMapWidth + 16
         : overlayRight + (landscape ? 68 : 12);
     final statusTop = overlayTop + (_downloadProgress == null ? 8 : 72);
@@ -728,22 +732,40 @@ class _RideMapScreenState extends State<RideMapScreen> {
                             ),
                     ),
                   ),
-                if (showGroupMiniMap)
+                if (canShowGroupMiniMap)
                   Positioned(
                     key: const Key('group-mini-map-position'),
                     right: overlayRight + 8,
-                    top: statusTop,
-                    child: _GroupMiniMap(
-                      width: groupMiniMapWidth,
-                      height: landscape ? 116 : 104,
-                      routePaths: _route!.paths
-                          .map((path) => path.points)
-                          .where((points) => points.length >= 2)
-                          .toList(growable: false),
-                      currentPosition: _effectivePosition,
-                      riders: groupRiders,
-                      showTiles: _basemap.usesMapLibre,
-                      mapStyleString: widget.mapStyleString,
+                    // In portrait the overview sits beneath the TEC card so
+                    // it does not compress the status text into an unusable
+                    // narrow strip. The compact vector overview is also more
+                    // reliable than a nested native MapLibre view there.
+                    top: landscape ? statusTop : statusTop + 96,
+                    child: ValueListenableBuilder<List<MapOverlayMarker>>(
+                      valueListenable: widget.overlayMarkers!,
+                      builder: (context, overlays, _) {
+                        final groupRiders = overlays
+                            .where(
+                              (marker) => marker.id.startsWith('rider-'),
+                            )
+                            .toList(growable: false);
+                        final groupSize =
+                            groupRiders.length +
+                            (_effectivePosition == null ? 0 : 1);
+                        if (groupSize <= 1) return const SizedBox.shrink();
+                        return _GroupMiniMap(
+                          width: groupMiniMapWidth,
+                          height: groupMiniMapHeight,
+                          routePaths: _route!.paths
+                              .map((path) => path.points)
+                              .where((points) => points.length >= 2)
+                              .toList(growable: false),
+                          currentPosition: _effectivePosition,
+                          riders: groupRiders,
+                          showTiles: landscape && _basemap.usesMapLibre,
+                          mapStyleString: widget.mapStyleString,
+                        );
+                      },
                     ),
                   ),
                 if (localMarkerOverlay != null)
@@ -1152,14 +1174,19 @@ class _RideMapScreenState extends State<RideMapScreen> {
         !_emergencyActionsDismissed;
     final autoFollow = _route != null && _isMoving && !_autoFollowSuppressed;
     final enableNavigationMode = autoFollow && !_navigationMode;
+    final activateNavigationCanvas =
+        _route != null && position != null && !_navigationCanvasActive;
     if (refreshProgress) {
       _progressGeometry = _routeProgressTracker.update(_route, position);
     }
     // MapLibre receives sources directly. Keep its platform view mounted while
     // the simulation is running; only FlutterMap needs a widget rebuild for
     // fresh route-progress geometry.
-    if (!_basemap.usesMapLibre || enableNavigationMode) {
+    if (!_basemap.usesMapLibre ||
+        enableNavigationMode ||
+        activateNavigationCanvas) {
       setState(() {
+        if (activateNavigationCanvas) _navigationCanvasActive = true;
         if (autoFollow) {
           _navigationMode = true;
           _navigationCanvasActive = true;
@@ -1185,16 +1212,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   void _onOverlayDataChanged() {
     if (!mounted) return;
-    // Native MapLibre layers refresh without rebuilding the platform view. A
-    // modest UI refresh keeps the mini-map current without re-layout flicker.
-    final now = DateTime.now();
-    if (!_basemap.usesMapLibre ||
-        _lastMapUiRefreshAt == null ||
-        now.difference(_lastMapUiRefreshAt!) >=
-            const Duration(milliseconds: 750)) {
-      _lastMapUiRefreshAt = now;
-      setState(() {});
-    }
+    // The mini-map listens to rider updates itself. Rebuilding the parent
+    // platform map here can resize it and briefly bring the top chrome back.
+    if (!_basemap.usesMapLibre) setState(() {});
     _scheduleMapLibreSync(overlays: true);
   }
 

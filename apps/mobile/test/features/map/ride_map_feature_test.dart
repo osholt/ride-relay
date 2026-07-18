@@ -386,6 +386,18 @@ void main() {
       );
       expect(portraitMiniMap.width, 150);
       expect(portraitMiniMap.height, 104);
+      expect(portraitMiniMap.top, greaterThanOrEqualTo(104));
+      riders.value = [
+        ...riders.value,
+        const MapOverlayMarker(
+          id: 'rider-maya',
+          point: GeoPoint(latitude: 53, longitude: -1.013),
+          label: 'Maya',
+        ),
+      ];
+      await tester.pump();
+      expect(find.byKey(const Key('group-mini-map')), findsOneWidget);
+      expect(find.text('4 RIDERS'), findsOneWidget);
       tester.view.physicalSize = const Size(844, 390);
       await tester.pump();
       final layer = tester.widget<PolylineLayer>(find.byType(PolylineLayer));
@@ -415,6 +427,15 @@ void main() {
       await tester.tap(find.text('Re-centre'));
       await tester.pump();
       expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
+
+      navigation.value = MapNavigationPosition(
+        point: const GeoPoint(latitude: 53, longitude: -1.01),
+        recordedAt: DateTime.utc(2026, 7, 17, 12, 1),
+        speedMetersPerSecond: 0,
+        headingDegrees: 90,
+      );
+      await tester.pump();
+      expect(find.byType(AppBar), findsNothing);
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
