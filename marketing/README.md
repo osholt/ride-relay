@@ -17,10 +17,10 @@ All screenshots are native iPhone Simulator landscape captures at 2622×1206.
 
 ## Video
 
-`video/ride-relay-simulation-demo.mp4` is a silent, 23-second H.264 1080p
-edit for TestFlight sharing or App Store preview preparation. It consists of
-real simulator footage with captions covering group awareness, the junction
-marker workflow, and hazard/off-route status.
+`video/ride-relay-simulation-demo.mp4` is a silent, 9.5-second H.264 portrait
+edit at native iPhone resolution (1206×2622). It uses only real Map-tab
+simulator footage, with concise captions for live navigation, the TEC gap and
+the road-focused route view.
 
 The raw recordings, intermediate segments and caption overlays are ignored so
 the checked-in final media stays compact.

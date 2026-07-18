@@ -2621,6 +2621,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
   Widget build(BuildContext context) {
     final riderCount =
         widget.riders.length + (widget.currentPosition == null ? 0 : 1);
+    final visibleRoutePaths = _visibleRoutePaths();
     return Container(
       key: const Key('group-mini-map'),
       width: widget.width,
@@ -2642,7 +2643,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
                   ? _buildTileMap()
                   : CustomPaint(
                       painter: _GroupMiniMapPainter(
-                        routePaths: widget.routePaths,
+                        routePaths: visibleRoutePaths,
                         currentPosition: widget.currentPosition,
                         riders: widget.riders,
                       ),
@@ -2780,6 +2781,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     if (!_styleReady || controller == null || _refreshing) return;
     _refreshing = true;
     try {
+      await controller.setGeoJsonSource(_routeSource, _routeGeoJson());
       await controller.setGeoJsonSource(_riderSource, _riderGeoJson());
       await _fitGroup();
     } on Object catch (error) {
@@ -2822,9 +2824,63 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
   }
 
   Map<String, dynamic> _routeGeoJson() => MapGeoJson.lines(
-    widget.routePaths.where((path) => path.length >= 2),
+    _visibleRoutePaths(),
     idPrefix: 'mini-route',
   );
+
+  /// The mini-map follows the group, not the entire ride. Rendering a long
+  /// route in a tight group viewport creates clipped, disconnected-looking
+  /// lines which can be mistaken for an invalid route. Keep only contiguous
+  /// route segments near the currently visible riders.
+  List<List<GeoPoint>> _visibleRoutePaths() {
+    final groupPoints = <GeoPoint?>[
+      widget.currentPosition,
+      ...widget.riders.map((rider) => rider.point),
+    ].nonNulls.toList(growable: false);
+    if (groupPoints.isEmpty) return const [];
+
+    var south = groupPoints.first.latitude;
+    var north = south;
+    var west = groupPoints.first.longitude;
+    var east = west;
+    for (final point in groupPoints.skip(1)) {
+      south = math.min(south, point.latitude);
+      north = math.max(north, point.latitude);
+      west = math.min(west, point.longitude);
+      east = math.max(east, point.longitude);
+    }
+
+    // Match the min-size and breathing room of the mini-map camera, with a
+    // little extra room so the local route does not terminate at an edge.
+    final latitudePadding = math.max((north - south) * 0.35, 0.0018);
+    final longitudePadding = math.max((east - west) * 0.35, 0.0024);
+    south -= latitudePadding;
+    north += latitudePadding;
+    west -= longitudePadding;
+    east += longitudePadding;
+
+    final visiblePaths = <List<GeoPoint>>[];
+    for (final path in widget.routePaths) {
+      var segment = <GeoPoint>[];
+      for (final point in path) {
+        final isVisible =
+            point.latitude >= south &&
+            point.latitude <= north &&
+            point.longitude >= west &&
+            point.longitude <= east;
+        if (isVisible) {
+          segment.add(point);
+        } else if (segment.length >= 2) {
+          visiblePaths.add(segment);
+          segment = <GeoPoint>[];
+        } else {
+          segment = <GeoPoint>[];
+        }
+      }
+      if (segment.length >= 2) visiblePaths.add(segment);
+    }
+    return visiblePaths;
+  }
 
   Map<String, dynamic> _riderGeoJson() => MapGeoJson.points([
     for (final rider in widget.riders)
