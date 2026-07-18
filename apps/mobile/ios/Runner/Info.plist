@@ -34,6 +34,8 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Ride Relay uses nearby devices and local networks to keep your ride group coordinated.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Ride Relay uses your location during an active ride to share your position with your group, provide navigation, and warn about route deviations. You can pause or stop location sharing at any time.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Ride Relay uses your location while the ride screen is open to show your group position and warn about route deviations.</string>
 	<key>UIApplicationSceneManifest</key>
