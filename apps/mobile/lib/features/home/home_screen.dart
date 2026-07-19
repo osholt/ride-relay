@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/ride_controller.dart';
+import '../map/motorcycle_icon.dart';
 import '../settings/unit_settings_sheet.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -161,6 +162,7 @@ class _RideForm extends StatefulWidget {
 class _RideFormState extends State<_RideForm> {
   final _nameController = TextEditingController();
   final _codeController = TextEditingController();
+  MotorcycleIconStyle _selectedStyle = motorcycleIconStyleDefault;
 
   @override
   void dispose() {
@@ -205,6 +207,53 @@ class _RideFormState extends State<_RideForm> {
                 labelText: 'Rider name',
                 hintText: 'How the group will recognise you',
                 counterText: '',
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text('Your bike', style: TextStyle(color: Color(0xFFABB5C1))),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 68,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: MotorcycleIconStyle.values.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 8),
+                itemBuilder: (context, index) {
+                  final style = MotorcycleIconStyle.values[index];
+                  final selected = style == _selectedStyle;
+                  return Tooltip(
+                    message: style.label,
+                    child: InkWell(
+                      key: Key('bike-style-${style.name}'),
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => setState(() => _selectedStyle = style),
+                      child: Container(
+                        width: 56,
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? const Color(0xFF6ED89A).withValues(alpha: 0.16)
+                              : const Color(0xFF1D2530),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: selected
+                                ? const Color(0xFF6ED89A)
+                                : Colors.transparent,
+                            width: 2,
+                          ),
+                        ),
+                        child: Center(
+                          child: MotorcycleIcon(
+                            style: style,
+                            color: selected
+                                ? const Color(0xFF6ED89A)
+                                : const Color(0xFFABB5C1),
+                            size: 34,
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
               ),
             ),
             if (!widget.creating) ...[
@@ -255,11 +304,15 @@ class _RideFormState extends State<_RideForm> {
 
   Future<void> _submit() async {
     if (widget.creating) {
-      await widget.controller.createRide(_nameController.text);
+      await widget.controller.createRide(
+        _nameController.text,
+        motorcycleStyle: _selectedStyle,
+      );
     } else {
       await widget.controller.joinRide(
         _codeController.text,
         _nameController.text,
+        motorcycleStyle: _selectedStyle,
       );
     }
     if (widget.controller.hasActiveRide && mounted) {

@@ -678,6 +678,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
                         riderId: location.riderId,
                         displayName: location.displayName,
                         role: location.role,
+                        motorcycleStyle: location.motorcycleStyle,
                         point: route_domain.GeoPoint(
                           latitude: location.sample.position.latitude,
                           longitude: location.sample.position.longitude,
@@ -692,6 +693,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
                         riderId: rider.id,
                         displayName: rider.displayName,
                         role: rider.role,
+                        motorcycleStyle: rider.motorcycleStyle,
                         point: route_domain.GeoPoint(
                           latitude: rider.position.latitude,
                           longitude: rider.position.longitude,
@@ -716,11 +718,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
                   : isLead
                   ? '${location.displayName} · Lead'
                   : location.displayName,
-              icon: isTec
-                  ? Icons.shield_outlined
-                  : isLead
-                  ? Icons.flag_rounded
-                  : Icons.two_wheeler,
+              motorcycleStyle: location.motorcycleStyle,
               color: needsAttention
                   ? const Color(0xFFFF5D73)
                   : isTec

@@ -32,6 +32,7 @@ import '../../services/route_geometry_enricher.dart';
 import '../../services/route_importer.dart';
 import '../../services/route_progress.dart';
 import 'destination_route_sheet.dart';
+import 'motorcycle_icon.dart';
 import 'navigation_export_sheet.dart';
 
 /// Self-contained production entry point for the map/GPX feature.
@@ -1056,11 +1057,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       height: 42,
                       child: Tooltip(
                         message: overlay.label,
-                        child: Icon(
-                          overlay.icon,
-                          color: overlay.color,
-                          size: 34,
-                        ),
+                        child: overlay.motorcycleStyle == null
+                            ? Icon(overlay.icon, color: overlay.color, size: 34)
+                            : MotorcycleIcon(
+                                style: overlay.motorcycleStyle!,
+                                color: overlay.color,
+                                size: 34,
+                              ),
                       ),
                     ),
                   )
@@ -1571,11 +1574,34 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
   }
 
+  static const _hazardIconImage = 'ride-relay-hazard-warning';
+  bool _markerImagesRegistered = false;
+
+  Future<void> _registerMarkerImages(
+    ml.MapLibreMapController controller,
+  ) async {
+    if (_markerImagesRegistered) return;
+    for (final style in MotorcycleIconStyle.values) {
+      await controller.addImage(
+        style.name,
+        await loadMotorcycleIconPng(style),
+        true,
+      );
+    }
+    await controller.addImage(
+      _hazardIconImage,
+      await rasterizeIconGlyphPng(Icons.warning_amber_rounded),
+      true,
+    );
+    _markerImagesRegistered = true;
+  }
+
   Future<void> _prepareMapLibreStyle() async {
     final controller = _mapLibreController;
     if (controller == null) return;
     _mapLibreStyleReady = false;
     try {
+      await _registerMarkerImages(controller);
       await controller.addGeoJsonSource(
         _remainingRouteSource,
         _remainingRouteGeoJson(),
@@ -1669,14 +1695,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
         enableInteraction: false,
       );
       await controller.addGeoJsonSource(_overlaySource, _overlayGeoJson());
-      await controller.addCircleLayer(
+      await controller.addSymbolLayer(
         _overlaySource,
-        'ride-relay-overlay-circles',
-        const ml.CircleLayerProperties(
-          circleRadius: 9,
-          circleColor: ['get', 'color'],
-          circleStrokeWidth: 2,
-          circleStrokeColor: '#10151C',
+        'ride-relay-overlay-icons',
+        const ml.SymbolLayerProperties(
+          iconImage: ['get', 'iconImage'],
+          iconColor: ['get', 'color'],
+          iconSize: 0.34,
+          iconAllowOverlap: true,
+          iconIgnorePlacement: true,
         ),
       );
       _mapLibreStyleReady = true;
@@ -1883,6 +1910,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
             properties: {
               'label': overlay.label,
               'color': _hexColor(overlay.color),
+              'iconImage': overlay.motorcycleStyle?.name ?? _hazardIconImage,
             },
           ),
         ),
@@ -1895,7 +1923,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     String layerId,
     ml.Annotation? annotation,
   ) {
-    if (layerId != 'ride-relay-overlay-circles' &&
+    if (layerId != 'ride-relay-overlay-icons' &&
         layerId != 'ride-relay-waypoint-circles') {
       return;
     }
@@ -2289,13 +2317,18 @@ class MapOverlayMarker {
     required this.label,
     this.icon = Icons.warning_amber_rounded,
     this.color = const Color(0xFFFFC857),
+    this.motorcycleStyle,
   });
 
   final String id;
   final GeoPoint point;
   final String label;
+
+  /// Used for non-rider markers (hazards). Ignored when [motorcycleStyle] is
+  /// set, which riders always provide.
   final IconData icon;
   final Color color;
+  final MotorcycleIconStyle? motorcycleStyle;
 }
 
 LatLng _latLng(GeoPoint point) => LatLng(point.latitude, point.longitude);

@@ -12,6 +12,7 @@ import '../domain/ride_event.dart';
 import '../domain/ride_role.dart';
 import '../domain/ride_session.dart';
 import '../domain/session_store.dart';
+import '../features/map/motorcycle_icon.dart';
 import '../services/nearby_bridge.dart';
 import '../services/marker_statistics.dart';
 import '../services/ride_event_authenticator.dart';
@@ -171,20 +172,28 @@ class RideController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> createRide(String displayName) async {
+  Future<void> createRide(
+    String displayName, {
+    MotorcycleIconStyle motorcycleStyle = motorcycleIconStyleDefault,
+  }) async {
     await _run(() async {
-      await _createRide(displayName: displayName);
+      await _createRide(
+        displayName: displayName,
+        motorcycleStyle: motorcycleStyle,
+      );
     });
   }
 
   Future<void> createSimulationRide({
     int riderCount = RideSession.defaultSimulationRiderCount,
+    MotorcycleIconStyle motorcycleStyle = motorcycleIconStyleDefault,
   }) async {
     await _run(() async {
       await _createRide(
         displayName: 'Demo Lead',
         isSimulation: true,
         simulationRiderCount: _validatedSimulationRiderCount(riderCount),
+        motorcycleStyle: motorcycleStyle,
       );
     });
   }
@@ -206,6 +215,7 @@ class RideController extends ChangeNotifier {
         simulationRiderCount: _validatedSimulationRiderCount(
           riderCount ?? activeSession.simulationRiderCount,
         ),
+        motorcycleStyle: activeSession.motorcycleStyle,
       );
     });
   }
@@ -233,7 +243,11 @@ class RideController extends ChangeNotifier {
     }
   }
 
-  Future<void> joinRide(String rideCode, String displayName) async {
+  Future<void> joinRide(
+    String rideCode,
+    String displayName, {
+    MotorcycleIconStyle motorcycleStyle = motorcycleIconStyleDefault,
+  }) async {
     await _run(() async {
       final normalisedCode = rideCode.trim();
       if (!RegExp(r'^\d{6}$').hasMatch(normalisedCode)) {
@@ -249,6 +263,7 @@ class RideController extends ChangeNotifier {
         displayName: _normaliseName(displayName),
         role: RideRole.rider,
         joinedAt: now,
+        motorcycleStyle: motorcycleStyle,
       );
       _session = session;
       await _sessionStore.save(session);
@@ -257,6 +272,7 @@ class RideController extends ChangeNotifier {
         payload: {
           'displayName': session.displayName,
           'role': session.role.name,
+          'motorcycleStyle': session.motorcycleStyle.name,
         },
       );
     });
@@ -483,6 +499,7 @@ class RideController extends ChangeNotifier {
     required String displayName,
     bool isSimulation = false,
     int simulationRiderCount = RideSession.defaultSimulationRiderCount,
+    MotorcycleIconStyle motorcycleStyle = motorcycleIconStyleDefault,
   }) async {
     final now = _clock();
     final session = RideSession(
@@ -495,6 +512,7 @@ class RideController extends ChangeNotifier {
       joinedAt: now,
       isSimulation: isSimulation,
       simulationRiderCount: simulationRiderCount,
+      motorcycleStyle: motorcycleStyle,
     );
     _session = session;
     await _sessionStore.save(session);
@@ -504,6 +522,7 @@ class RideController extends ChangeNotifier {
         'displayName': session.displayName,
         'role': session.role.name,
         if (isSimulation) 'simulation': true,
+        'motorcycleStyle': session.motorcycleStyle.name,
       },
     );
   }

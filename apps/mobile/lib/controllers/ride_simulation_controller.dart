@@ -9,6 +9,7 @@ import '../domain/ride_event.dart';
 import '../domain/ride_role.dart';
 import '../domain/ride_session.dart';
 import '../domain/rider_location.dart';
+import '../features/map/motorcycle_icon.dart';
 import '../services/geo_calculations.dart';
 import '../services/situation_event_factory.dart';
 import 'situational_awareness_controller.dart';
@@ -36,6 +37,7 @@ class SimulatedRiderSnapshot {
     required this.headingDegrees,
     required this.offRouteTrail,
     required this.travelTrail,
+    required this.motorcycleStyle,
   });
 
   final String id;
@@ -47,6 +49,7 @@ class SimulatedRiderSnapshot {
   final bool isOffRoute;
   final GeoPoint position;
   final double headingDegrees;
+  final MotorcycleIconStyle motorcycleStyle;
 
   /// Ephemeral visual trace for the current simulation run. Keeping this out
   /// of the durable awareness history prevents an older demo route from being
@@ -218,6 +221,7 @@ class RideSimulationController extends ChangeNotifier {
         headingDegrees: sampled.headingDegrees,
         offRouteTrail: List.unmodifiable(agent.offRouteTrail),
         travelTrail: List.unmodifiable(_displayTrailFor(agent)),
+        motorcycleStyle: agent.motorcycleStyle,
       );
     }),
   );
@@ -226,6 +230,11 @@ class RideSimulationController extends ChangeNotifier {
     final trailingSpan = math.min(860, math.max(160, leadStart * 0.82));
     double initialProgress(int index) =>
         math.max(0, leadStart - trailingSpan * index / (riderCount - 1));
+    // Cycles through the catalogue so a full Ride Lab group shows a variety
+    // of silhouettes without repeating the local rider's own chosen style.
+    MotorcycleIconStyle demoStyleFor(int index) =>
+        MotorcycleIconStyle.values[(index + 1) %
+            MotorcycleIconStyle.values.length];
     _SimulatedAgent rider({
       required String id,
       required String displayName,
@@ -240,6 +249,7 @@ class RideSimulationController extends ChangeNotifier {
       speedFactor: 1 - (0.2 * index / (riderCount - 1)),
       trafficPhaseSeconds: (3 + index * 12) % 58,
       isLocal: isLocal,
+      motorcycleStyle: isLocal ? _session.motorcycleStyle : demoStyleFor(index),
     );
 
     final agents = <_SimulatedAgent>[
@@ -834,6 +844,7 @@ class _SimulatedAgent {
     required this.progressMeters,
     required this.speedFactor,
     required this.trafficPhaseSeconds,
+    required this.motorcycleStyle,
     this.isLocal = false,
   });
 
@@ -843,6 +854,7 @@ class _SimulatedAgent {
   double progressMeters;
   final double speedFactor;
   final double trafficPhaseSeconds;
+  final MotorcycleIconStyle motorcycleStyle;
   final bool isLocal;
   bool isOffRoute = false;
   final List<GeoPoint> offRouteTrail = [];

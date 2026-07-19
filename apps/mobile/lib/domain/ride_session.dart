@@ -1,3 +1,4 @@
+import '../features/map/motorcycle_icon.dart';
 import 'ride_role.dart';
 
 class RideSession {
@@ -15,6 +16,7 @@ class RideSession {
     required this.joinedAt,
     this.isSimulation = false,
     this.simulationRiderCount = defaultSimulationRiderCount,
+    this.motorcycleStyle = motorcycleIconStyleDefault,
   }) : assert(
          !isSimulation ||
              (simulationRiderCount >= minimumSimulationRiderCount &&
@@ -30,6 +32,7 @@ class RideSession {
   final DateTime joinedAt;
   final bool isSimulation;
   final int simulationRiderCount;
+  final MotorcycleIconStyle motorcycleStyle;
 
   RideSession copyWith({
     RideRole? role,
@@ -45,6 +48,7 @@ class RideSession {
     joinedAt: joinedAt,
     isSimulation: isSimulation,
     simulationRiderCount: simulationRiderCount ?? this.simulationRiderCount,
+    motorcycleStyle: motorcycleStyle,
   );
 
   Map<String, Object?> toJson() => {
@@ -57,6 +61,7 @@ class RideSession {
     'joinedAt': joinedAt.toUtc().toIso8601String(),
     if (isSimulation) 'isSimulation': true,
     if (isSimulation) 'simulationRiderCount': simulationRiderCount,
+    'motorcycleStyle': motorcycleStyle.name,
   };
 
   factory RideSession.fromJson(Map<String, Object?> json) => RideSession(
@@ -69,6 +74,9 @@ class RideSession {
     joinedAt: DateTime.parse(json['joinedAt']! as String).toLocal(),
     isSimulation: json['isSimulation'] as bool? ?? false,
     simulationRiderCount: _simulationRiderCount(json['simulationRiderCount']),
+    motorcycleStyle: motorcycleIconStyleFromName(
+      json['motorcycleStyle'] as String?,
+    ),
   );
 
   static int _simulationRiderCount(Object? value) {

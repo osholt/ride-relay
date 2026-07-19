@@ -1,3 +1,4 @@
+import '../features/map/motorcycle_icon.dart';
 import 'geo_point.dart';
 import 'ride_role.dart';
 
@@ -54,6 +55,7 @@ class RiderLocation {
     required this.role,
     required this.sample,
     required this.receivedAt,
+    this.motorcycleStyle = motorcycleIconStyleDefault,
   });
 
   final String riderId;
@@ -61,6 +63,7 @@ class RiderLocation {
   final RideRole role;
   final LocationSample sample;
   final DateTime receivedAt;
+  final MotorcycleIconStyle motorcycleStyle;
 
   Map<String, Object?> toJson() => {
     'riderId': riderId,
@@ -68,6 +71,7 @@ class RiderLocation {
     'role': role.name,
     'sample': sample.toJson(),
     'receivedAt': receivedAt.toUtc().toIso8601String(),
+    'motorcycleStyle': motorcycleStyle.name,
   };
 
   factory RiderLocation.fromJson(Map<String, Object?> json) => RiderLocation(
@@ -78,6 +82,9 @@ class RiderLocation {
       Map<String, Object?>.from(json['sample']! as Map),
     ),
     receivedAt: DateTime.parse(json['receivedAt']! as String).toLocal(),
+    motorcycleStyle: motorcycleIconStyleFromName(
+      json['motorcycleStyle'] as String?,
+    ),
   );
 }
 

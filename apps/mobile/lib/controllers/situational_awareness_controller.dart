@@ -143,6 +143,7 @@ class SituationalAwarenessController extends ChangeNotifier {
       role: _session.role,
       sample: sample,
       receivedAt: _clock(),
+      motorcycleStyle: _session.motorcycleStyle,
     );
     await _run(() async {
       final previousAlert = _alerts[location.riderId]?.assessment;
