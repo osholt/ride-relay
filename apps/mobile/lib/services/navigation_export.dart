@@ -24,6 +24,13 @@ enum NavigationRouteTransfer { fullGpx, sampledWaypoints, destinationOnly }
 
 enum NavigationHandoffTransport { directLink, gpxShare }
 
+enum NavigationPlatform { android, iOS }
+
+const allNavigationPlatforms = <NavigationPlatform>{
+  NavigationPlatform.android,
+  NavigationPlatform.iOS,
+};
+
 typedef NavigationDirectLink = Uri? Function(ImportedRoute route);
 
 /// A single, explicit record of each supported handoff. New provider-specific
@@ -35,6 +42,7 @@ class NavigationHandoffCapability {
     required this.label,
     required this.transport,
     required this.routeTransfer,
+    required this.platforms,
     required this.limitation,
     this.directLink,
   });
@@ -43,11 +51,14 @@ class NavigationHandoffCapability {
   final String label;
   final NavigationHandoffTransport transport;
   final NavigationRouteTransfer routeTransfer;
+  final Set<NavigationPlatform> platforms;
   final String limitation;
   final NavigationDirectLink? directLink;
 
   bool get hasDocumentedDirectLink =>
       transport == NavigationHandoffTransport.directLink && directLink != null;
+
+  bool supports(NavigationPlatform platform) => platforms.contains(platform);
 }
 
 const navigationHandoffCapabilities = <NavigationHandoffCapability>[
@@ -56,6 +67,7 @@ const navigationHandoffCapabilities = <NavigationHandoffCapability>[
     label: 'Google Maps',
     transport: NavigationHandoffTransport.directLink,
     routeTransfer: NavigationRouteTransfer.sampledWaypoints,
+    platforms: allNavigationPlatforms,
     limitation: 'Route preview with up to 3 via points; Google recalculates it',
     directLink: RouteNavigationLinks.googleMaps,
   ),
@@ -64,6 +76,7 @@ const navigationHandoffCapabilities = <NavigationHandoffCapability>[
     label: 'Waze',
     transport: NavigationHandoffTransport.directLink,
     routeTransfer: NavigationRouteTransfer.destinationOnly,
+    platforms: allNavigationPlatforms,
     limitation: 'Opens motorcycle navigation to the final destination only',
     directLink: RouteNavigationLinks.waze,
   ),
@@ -72,6 +85,7 @@ const navigationHandoffCapabilities = <NavigationHandoffCapability>[
     label: 'Calimoto',
     transport: NavigationHandoffTransport.gpxShare,
     routeTransfer: NavigationRouteTransfer.fullGpx,
+    platforms: allNavigationPlatforms,
     limitation: 'Uses the GPX share sheet; choose Calimoto if installed',
   ),
   NavigationHandoffCapability(
@@ -79,6 +93,7 @@ const navigationHandoffCapabilities = <NavigationHandoffCapability>[
     label: 'MyRoute-app',
     transport: NavigationHandoffTransport.gpxShare,
     routeTransfer: NavigationRouteTransfer.fullGpx,
+    platforms: allNavigationPlatforms,
     limitation: 'Uses the GPX share sheet; choose MyRoute-app if installed',
   ),
   NavigationHandoffCapability(
@@ -86,6 +101,7 @@ const navigationHandoffCapabilities = <NavigationHandoffCapability>[
     label: 'Garmin',
     transport: NavigationHandoffTransport.gpxShare,
     routeTransfer: NavigationRouteTransfer.fullGpx,
+    platforms: allNavigationPlatforms,
     limitation: 'Uses the GPX share sheet for Garmin Drive, Tread or Explore',
   ),
   NavigationHandoffCapability(
@@ -93,6 +109,7 @@ const navigationHandoffCapabilities = <NavigationHandoffCapability>[
     label: 'BMW Motorrad',
     transport: NavigationHandoffTransport.gpxShare,
     routeTransfer: NavigationRouteTransfer.fullGpx,
+    platforms: allNavigationPlatforms,
     limitation: 'Uses the GPX share sheet for the BMW Motorrad Connected app',
   ),
   NavigationHandoffCapability(
@@ -100,9 +117,16 @@ const navigationHandoffCapabilities = <NavigationHandoffCapability>[
     label: 'Share GPX file',
     transport: NavigationHandoffTransport.gpxShare,
     routeTransfer: NavigationRouteTransfer.fullGpx,
+    platforms: allNavigationPlatforms,
     limitation: 'Choose any GPX-compatible app or save to Files',
   ),
 ];
+
+Iterable<NavigationHandoffCapability> navigationCapabilitiesFor(
+  NavigationPlatform platform,
+) => navigationHandoffCapabilities.where(
+  (capability) => capability.supports(platform),
+);
 
 extension NavigationTargetDetails on NavigationTarget {
   NavigationHandoffCapability get capability => navigationHandoffCapabilities

@@ -12,6 +12,15 @@ void main() {
         navigationHandoffCapabilities.map((capability) => capability.target),
         unorderedEquals(NavigationTarget.values),
       );
+      for (final platform in NavigationPlatform.values) {
+        expect(
+          navigationCapabilitiesFor(
+            platform,
+          ).map((capability) => capability.target),
+          unorderedEquals(NavigationTarget.values),
+          reason: 'Every current handoff should declare $platform support',
+        );
+      }
 
       expect(
         NavigationTarget.googleMaps.capability.routeTransfer,
