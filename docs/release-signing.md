@@ -16,16 +16,26 @@ later without changing the repository.
 
 ## TestFlight beta distribution
 
-The iOS target uses bundle ID `me.osholt.rideRelay`, automatic signing, and the
+The iOS target uses bundle ID `app.tailendcharlie`, automatic signing, and the
 Apple Developer team configured in Xcode. `ios/ExportOptions-TestFlight.plist`
 produces an App Store Connect IPA. The `TestFlight` GitHub workflow is manual
 only, so normal commits and pull requests never send a build to Apple.
 
-Before the first upload, sign in to App Store Connect as an Account Holder,
-Admin, App Manager, or Developer; create the `Tail End Charlie` iOS app record using
-that bundle ID; and accept any outstanding agreements. Create a least-privilege
-App Store Connect API key and an App Store provisioning profile, then add these
-repository secrets:
+The app previously shipped internal TestFlight builds under bundle ID
+`me.osholt.rideRelay`. That identifier is retired - Apple never allows a bundle
+ID to be changed on an existing App Store Connect app record, so matching the
+Android `app.tailendcharlie` rename meant registering a new App ID and starting
+a new app record rather than editing the old one. Existing internal testers
+need re-adding under the new record; TestFlight build history does not carry
+over.
+
+Before the first upload under the new identifier, register the `app.tailendcharlie`
+App ID in the Apple Developer portal; sign in to App Store Connect as an Account
+Holder, Admin, App Manager, or Developer; create the `Tail End Charlie` iOS app
+record using that bundle ID; and accept any outstanding agreements. Create a
+least-privilege App Store Connect API key and an App Store provisioning profile
+(the profile name must match the `provisioningProfiles` entry in
+`ios/ExportOptions-TestFlight.plist`), then add these repository secrets:
 
 - `APPLE_DISTRIBUTION_CERTIFICATE_BASE64` and
   `APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD` — an Apple Distribution `.p12`.
