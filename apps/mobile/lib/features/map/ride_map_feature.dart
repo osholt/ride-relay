@@ -772,8 +772,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     right: overlayRight + 8,
                     // In portrait the overview sits beneath the TEC card so
                     // it does not compress the status text into an unusable
-                    // narrow strip. The compact vector overview is also more
-                    // reliable than a nested native MapLibre view there.
+                    // narrow strip.
                     top: landscape ? statusTop : statusTop + 96,
                     child: ValueListenableBuilder<List<MapOverlayMarker>>(
                       valueListenable: widget.overlayMarkers!,
@@ -794,7 +793,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                               .toList(growable: false),
                           currentPosition: _effectivePosition,
                           riders: groupRiders,
-                          showTiles: landscape && _basemap.usesMapLibre,
+                          showTiles: _basemap.usesMapLibre,
                           mapStyleString: widget.mapStyleString,
                         );
                       },
