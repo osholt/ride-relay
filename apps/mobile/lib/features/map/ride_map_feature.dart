@@ -1012,8 +1012,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
               ..._progressGeometry.remainingPaths.map(
                 (path) => Polyline(
                   points: path.map(_latLng).toList(growable: false),
-                  color: const Color(0x99FFB15C),
+                  color: const Color(0xE63478F6),
                   strokeWidth: 5,
+                  borderColor: const Color(0xFF10151C),
+                  borderStrokeWidth: 2,
                   pattern: const StrokePattern.dotted(spacingFactor: 1.8),
                 ),
               ),
@@ -1646,10 +1648,23 @@ class _RideMapScreenState extends State<RideMapScreen> {
       );
       await controller.addLineLayer(
         _remainingRouteSource,
+        'ride-relay-route-remaining-border',
+        const ml.LineLayerProperties(
+          lineColor: '#10151C',
+          lineOpacity: 0.7,
+          lineWidth: 8,
+          lineDasharray: [0.1, 1.8],
+          lineCap: 'round',
+          lineJoin: 'round',
+        ),
+        enableInteraction: false,
+      );
+      await controller.addLineLayer(
+        _remainingRouteSource,
         'ride-relay-route-remaining',
         const ml.LineLayerProperties(
-          lineColor: '#FFB15C',
-          lineOpacity: 0.6,
+          lineColor: '#3478F6',
+          lineOpacity: 0.9,
           lineWidth: 5,
           lineDasharray: [0.1, 1.8],
           lineCap: 'round',
@@ -3191,7 +3206,7 @@ class _GroupMiniMapPainter extends CustomPainter {
       canvas.drawPath(
         path,
         Paint()
-          ..color = const Color(0xB3FFB15C)
+          ..color = const Color(0xE63478F6)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2.5
           ..strokeCap = StrokeCap.round
