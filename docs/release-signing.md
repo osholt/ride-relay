@@ -41,6 +41,19 @@ before it appears under the app's TestFlight tab. Start with internal testers;
 external TestFlight testing and App Store release require their own review,
 privacy, age-rating, and export-compliance steps.
 
+## Google Play internal testing
+
+The Android target uses application ID `me.osholt.ride_relay`. The manual
+`Android Internal Testing` workflow builds a release AAB with a dedicated upload
+key and publishes it to Google Play's internal track. Release signing is enabled
+only when an ignored `android/key.properties` file is present, so ordinary debug
+builds do not require distribution secrets.
+
+The Play application ID is permanent after the first upload. Confirm it before
+creating the Play Console app, then follow `android-beta-distribution.md` for the
+Play App Signing, protected GitHub environment, tester, and secret setup. Do not
+generate the upload key until its durable encrypted backup location is agreed.
+
 ## Before public App Store distribution
 
 Create a separate release checklist covering bundle IDs, Apple Developer and
