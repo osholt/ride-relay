@@ -15,9 +15,10 @@ remain developer downloads rather than a tester distribution channel.
 
 ## One-time Google Play setup
 
-1. Confirm that `me.osholt.ride_relay` is the permanent Android application ID
-   before creating the Play Console app. Google Play package names cannot be
-   changed after the first upload.
+1. The permanent Android application ID is `app.tailendcharlie`, matching the
+   `tailendcharlie.app` domain in reverse-DNS form. Confirm this is still
+   correct before creating the Play Console app: Google Play package names
+   cannot be changed after the first upload.
 2. Create **Tail End Charlie** in Google Play Console and enrol it in Play App
    Signing.
 3. Create a dedicated upload keystore. Back it up in an approved password or

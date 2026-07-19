@@ -43,7 +43,7 @@ privacy, age-rating, and export-compliance steps.
 
 ## Google Play internal testing
 
-The Android target uses application ID `me.osholt.ride_relay`. The manual
+The Android target uses application ID `app.tailendcharlie`. The manual
 `Android Internal Testing` workflow builds a release AAB with a dedicated upload
 key and publishes it to Google Play's internal track. Release signing is enabled
 only when an ignored `android/key.properties` file is present, so ordinary debug
