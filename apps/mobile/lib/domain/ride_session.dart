@@ -1,5 +1,6 @@
 import '../features/map/motorcycle_icon.dart';
 import 'ride_role.dart';
+import 'rider_color.dart';
 
 class RideSession {
   static const minimumSimulationRiderCount = 4;
@@ -17,6 +18,8 @@ class RideSession {
     this.isSimulation = false,
     this.simulationRiderCount = defaultSimulationRiderCount,
     this.motorcycleStyle = motorcycleIconStyleDefault,
+    this.riderColor = riderColorDefault,
+    this.rideName,
   }) : assert(
          !isSimulation ||
              (simulationRiderCount >= minimumSimulationRiderCount &&
@@ -33,6 +36,11 @@ class RideSession {
   final bool isSimulation;
   final int simulationRiderCount;
   final MotorcycleIconStyle motorcycleStyle;
+  final RiderColor riderColor;
+
+  /// Optional, leader-chosen at creation. Never required: rides are always
+  /// identifiable by their six-digit code even with no name set.
+  final String? rideName;
 
   RideSession copyWith({
     RideRole? role,
@@ -49,6 +57,8 @@ class RideSession {
     isSimulation: isSimulation,
     simulationRiderCount: simulationRiderCount ?? this.simulationRiderCount,
     motorcycleStyle: motorcycleStyle,
+    riderColor: riderColor,
+    rideName: rideName,
   );
 
   Map<String, Object?> toJson() => {
@@ -62,6 +72,8 @@ class RideSession {
     if (isSimulation) 'isSimulation': true,
     if (isSimulation) 'simulationRiderCount': simulationRiderCount,
     'motorcycleStyle': motorcycleStyle.name,
+    'riderColor': riderColor.name,
+    if (rideName != null) 'rideName': rideName,
   };
 
   factory RideSession.fromJson(Map<String, Object?> json) => RideSession(
@@ -77,6 +89,8 @@ class RideSession {
     motorcycleStyle: motorcycleIconStyleFromName(
       json['motorcycleStyle'] as String?,
     ),
+    riderColor: riderColorFromName(json['riderColor'] as String?),
+    rideName: json['rideName'] as String?,
   );
 
   static int _simulationRiderCount(Object? value) {

@@ -63,6 +63,8 @@ class RideMapFeature extends StatefulWidget {
     this.onEndRide,
     this.onOpenRideMenu,
     this.onRouteChanged,
+    this.changeRouteRequestToken,
+    this.onChangeRouteRequestHandled,
     this.acquireCurrentPosition,
     this.navigationExportCoordinator,
     this.routeStore,
@@ -71,6 +73,8 @@ class RideMapFeature extends StatefulWidget {
     this.mapStyleString,
     this.distanceUnit = DistanceUnit.kilometres,
     this.basemapConfiguration = const BasemapConfiguration(),
+    this.localMotorcycleStyle = motorcycleIconStyleDefault,
+    this.localBadgeColor = const Color(0xFF2F80ED),
   });
 
   factory RideMapFeature.fromEnvironment({
@@ -94,9 +98,13 @@ class RideMapFeature extends StatefulWidget {
     Future<void> Function()? onEndRide,
     Future<void> Function()? onOpenRideMenu,
     ValueChanged<ImportedRoute?>? onRouteChanged,
+    Object? changeRouteRequestToken,
+    VoidCallback? onChangeRouteRequestHandled,
     Future<GeoPoint?> Function()? acquireCurrentPosition,
     RouteStore? routeStore,
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
+    MotorcycleIconStyle localMotorcycleStyle = motorcycleIconStyleDefault,
+    Color localBadgeColor = const Color(0xFF2F80ED),
   }) => RideMapFeature(
     key: key,
     currentPosition: currentPosition,
@@ -118,10 +126,14 @@ class RideMapFeature extends StatefulWidget {
     onEndRide: onEndRide,
     onOpenRideMenu: onOpenRideMenu,
     onRouteChanged: onRouteChanged,
+    changeRouteRequestToken: changeRouteRequestToken,
+    onChangeRouteRequestHandled: onChangeRouteRequestHandled,
     acquireCurrentPosition: acquireCurrentPosition,
     routeStore: routeStore,
     distanceUnit: distanceUnit,
     basemapConfiguration: BasemapConfiguration.fromEnvironment(),
+    localMotorcycleStyle: localMotorcycleStyle,
+    localBadgeColor: localBadgeColor,
   );
 
   final ValueListenable<GeoPoint?>? currentPosition;
@@ -143,6 +155,8 @@ class RideMapFeature extends StatefulWidget {
   final Future<void> Function()? onEndRide;
   final Future<void> Function()? onOpenRideMenu;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
+  final Object? changeRouteRequestToken;
+  final VoidCallback? onChangeRouteRequestHandled;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
   final RouteStore? routeStore;
@@ -151,6 +165,8 @@ class RideMapFeature extends StatefulWidget {
   final String? mapStyleString;
   final DistanceUnit distanceUnit;
   final BasemapConfiguration basemapConfiguration;
+  final MotorcycleIconStyle localMotorcycleStyle;
+  final Color localBadgeColor;
 
   @override
   State<RideMapFeature> createState() => _RideMapFeatureState();
@@ -248,9 +264,13 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         onEndRide: widget.onEndRide,
         onOpenRideMenu: widget.onOpenRideMenu,
         onRouteChanged: widget.onRouteChanged,
+        changeRouteRequestToken: widget.changeRouteRequestToken,
+        onChangeRouteRequestHandled: widget.onChangeRouteRequestHandled,
         acquireCurrentPosition: widget.acquireCurrentPosition,
         navigationExportCoordinator: widget.navigationExportCoordinator,
         distanceUnit: widget.distanceUnit,
+        localMotorcycleStyle: widget.localMotorcycleStyle,
+        localBadgeColor: widget.localBadgeColor,
       );
     },
   );
@@ -298,6 +318,8 @@ class RideMapScreen extends StatefulWidget {
     this.onEndRide,
     this.onOpenRideMenu,
     this.onRouteChanged,
+    this.changeRouteRequestToken,
+    this.onChangeRouteRequestHandled,
     this.acquireCurrentPosition,
     this.navigationExportCoordinator,
     this.destinationRoutePlanner,
@@ -305,6 +327,8 @@ class RideMapScreen extends StatefulWidget {
     this.demoRouteLoader,
     this.distanceUnit = DistanceUnit.kilometres,
     this.disposeOfflineTileCache = false,
+    this.localMotorcycleStyle = motorcycleIconStyleDefault,
+    this.localBadgeColor = const Color(0xFF2F80ED),
   });
 
   final RouteStore routeStore;
@@ -331,6 +355,8 @@ class RideMapScreen extends StatefulWidget {
   final Future<void> Function()? onEndRide;
   final Future<void> Function()? onOpenRideMenu;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
+  final Object? changeRouteRequestToken;
+  final VoidCallback? onChangeRouteRequestHandled;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
   final DestinationRoutePlanner? destinationRoutePlanner;
@@ -338,6 +364,8 @@ class RideMapScreen extends StatefulWidget {
   final Future<ImportedRoute> Function()? demoRouteLoader;
   final DistanceUnit distanceUnit;
   final bool disposeOfflineTileCache;
+  final MotorcycleIconStyle localMotorcycleStyle;
+  final Color localBadgeColor;
 
   @override
   State<RideMapScreen> createState() => _RideMapScreenState();
@@ -374,6 +402,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   bool _emergencyAlertSent = false;
   bool _emergencyActionsOpen = false;
   bool _emergencyActionsDismissed = false;
+  Object? _handledChangeRouteRequestToken;
   double _lastHeadingDegrees = 0;
   GeoPoint? _previousNavigationPoint;
   MapNavigationPosition? _lastHandledNavigationFix;
@@ -433,11 +462,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _markerOverviewVisible =
         widget.junctionMarkerOverlay?.value?.isLocalMarker ?? false;
     _loadPersistedRoute();
+    _maybeHandleChangeRouteRequest();
   }
 
   @override
   void didUpdateWidget(RideMapScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.changeRouteRequestToken != widget.changeRouteRequestToken) {
+      _maybeHandleChangeRouteRequest();
+    }
     if (oldWidget.currentPosition != widget.currentPosition) {
       oldWidget.currentPosition?.removeListener(_onPositionChanged);
       widget.currentPosition?.addListener(_onPositionChanged);
@@ -1039,6 +1072,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 child: _CurrentPositionMarker(
                   navigationMode: _route != null && _isMoving,
                   headingDegrees: _lastHeadingDegrees,
+                  style: widget.localMotorcycleStyle,
+                  badgeColor: widget.localBadgeColor,
                 ),
               ),
             ],
@@ -1058,10 +1093,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       child: Tooltip(
                         message: overlay.label,
                         child: overlay.motorcycleStyle == null
-                            ? Icon(overlay.icon, color: overlay.color, size: 34)
-                            : MotorcycleIcon(
+                            ? _IconBadge(
+                                icon: overlay.icon,
+                                badgeColor: overlay.color,
+                                size: 34,
+                              )
+                            : RiderMarkerBadge(
                                 style: overlay.motorcycleStyle!,
-                                color: overlay.color,
+                                badgeColor: overlay.color,
                                 size: 34,
                               ),
                       ),
@@ -1685,23 +1724,49 @@ class _RideMapScreenState extends State<RideMapScreen> {
       await controller.addGeoJsonSource(_positionSource, _positionGeoJson());
       await controller.addCircleLayer(
         _positionSource,
-        'ride-relay-position-circle',
-        const ml.CircleLayerProperties(
-          circleRadius: 8,
-          circleColor: '#FFFFFF',
-          circleStrokeWidth: 4,
-          circleStrokeColor: '#2F80ED',
+        'ride-relay-position-badge',
+        ml.CircleLayerProperties(
+          circleRadius: 16,
+          circleColor: _hexColor(widget.localBadgeColor),
+          circleStrokeWidth: 3,
+          circleStrokeColor: '#FFFFFF',
+        ),
+        enableInteraction: false,
+      );
+      await controller.addSymbolLayer(
+        _positionSource,
+        'ride-relay-position-icon',
+        ml.SymbolLayerProperties(
+          iconImage: widget.localMotorcycleStyle.name,
+          iconColor: '#FFFFFF',
+          iconSize: 0.2,
+          iconAllowOverlap: true,
+          iconIgnorePlacement: true,
         ),
         enableInteraction: false,
       );
       await controller.addGeoJsonSource(_overlaySource, _overlayGeoJson());
+      // A colour alone was hard to pick out against some basemaps. A solid
+      // badge behind a fixed-white glyph reads clearly regardless of what's
+      // underneath, and matches the "you are here" marker's badge look.
+      await controller.addCircleLayer(
+        _overlaySource,
+        'ride-relay-overlay-badges',
+        const ml.CircleLayerProperties(
+          circleRadius: 15,
+          circleColor: ['get', 'color'],
+          circleStrokeWidth: 2,
+          circleStrokeColor: '#10151C',
+        ),
+        enableInteraction: false,
+      );
       await controller.addSymbolLayer(
         _overlaySource,
         'ride-relay-overlay-icons',
         const ml.SymbolLayerProperties(
           iconImage: ['get', 'iconImage'],
-          iconColor: ['get', 'color'],
-          iconSize: 0.34,
+          iconColor: '#FFFFFF',
+          iconSize: 0.19,
           iconAllowOverlap: true,
           iconIgnorePlacement: true,
         ),
@@ -2198,6 +2263,78 @@ class _RideMapScreenState extends State<RideMapScreen> {
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
   }
+
+  // A fresh token (any non-null Object, compared by identity) means an
+  // ancestor - the ride's main menu - wants this screen to open its route
+  // picker. Consumed once per token, after the first post-mount frame so a
+  // BuildContext with a Navigator is always available.
+  //
+  // This State is rebuilt from scratch every time the tab switch leaves and
+  // returns to the map (there is no keep-alive), so _handledChangeRouteRequestToken
+  // resets to null on every remount while the ancestor's token does not. Only
+  // the ancestor survives that round trip, so onChangeRouteRequestHandled asks
+  // it to null the token back out - otherwise every later visit to this tab
+  // would see a "new" token and reopen the sheet unprompted.
+  void _maybeHandleChangeRouteRequest() {
+    final token = widget.changeRouteRequestToken;
+    if (token == null || identical(token, _handledChangeRouteRequestToken)) {
+      return;
+    }
+    _handledChangeRouteRequestToken = token;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      widget.onChangeRouteRequestHandled?.call();
+      if (mounted) _showChangeRouteSheet();
+    });
+  }
+
+  Future<void> _showChangeRouteSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.add_road),
+              title: const Text('Plan a destination'),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                _planDestination();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.upload_file),
+              title: Text(
+                _route == null ? 'Import GPX route' : 'Replace GPX route',
+              ),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                _importGpx();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.route_outlined),
+              title: const Text('Load demo route'),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                _loadDemoRoute();
+              },
+            ),
+            if (_route != null)
+              ListTile(
+                leading: const Icon(Icons.delete_outline),
+                title: const Text('Remove route'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  _handleMenuAction(_MapAction.removeRoute);
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 enum _MapAction {
@@ -2621,6 +2758,12 @@ class _GroupMiniMap extends StatefulWidget {
   State<_GroupMiniMap> createState() => _GroupMiniMapState();
 }
 
+typedef _MiniMapSnapshot = ({
+  List<List<GeoPoint>> routePaths,
+  GeoPoint? currentPosition,
+  List<MapOverlayMarker> riders,
+});
+
 class _GroupMiniMapState extends State<_GroupMiniMap> {
   static const _routeSource = 'ride-relay-mini-route';
   static const _riderSource = 'ride-relay-mini-riders';
@@ -2629,6 +2772,17 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
   DateTime? _lastRefreshAt;
   bool _styleReady = false;
   bool _refreshing = false;
+
+  /// Captured once per refresh so the windowed route, rider dots, and camera
+  /// fit all agree on the same instant - reading `widget.riders` again after
+  /// each awaited platform call let a mid-flight rebuild (new positions
+  /// arriving between calls) hand later steps newer data than earlier ones,
+  /// which could visually detach a rider's dot from its trimmed route line.
+  _MiniMapSnapshot _snapshot() => (
+    routePaths: widget.routePaths,
+    currentPosition: widget.currentPosition,
+    riders: widget.riders,
+  );
 
   @override
   void initState() {
@@ -2672,7 +2826,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
   Widget build(BuildContext context) {
     final riderCount =
         widget.riders.length + (widget.currentPosition == null ? 0 : 1);
-    final visibleRoutePaths = _visibleRoutePaths();
+    final visibleRoutePaths = _visibleRoutePaths(_snapshot());
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -2790,8 +2944,9 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     final controller = _controller;
     if (controller == null) return;
     _styleReady = false;
+    final snapshot = _snapshot();
     try {
-      await controller.addGeoJsonSource(_routeSource, _routeGeoJson());
+      await controller.addGeoJsonSource(_routeSource, _routeGeoJson(snapshot));
       await controller.addLineLayer(
         _routeSource,
         'ride-relay-mini-route-border',
@@ -2814,7 +2969,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
         ),
         enableInteraction: false,
       );
-      await controller.addGeoJsonSource(_riderSource, _riderGeoJson());
+      await controller.addGeoJsonSource(_riderSource, _riderGeoJson(snapshot));
       await controller.addCircleLayer(
         _riderSource,
         'ride-relay-mini-rider-circles',
@@ -2828,7 +2983,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
       );
       _styleReady = true;
       await _refreshMap();
-      await _fitGroup();
+      await _fitGroup(snapshot);
     } on Object catch (error) {
       if (kDebugMode) {
         debugPrint('Could not prepare group mini-map: $error');
@@ -2841,9 +2996,10 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     if (!_styleReady || controller == null || _refreshing) return;
     _refreshing = true;
     try {
-      await controller.setGeoJsonSource(_routeSource, _routeGeoJson());
-      await controller.setGeoJsonSource(_riderSource, _riderGeoJson());
-      await _fitGroup();
+      final snapshot = _snapshot();
+      await controller.setGeoJsonSource(_routeSource, _routeGeoJson(snapshot));
+      await controller.setGeoJsonSource(_riderSource, _riderGeoJson(snapshot));
+      await _fitGroup(snapshot);
     } on Object catch (error) {
       if (kDebugMode) {
         debugPrint('Could not refresh group mini-map: $error');
@@ -2853,12 +3009,13 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     }
   }
 
-  Future<void> _fitGroup() async {
+  Future<void> _fitGroup([_MiniMapSnapshot? snapshot]) async {
     final controller = _controller;
     if (controller == null) return;
+    final effective = snapshot ?? _snapshot();
     final points = <GeoPoint?>[
-      widget.currentPosition,
-      ...widget.riders.map((rider) => rider.point),
+      effective.currentPosition,
+      ...effective.riders.map((rider) => rider.point),
     ].nonNulls.toList(growable: false);
     if (points.isEmpty) return;
     if (points.length == 1) {
@@ -2883,17 +3040,17 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     );
   }
 
-  Map<String, dynamic> _routeGeoJson() =>
-      MapGeoJson.lines(_visibleRoutePaths(), idPrefix: 'mini-route');
+  Map<String, dynamic> _routeGeoJson(_MiniMapSnapshot snapshot) =>
+      MapGeoJson.lines(_visibleRoutePaths(snapshot), idPrefix: 'mini-route');
 
   /// The mini-map follows the group, not the entire ride. Rendering a long
   /// route in a tight group viewport creates clipped, disconnected-looking
   /// lines which can be mistaken for an invalid route. Keep only contiguous
   /// route segments near the currently visible riders.
-  List<List<GeoPoint>> _visibleRoutePaths() {
+  List<List<GeoPoint>> _visibleRoutePaths(_MiniMapSnapshot snapshot) {
     final groupPoints = <GeoPoint?>[
-      widget.currentPosition,
-      ...widget.riders.map((rider) => rider.point),
+      snapshot.currentPosition,
+      ...snapshot.riders.map((rider) => rider.point),
     ].nonNulls.toList(growable: false);
     if (groupPoints.isEmpty) return const [];
 
@@ -2918,7 +3075,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     east += longitudePadding;
 
     final visiblePaths = <List<GeoPoint>>[];
-    for (final path in widget.routePaths) {
+    for (final path in snapshot.routePaths) {
       var segment = <GeoPoint>[];
       for (final point in path) {
         final isVisible =
@@ -2940,20 +3097,21 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     return visiblePaths;
   }
 
-  Map<String, dynamic> _riderGeoJson() => MapGeoJson.points([
-    for (final rider in widget.riders)
-      MapGeoJsonPoint(
-        id: rider.id,
-        point: rider.point,
-        properties: {'color': _hexColor(rider.color)},
-      ),
-    if (widget.currentPosition case final point?)
-      MapGeoJsonPoint(
-        id: 'mini-local-rider',
-        point: point,
-        properties: const {'color': '#FF7A1A'},
-      ),
-  ]);
+  Map<String, dynamic> _riderGeoJson(_MiniMapSnapshot snapshot) =>
+      MapGeoJson.points([
+        for (final rider in snapshot.riders)
+          MapGeoJsonPoint(
+            id: rider.id,
+            point: rider.point,
+            properties: {'color': _hexColor(rider.color)},
+          ),
+        if (snapshot.currentPosition case final point?)
+          MapGeoJsonPoint(
+            id: 'mini-local-rider',
+            point: point,
+            properties: const {'color': '#FF7A1A'},
+          ),
+      ]);
 
   @override
   void dispose() {
@@ -3446,23 +3604,61 @@ class _CurrentPositionMarker extends StatelessWidget {
   const _CurrentPositionMarker({
     required this.navigationMode,
     required this.headingDegrees,
+    required this.style,
+    required this.badgeColor,
   });
 
   final bool navigationMode;
   final double headingDegrees;
+  final MotorcycleIconStyle style;
+  final Color badgeColor;
 
   @override
   Widget build(BuildContext context) => Transform.rotate(
+    // The badge circle is rotation-symmetric, so only the bike glyph inside
+    // visibly turns - this keeps showing heading without the odd look a
+    // rotating non-circular marker would have.
     angle: navigationMode ? 0 : headingDegrees * math.pi / 180,
     child: DecoratedBox(
-      decoration: BoxDecoration(
-        color: const Color(0xFF2F80ED),
+      decoration: const BoxDecoration(
         shape: BoxShape.circle,
-        border: Border.all(color: Colors.white, width: 3),
-        boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 5)],
+        boxShadow: [BoxShadow(color: Colors.black45, blurRadius: 5)],
       ),
-      child: const Icon(Icons.navigation, color: Colors.white, size: 22),
+      child: RiderMarkerBadge(
+        style: style,
+        badgeColor: badgeColor,
+        size: 38,
+        borderColor: Colors.white,
+        borderWidth: 3,
+      ),
     ),
+  );
+}
+
+/// A white Material icon on a filled colour circle - the non-bike equivalent
+/// of [RiderMarkerBadge], used for hazard markers so both marker families
+/// read the same way against any basemap.
+class _IconBadge extends StatelessWidget {
+  const _IconBadge({
+    required this.icon,
+    required this.badgeColor,
+    this.size = 34,
+  });
+
+  final IconData icon;
+  final Color badgeColor;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: size,
+    height: size,
+    decoration: BoxDecoration(
+      color: badgeColor,
+      shape: BoxShape.circle,
+      border: Border.all(color: const Color(0xFF10151C), width: 2),
+    ),
+    child: Icon(icon, color: Colors.white, size: size * 0.56),
   );
 }
 

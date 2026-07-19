@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:share_plus/share_plus.dart';
 
 import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/foreground_location_controller.dart';
@@ -11,6 +12,7 @@ import '../../controllers/marker_assistance_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/ride_simulation_controller.dart';
+import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/situational_awareness_controller.dart';
 import '../../data/in_memory_event_store.dart';
 import '../../data/json_file_route_store.dart';
@@ -21,6 +23,7 @@ import '../../domain/imported_route.dart' as route_domain;
 import '../../domain/quick_message.dart';
 import '../../domain/ride_event.dart';
 import '../../domain/ride_role.dart';
+import '../../domain/rider_color.dart';
 import '../../domain/route_alert.dart';
 import '../../domain/route_store.dart';
 import '../../internet/internet_relay_client.dart';
@@ -36,7 +39,9 @@ import '../../services/external_hazard_provider.dart';
 import '../../services/leader_ride_status.dart';
 import '../../services/route_decision_point_extractor.dart';
 import '../../services/ride_completion_detector.dart';
+import '../map/motorcycle_icon.dart';
 import '../map/ride_map.dart';
+import '../settings/emergency_info_sheet.dart';
 import '../situational_awareness/situational_awareness_screen.dart';
 import '../simulation/ride_simulation_screen.dart';
 import 'ended_ride_screen.dart';
@@ -52,12 +57,14 @@ class ActiveRideShell extends StatefulWidget {
     required this.distanceUnits,
     required this.eventStore,
     required this.enableNativeServices,
+    required this.riderProfile,
   });
 
   final RideController rideController;
   final DistanceUnitController distanceUnits;
   final EventStore eventStore;
   final bool enableNativeServices;
+  final RiderProfileController riderProfile;
 
   @override
   State<ActiveRideShell> createState() => _ActiveRideShellState();
@@ -69,11 +76,17 @@ class _RideNavigationMenu extends StatelessWidget {
     required this.simulation,
     required this.selectedIndex,
     required this.onSelected,
+    required this.onShareRoster,
+    required this.onChangeRoute,
+    required this.onEmergencyInfo,
   });
 
   final bool simulation;
   final int selectedIndex;
   final ValueChanged<int> onSelected;
+  final VoidCallback onShareRoster;
+  final VoidCallback onChangeRoute;
+  final VoidCallback onEmergencyInfo;
 
   @override
   Widget build(BuildContext context) {
@@ -112,6 +125,41 @@ class _RideNavigationMenu extends StatelessWidget {
                     : null,
                 onTap: () => onSelected(destination.index),
               ),
+            const Divider(height: 20),
+            ListTile(
+              key: const Key('ride-menu-change-route'),
+              leading: const Icon(Icons.edit_road_outlined),
+              title: const Text('Change route'),
+              subtitle: const Text(
+                'Plan a destination, import a GPX file, or load the demo route',
+              ),
+              onTap: () {
+                Navigator.of(context).pop();
+                onChangeRoute();
+              },
+            ),
+            ListTile(
+              key: const Key('ride-menu-share-roster'),
+              leading: const Icon(Icons.groups_outlined),
+              title: const Text('Share rider list'),
+              subtitle: const Text(
+                'Names and roles, to paste into a group chat you create',
+              ),
+              onTap: () {
+                Navigator.of(context).pop();
+                onShareRoster();
+              },
+            ),
+            ListTile(
+              key: const Key('ride-menu-emergency-info'),
+              leading: const Icon(Icons.medical_information_outlined),
+              title: const Text('Emergency info'),
+              subtitle: const Text('Kept on this device only'),
+              onTap: () {
+                Navigator.of(context).pop();
+                onEmergencyInfo();
+              },
+            ),
           ],
         ),
       ),
@@ -151,6 +199,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   route_domain.ImportedRoute? _activeRoute;
   int _routeGeneration = 0;
   int _selectedIndex = 0;
+  Object? _changeRouteRequestToken;
   int _handledAutomaticMarkerActivation = 0;
   int _handledAutomaticMarkerRideOffActivation = 0;
   DateTime? _lastSimulationNavigationUpdateAt;
@@ -679,6 +728,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
                         displayName: location.displayName,
                         role: location.role,
                         motorcycleStyle: location.motorcycleStyle,
+                        riderColor: location.riderColor,
                         point: route_domain.GeoPoint(
                           latitude: location.sample.position.latitude,
                           longitude: location.sample.position.longitude,
@@ -694,6 +744,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
                         displayName: rider.displayName,
                         role: rider.role,
                         motorcycleStyle: rider.motorcycleStyle,
+                        riderColor: rider.riderColor,
                         point: route_domain.GeoPoint(
                           latitude: rider.position.latitude,
                           longitude: rider.position.longitude,
@@ -720,12 +771,12 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
                   : location.displayName,
               motorcycleStyle: location.motorcycleStyle,
               color: needsAttention
-                  ? const Color(0xFFFF5D73)
+                  ? alertColor
                   : isTec
-                  ? const Color(0xFF68A9FF)
+                  ? tailEndCharlieColor
                   : isLead
-                  ? const Color(0xFFB58CFF)
-                  : const Color(0xFF6ED89A),
+                  ? leadColor
+                  : location.riderColor.color,
             );
           }),
     ];
@@ -1140,12 +1191,28 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       onEndRide: _confirmEndRideFromMap,
       onOpenRideMenu: _openRideMenu,
       onRouteChanged: _onRouteChanged,
+      changeRouteRequestToken: _changeRouteRequestToken,
+      onChangeRouteRequestHandled: _clearChangeRouteRequest,
       acquireCurrentPosition: _isSimulation
           ? () async => _mapPosition.value
           : _acquireCurrentPosition,
       routeStore: _simulationRouteStore,
       distanceUnit: widget.distanceUnits.value,
+      localMotorcycleStyle:
+          widget.rideController.session?.motorcycleStyle ??
+          motorcycleIconStyleDefault,
+      localBadgeColor: _localBadgeColor,
     );
+  }
+
+  Color get _localBadgeColor {
+    final session = widget.rideController.session;
+    if (session == null) return riderColorDefault.color;
+    return switch (session.role) {
+      RideRole.tailEndCharlie => tailEndCharlieColor,
+      RideRole.lead => leadColor,
+      _ => session.riderColor.color,
+    };
   }
 
   List<MapEmergencyContact> get _emergencyContacts {
@@ -1291,6 +1358,70 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
           Navigator.of(context).pop();
           if (mounted) setState(() => _selectedIndex = index);
         },
+        onShareRoster: _shareRoster,
+        onChangeRoute: _requestRouteChange,
+        onEmergencyInfo: () =>
+            EmergencyInfoSheet.show(context, widget.riderProfile),
+      ),
+    );
+  }
+
+  /// Switches to the map tab and asks it to open its route picker. The route
+  /// picker itself lives entirely in [RideMapScreen] (it alone owns the
+  /// on-disk route file), so this only ever hands it a fresh token to react
+  /// to - never duplicates its import/demo-route/destination logic here.
+  void _requestRouteChange() {
+    setState(() {
+      _selectedIndex = 0;
+      _changeRouteRequestToken = Object();
+    });
+  }
+
+  /// The map screen is rebuilt from scratch every time the tab switch leaves
+  /// and returns to it (no keep-alive), so it cannot remember "already
+  /// handled" across that round trip. Only this State survives, so it alone
+  /// can safely null the token back out once the request has been actioned.
+  void _clearChangeRouteRequest() {
+    if (_changeRouteRequestToken != null) {
+      setState(() => _changeRouteRequestToken = null);
+    }
+  }
+
+  /// The app deliberately never collects phone numbers (anonymous ride
+  /// codes, no accounts), so it can't create a WhatsApp/Signal/iMessage
+  /// group directly. This gives the leader a ready-to-paste roster for
+  /// whichever group they create themselves.
+  void _shareRoster() {
+    final session = widget.rideController.session;
+    if (session == null) return;
+    final riders = <String>[];
+    String labelFor(String name, RideRole role) => switch (role) {
+      RideRole.lead => '$name (Lead)',
+      RideRole.tailEndCharlie => '$name (Tail End Charlie)',
+      _ => name,
+    };
+    riders.add(labelFor(session.displayName, session.role));
+    if (_isSimulation) {
+      for (final rider in _simulationController?.riders ?? const []) {
+        if (!rider.isLocal) riders.add(labelFor(rider.displayName, rider.role));
+      }
+    } else {
+      for (final rider in _awarenessController?.riderLocations ?? const []) {
+        if (rider.riderId != session.localRiderId) {
+          riders.add(labelFor(rider.displayName, rider.role));
+        }
+      }
+    }
+    final title = session.rideName ?? 'Tail End Charlie ride';
+    final text = [
+      title,
+      'Ride code: ${session.rideCode}',
+      '',
+      ...riders,
+    ].join('\n');
+    unawaited(
+      SharePlus.instance.share(
+        ShareParams(text: text, subject: 'Riders on $title'),
       ),
     );
   }

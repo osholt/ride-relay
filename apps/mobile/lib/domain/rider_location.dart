@@ -1,6 +1,7 @@
 import '../features/map/motorcycle_icon.dart';
 import 'geo_point.dart';
 import 'ride_role.dart';
+import 'rider_color.dart';
 
 class LocationSample {
   const LocationSample({
@@ -56,6 +57,7 @@ class RiderLocation {
     required this.sample,
     required this.receivedAt,
     this.motorcycleStyle = motorcycleIconStyleDefault,
+    this.riderColor = riderColorDefault,
   });
 
   final String riderId;
@@ -64,6 +66,7 @@ class RiderLocation {
   final LocationSample sample;
   final DateTime receivedAt;
   final MotorcycleIconStyle motorcycleStyle;
+  final RiderColor riderColor;
 
   Map<String, Object?> toJson() => {
     'riderId': riderId,
@@ -72,6 +75,7 @@ class RiderLocation {
     'sample': sample.toJson(),
     'receivedAt': receivedAt.toUtc().toIso8601String(),
     'motorcycleStyle': motorcycleStyle.name,
+    'riderColor': riderColor.name,
   };
 
   factory RiderLocation.fromJson(Map<String, Object?> json) => RiderLocation(
@@ -85,6 +89,7 @@ class RiderLocation {
     motorcycleStyle: motorcycleIconStyleFromName(
       json['motorcycleStyle'] as String?,
     ),
+    riderColor: riderColorFromName(json['riderColor'] as String?),
   );
 }
 

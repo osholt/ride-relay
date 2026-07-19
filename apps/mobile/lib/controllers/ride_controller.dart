@@ -11,6 +11,7 @@ import '../domain/quick_message.dart';
 import '../domain/ride_event.dart';
 import '../domain/ride_role.dart';
 import '../domain/ride_session.dart';
+import '../domain/rider_color.dart';
 import '../domain/session_store.dart';
 import '../features/map/motorcycle_icon.dart';
 import '../services/nearby_bridge.dart';
@@ -146,8 +147,10 @@ class RideController extends ChangeNotifier {
 
   String get rideCodeShareText {
     final activeSession = _requireSession();
-    return 'Join my Tail End Charlie group. Enter ride code '
-        '${activeSession.rideCode} in the app.';
+    final name = activeSession.rideName;
+    final group = name == null ? 'my Tail End Charlie group' : '"$name"';
+    return 'Join $group. Enter ride code ${activeSession.rideCode} in the '
+        'app.';
   }
 
   Future<void> initialize() async {
@@ -175,11 +178,15 @@ class RideController extends ChangeNotifier {
   Future<void> createRide(
     String displayName, {
     MotorcycleIconStyle motorcycleStyle = motorcycleIconStyleDefault,
+    RiderColor riderColor = riderColorDefault,
+    String? rideName,
   }) async {
     await _run(() async {
       await _createRide(
         displayName: displayName,
         motorcycleStyle: motorcycleStyle,
+        riderColor: riderColor,
+        rideName: rideName,
       );
     });
   }
@@ -187,6 +194,7 @@ class RideController extends ChangeNotifier {
   Future<void> createSimulationRide({
     int riderCount = RideSession.defaultSimulationRiderCount,
     MotorcycleIconStyle motorcycleStyle = motorcycleIconStyleDefault,
+    RiderColor riderColor = riderColorDefault,
   }) async {
     await _run(() async {
       await _createRide(
@@ -194,6 +202,7 @@ class RideController extends ChangeNotifier {
         isSimulation: true,
         simulationRiderCount: _validatedSimulationRiderCount(riderCount),
         motorcycleStyle: motorcycleStyle,
+        riderColor: riderColor,
       );
     });
   }
@@ -216,6 +225,8 @@ class RideController extends ChangeNotifier {
           riderCount ?? activeSession.simulationRiderCount,
         ),
         motorcycleStyle: activeSession.motorcycleStyle,
+        riderColor: activeSession.riderColor,
+        rideName: activeSession.rideName,
       );
     });
   }
@@ -247,6 +258,7 @@ class RideController extends ChangeNotifier {
     String rideCode,
     String displayName, {
     MotorcycleIconStyle motorcycleStyle = motorcycleIconStyleDefault,
+    RiderColor riderColor = riderColorDefault,
   }) async {
     await _run(() async {
       final normalisedCode = rideCode.trim();
@@ -264,6 +276,7 @@ class RideController extends ChangeNotifier {
         role: RideRole.rider,
         joinedAt: now,
         motorcycleStyle: motorcycleStyle,
+        riderColor: riderColor,
       );
       _session = session;
       await _sessionStore.save(session);
@@ -273,6 +286,7 @@ class RideController extends ChangeNotifier {
           'displayName': session.displayName,
           'role': session.role.name,
           'motorcycleStyle': session.motorcycleStyle.name,
+          'riderColor': session.riderColor.name,
         },
       );
     });
@@ -500,8 +514,11 @@ class RideController extends ChangeNotifier {
     bool isSimulation = false,
     int simulationRiderCount = RideSession.defaultSimulationRiderCount,
     MotorcycleIconStyle motorcycleStyle = motorcycleIconStyleDefault,
+    RiderColor riderColor = riderColorDefault,
+    String? rideName,
   }) async {
     final now = _clock();
+    final normalisedRideName = rideName?.trim();
     final session = RideSession(
       rideId: _idFactory(),
       rideCode: _generateCode(),
@@ -513,6 +530,10 @@ class RideController extends ChangeNotifier {
       isSimulation: isSimulation,
       simulationRiderCount: simulationRiderCount,
       motorcycleStyle: motorcycleStyle,
+      riderColor: riderColor,
+      rideName: normalisedRideName == null || normalisedRideName.isEmpty
+          ? null
+          : normalisedRideName,
     );
     _session = session;
     await _sessionStore.save(session);
@@ -523,6 +544,8 @@ class RideController extends ChangeNotifier {
         'role': session.role.name,
         if (isSimulation) 'simulation': true,
         'motorcycleStyle': session.motorcycleStyle.name,
+        'riderColor': session.riderColor.name,
+        if (session.rideName != null) 'rideName': session.rideName,
       },
     );
   }

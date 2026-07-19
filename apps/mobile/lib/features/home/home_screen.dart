@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/ride_controller.dart';
+import '../../controllers/rider_profile_controller.dart';
+import '../../domain/rider_color.dart';
 import '../map/motorcycle_icon.dart';
+import '../settings/emergency_info_sheet.dart';
 import '../settings/unit_settings_sheet.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -11,10 +15,12 @@ class HomeScreen extends StatelessWidget {
     super.key,
     required this.controller,
     required this.distanceUnits,
+    required this.riderProfile,
   });
 
   final RideController controller;
   final DistanceUnitController distanceUnits;
+  final RiderProfileController riderProfile;
 
   @override
   Widget build(BuildContext context) {
@@ -87,10 +93,21 @@ class HomeScreen extends StatelessWidget {
             Positioned(
               top: 4,
               right: 8,
-              child: IconButton(
-                tooltip: 'Settings',
-                onPressed: () => UnitSettingsSheet.show(context, distanceUnits),
-                icon: const Icon(Icons.settings_outlined),
+              child: Row(
+                children: [
+                  IconButton(
+                    tooltip: 'Emergency info',
+                    onPressed: () =>
+                        EmergencyInfoSheet.show(context, riderProfile),
+                    icon: const Icon(Icons.medical_information_outlined),
+                  ),
+                  IconButton(
+                    tooltip: 'Settings',
+                    onPressed: () =>
+                        UnitSettingsSheet.show(context, distanceUnits),
+                    icon: const Icon(Icons.settings_outlined),
+                  ),
+                ],
               ),
             ),
           ],
@@ -111,6 +128,7 @@ class HomeScreen extends StatelessWidget {
       backgroundColor: const Color(0xFF171D25),
       builder: (sheetContext) => _RideForm(
         controller: controller,
+        riderProfile: riderProfile,
         creating: creating,
         onComplete: () => Navigator.of(sheetContext).pop(),
       ),
@@ -147,11 +165,13 @@ class _BrandMark extends StatelessWidget {
 class _RideForm extends StatefulWidget {
   const _RideForm({
     required this.controller,
+    required this.riderProfile,
     required this.creating,
     required this.onComplete,
   });
 
   final RideController controller;
+  final RiderProfileController riderProfile;
   final bool creating;
   final VoidCallback onComplete;
 
@@ -160,19 +180,34 @@ class _RideForm extends StatefulWidget {
 }
 
 class _RideFormState extends State<_RideForm> {
-  final _nameController = TextEditingController();
+  late final _nameController = TextEditingController(
+    text: widget.riderProfile.displayName,
+  );
   final _codeController = TextEditingController();
-  MotorcycleIconStyle _selectedStyle = motorcycleIconStyleDefault;
+  final _rideNameController = TextEditingController();
+  late MotorcycleIconStyle _selectedStyle = widget.riderProfile.motorcycleStyle;
+  late RiderColor _selectedColor = widget.riderProfile.riderColor;
+
+  /// Set once a created ride's code needs sharing before handing off to the
+  /// map - the moment a leader most needs it, with people waiting nearby.
+  bool _showShareStep = false;
 
   @override
   void dispose() {
     _nameController.dispose();
     _codeController.dispose();
+    _rideNameController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_showShareStep) {
+      return _ShareCodeStep(
+        controller: widget.controller,
+        onContinue: _finishCreating,
+      );
+    }
     return AnimatedBuilder(
       animation: widget.controller,
       builder: (context, _) => Padding(
@@ -198,6 +233,19 @@ class _RideFormState extends State<_RideForm> {
               style: const TextStyle(color: Color(0xFFABB5C1)),
             ),
             const SizedBox(height: 24),
+            if (widget.creating) ...[
+              TextField(
+                controller: _rideNameController,
+                maxLength: 32,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(
+                  labelText: 'Ride name (optional)',
+                  hintText: 'e.g. Sunday coast run',
+                  counterText: '',
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
             TextField(
               controller: _nameController,
               autofocus: true,
@@ -231,29 +279,73 @@ class _RideFormState extends State<_RideForm> {
                         width: 56,
                         decoration: BoxDecoration(
                           color: selected
-                              ? const Color(0xFF6ED89A).withValues(alpha: 0.16)
+                              ? _selectedColor.color.withValues(alpha: 0.16)
                               : const Color(0xFF1D2530),
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
                             color: selected
-                                ? const Color(0xFF6ED89A)
+                                ? _selectedColor.color
                                 : Colors.transparent,
                             width: 2,
                           ),
                         ),
                         child: Center(
-                          child: MotorcycleIcon(
+                          child: RiderMarkerBadge(
                             style: style,
-                            color: selected
-                                ? const Color(0xFF6ED89A)
-                                : const Color(0xFFABB5C1),
+                            badgeColor: _selectedColor.color,
                             size: 34,
+                            borderWidth: 0,
                           ),
                         ),
                       ),
                     ),
                   );
                 },
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Your colour',
+              style: TextStyle(color: Color(0xFFABB5C1)),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 44,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: RiderColor.values.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 10),
+                itemBuilder: (context, index) {
+                  final riderColor = RiderColor.values[index];
+                  final selected = riderColor == _selectedColor;
+                  return Tooltip(
+                    message: riderColor.label,
+                    child: InkWell(
+                      key: Key('rider-colour-${riderColor.name}'),
+                      customBorder: const CircleBorder(),
+                      onTap: () => setState(() => _selectedColor = riderColor),
+                      child: Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: riderColor.color,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: selected ? Colors.white : Colors.transparent,
+                            width: 2.5,
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.only(top: 6),
+              child: Text(
+                'Lead and Tail End Charlie always show in their own reserved colours, whatever you pick here.',
+                style: TextStyle(color: Color(0xFF7F8A98), fontSize: 12),
               ),
             ),
             if (!widget.creating) ...[
@@ -303,22 +395,37 @@ class _RideFormState extends State<_RideForm> {
   }
 
   Future<void> _submit() async {
+    final name = _nameController.text;
     if (widget.creating) {
       await widget.controller.createRide(
-        _nameController.text,
+        name,
         motorcycleStyle: _selectedStyle,
+        riderColor: _selectedColor,
+        rideName: _rideNameController.text,
       );
     } else {
       await widget.controller.joinRide(
         _codeController.text,
-        _nameController.text,
+        name,
         motorcycleStyle: _selectedStyle,
+        riderColor: _selectedColor,
       );
     }
     if (widget.controller.hasActiveRide && mounted) {
-      widget.onComplete();
+      await widget.riderProfile.save(
+        displayName: name.trim(),
+        motorcycleStyle: _selectedStyle,
+        riderColor: _selectedColor,
+      );
+      if (widget.creating) {
+        setState(() => _showShareStep = true);
+      } else {
+        widget.onComplete();
+      }
     }
   }
+
+  void _finishCreating() => widget.onComplete();
 
   Future<void> _pasteRideCode() async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
@@ -326,5 +433,90 @@ class _RideFormState extends State<_RideForm> {
     if (text == null || text.isEmpty || !mounted) return;
     _codeController.text = text;
     _codeController.selection = TextSelection.collapsed(offset: text.length);
+  }
+}
+
+/// Shown immediately after creating a ride - the moment a leader most needs
+/// the code, with riders waiting nearby, rather than requiring a trip
+/// through the ride menu to "Ride details" to find it.
+class _ShareCodeStep extends StatelessWidget {
+  const _ShareCodeStep({required this.controller, required this.onContinue});
+
+  final RideController controller;
+  final VoidCallback onContinue;
+
+  @override
+  Widget build(BuildContext context) {
+    final session = controller.session;
+    final code = session?.rideCode ?? '';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Icon(Icons.check_circle, color: Color(0xFF6ED89A), size: 40),
+          const SizedBox(height: 16),
+          Text(
+            session?.rideName ?? 'Ride created',
+            style: Theme.of(context).textTheme.headlineMedium,
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Share this code so the group can join.',
+            style: TextStyle(color: Color(0xFFABB5C1)),
+          ),
+          const SizedBox(height: 20),
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 18),
+            decoration: BoxDecoration(
+              color: const Color(0xFF111720),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFF2A3441)),
+            ),
+            child: Center(
+              child: Text(
+                code,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 34,
+                  letterSpacing: 6,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => Clipboard.setData(ClipboardData(text: code)),
+                  icon: const Icon(Icons.copy_outlined),
+                  label: const Text('Copy'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: () => SharePlus.instance.share(
+                    ShareParams(
+                      text: controller.rideCodeShareText,
+                      subject: 'Join my Tail End Charlie group',
+                    ),
+                  ),
+                  icon: const Icon(Icons.ios_share),
+                  label: const Text('Share'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 22),
+          TextButton(
+            onPressed: onContinue,
+            child: const Text('Continue to ride'),
+          ),
+        ],
+      ),
+    );
   }
 }

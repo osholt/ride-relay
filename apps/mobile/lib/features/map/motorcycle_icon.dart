@@ -102,6 +102,46 @@ class MotorcycleIcon extends StatelessWidget {
   );
 }
 
+/// A white bike silhouette on a filled circle in the rider's colour - reads
+/// clearly against any basemap, unlike a flat-tinted icon alone, and matches
+/// the badge look used for the "you are here" marker.
+class RiderMarkerBadge extends StatelessWidget {
+  const RiderMarkerBadge({
+    super.key,
+    required this.style,
+    required this.badgeColor,
+    this.size = 34,
+    this.borderColor = const Color(0xFF10151C),
+    this.borderWidth = 2,
+  });
+
+  final MotorcycleIconStyle style;
+  final Color badgeColor;
+  final double size;
+  final Color borderColor;
+  final double borderWidth;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: size,
+    height: size,
+    decoration: BoxDecoration(
+      color: badgeColor,
+      shape: BoxShape.circle,
+      border: borderWidth <= 0
+          ? null
+          : Border.all(color: borderColor, width: borderWidth),
+    ),
+    child: Center(
+      child: MotorcycleIcon(
+        style: style,
+        color: Colors.white,
+        size: size * 0.62,
+      ),
+    ),
+  );
+}
+
 /// Raw PNG bytes for a style's asset, for registering with
 /// `MapLibreMapController.addImage(name, bytes, sdf: true)` on the native
 /// map. SDF images are tinted per-feature via the layer's `iconColor` paint

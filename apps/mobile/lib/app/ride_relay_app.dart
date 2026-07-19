@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../controllers/distance_unit_controller.dart';
 import '../controllers/ride_controller.dart';
+import '../controllers/rider_profile_controller.dart';
 import '../features/home/home_screen.dart';
 import '../features/ride/active_ride_shell.dart';
 
@@ -10,11 +11,13 @@ class RideRelayApp extends StatelessWidget {
     super.key,
     required this.controller,
     required this.distanceUnits,
+    required this.riderProfile,
     this.enableNativeServices = true,
   });
 
   final RideController controller;
   final DistanceUnitController distanceUnits;
+  final RiderProfileController riderProfile;
   final bool enableNativeServices;
 
   @override
@@ -99,8 +102,13 @@ class RideRelayApp extends StatelessWidget {
                 distanceUnits: distanceUnits,
                 eventStore: controller.eventStore,
                 enableNativeServices: enableNativeServices,
+                riderProfile: riderProfile,
               )
-            : HomeScreen(controller: controller, distanceUnits: distanceUnits),
+            : HomeScreen(
+                controller: controller,
+                distanceUnits: distanceUnits,
+                riderProfile: riderProfile,
+              ),
       ),
     );
   }

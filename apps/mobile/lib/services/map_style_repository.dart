@@ -50,7 +50,7 @@ class MapStyleRepository {
       return cachedStyle;
     }
     try {
-      final style = await _downloadAndNormalize();
+      final style = await _downloadWithRetries();
       if (configuration.persistentCachingAllowed) {
         await directory.create(recursive: true);
         final temporary = File('${cached.path}.tmp');
@@ -62,6 +62,24 @@ class MapStyleRepository {
     } on Object {
       return cachedStyle ?? fallbackStyle;
     }
+  }
+
+  /// Without persistent caching (the default until a build opts in), every
+  /// cold launch needs a fresh fetch to show real tiles at all - one failed
+  /// attempt on a slow ride-start connection otherwise commits the whole
+  /// session to the tile-less fallback. A couple of quick retries covers the
+  /// common transient case without meaningfully delaying a genuine failure.
+  Future<String> _downloadWithRetries() async {
+    const attempts = 3;
+    for (var attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        return await _downloadAndNormalize();
+      } on Object {
+        if (attempt == attempts) rethrow;
+        await Future<void>.delayed(Duration(milliseconds: 400 * attempt));
+      }
+    }
+    throw StateError('unreachable');
   }
 
   Future<String> _downloadAndNormalize() async {

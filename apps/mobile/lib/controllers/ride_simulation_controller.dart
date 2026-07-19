@@ -8,6 +8,7 @@ import '../domain/hazard.dart';
 import '../domain/ride_event.dart';
 import '../domain/ride_role.dart';
 import '../domain/ride_session.dart';
+import '../domain/rider_color.dart';
 import '../domain/rider_location.dart';
 import '../features/map/motorcycle_icon.dart';
 import '../services/geo_calculations.dart';
@@ -38,6 +39,7 @@ class SimulatedRiderSnapshot {
     required this.offRouteTrail,
     required this.travelTrail,
     required this.motorcycleStyle,
+    required this.riderColor,
   });
 
   final String id;
@@ -50,6 +52,7 @@ class SimulatedRiderSnapshot {
   final GeoPoint position;
   final double headingDegrees;
   final MotorcycleIconStyle motorcycleStyle;
+  final RiderColor riderColor;
 
   /// Ephemeral visual trace for the current simulation run. Keeping this out
   /// of the durable awareness history prevents an older demo route from being
@@ -222,6 +225,7 @@ class RideSimulationController extends ChangeNotifier {
         offRouteTrail: List.unmodifiable(agent.offRouteTrail),
         travelTrail: List.unmodifiable(_displayTrailFor(agent)),
         motorcycleStyle: agent.motorcycleStyle,
+        riderColor: agent.riderColor,
       );
     }),
   );
@@ -230,11 +234,15 @@ class RideSimulationController extends ChangeNotifier {
     final trailingSpan = math.min(860, math.max(160, leadStart * 0.82));
     double initialProgress(int index) =>
         math.max(0, leadStart - trailingSpan * index / (riderCount - 1));
-    // Cycles through the catalogue so a full Ride Lab group shows a variety
-    // of silhouettes without repeating the local rider's own chosen style.
+    // Cycles through the catalogues so a full Ride Lab group shows a variety
+    // of silhouettes and colours without repeating the local rider's own
+    // choices. Lead/TEC roles still override to their reserved colour when
+    // rendered, so this only ever shows for plain riders.
     MotorcycleIconStyle demoStyleFor(int index) =>
         MotorcycleIconStyle.values[(index + 1) %
             MotorcycleIconStyle.values.length];
+    RiderColor demoColorFor(int index) =>
+        RiderColor.values[(index + 1) % RiderColor.values.length];
     _SimulatedAgent rider({
       required String id,
       required String displayName,
@@ -250,6 +258,7 @@ class RideSimulationController extends ChangeNotifier {
       trafficPhaseSeconds: (3 + index * 12) % 58,
       isLocal: isLocal,
       motorcycleStyle: isLocal ? _session.motorcycleStyle : demoStyleFor(index),
+      riderColor: isLocal ? _session.riderColor : demoColorFor(index),
     );
 
     final agents = <_SimulatedAgent>[
@@ -845,6 +854,7 @@ class _SimulatedAgent {
     required this.speedFactor,
     required this.trafficPhaseSeconds,
     required this.motorcycleStyle,
+    required this.riderColor,
     this.isLocal = false,
   });
 
@@ -855,6 +865,7 @@ class _SimulatedAgent {
   final double speedFactor;
   final double trafficPhaseSeconds;
   final MotorcycleIconStyle motorcycleStyle;
+  final RiderColor riderColor;
   final bool isLocal;
   bool isOffRoute = false;
   final List<GeoPoint> offRouteTrail = [];

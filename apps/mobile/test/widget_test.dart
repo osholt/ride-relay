@@ -3,12 +3,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/app/ride_relay_app.dart';
 import 'package:ride_relay/controllers/distance_unit_controller.dart';
 import 'package:ride_relay/controllers/ride_controller.dart';
+import 'package:ride_relay/controllers/rider_profile_controller.dart';
 import 'package:ride_relay/data/in_memory_event_store.dart';
 import 'package:ride_relay/data/in_memory_session_store.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/services/nearby_bridge.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  setUpAll(() async {
+    SharedPreferences.setMockInitialValues({});
+    _riderProfile = await RiderProfileController.load();
+  });
+
   testWidgets('home screen exposes the two ride entry points', (tester) async {
     final controller = await _controller();
     await tester.pumpWidget(_app(controller));
@@ -33,6 +40,7 @@ void main() {
       RideRelayApp(
         controller: controller,
         distanceUnits: distanceUnits,
+        riderProfile: _riderProfile,
         enableNativeServices: false,
       ),
     );
@@ -180,9 +188,12 @@ void main() {
   });
 }
 
+late RiderProfileController _riderProfile;
+
 RideRelayApp _app(RideController controller) => RideRelayApp(
   controller: controller,
   distanceUnits: DistanceUnitController.forLocale(const Locale('en', 'GB')),
+  riderProfile: _riderProfile,
   enableNativeServices: false,
 );
 
