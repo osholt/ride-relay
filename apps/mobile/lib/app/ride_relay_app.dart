@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../controllers/distance_unit_controller.dart';
 import '../controllers/ride_controller.dart';
 import '../controllers/rider_profile_controller.dart';
+import '../controllers/shared_route_controller.dart';
 import '../features/home/home_screen.dart';
 import '../features/ride/active_ride_shell.dart';
 
@@ -12,12 +13,14 @@ class RideRelayApp extends StatelessWidget {
     required this.controller,
     required this.distanceUnits,
     required this.riderProfile,
+    required this.sharedRoutes,
     this.enableNativeServices = true,
   });
 
   final RideController controller;
   final DistanceUnitController distanceUnits;
   final RiderProfileController riderProfile;
+  final SharedRouteController sharedRoutes;
   final bool enableNativeServices;
 
   @override
@@ -94,7 +97,7 @@ class RideRelayApp extends StatelessWidget {
         ),
       ),
       home: AnimatedBuilder(
-        animation: Listenable.merge([controller, distanceUnits]),
+        animation: Listenable.merge([controller, distanceUnits, sharedRoutes]),
         builder: (context, _) => controller.hasActiveRide
             ? ActiveRideShell(
                 key: ValueKey(controller.session!.rideId),
@@ -103,11 +106,13 @@ class RideRelayApp extends StatelessWidget {
                 eventStore: controller.eventStore,
                 enableNativeServices: enableNativeServices,
                 riderProfile: riderProfile,
+                sharedRoutes: sharedRoutes,
               )
             : HomeScreen(
                 controller: controller,
                 distanceUnits: distanceUnits,
                 riderProfile: riderProfile,
+                sharedRoutes: sharedRoutes,
               ),
       ),
     );

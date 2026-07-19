@@ -65,6 +65,7 @@ class RideMapFeature extends StatefulWidget {
     this.onRouteChanged,
     this.changeRouteRequestToken,
     this.onChangeRouteRequestHandled,
+    this.pendingSharedGpxFile,
     this.acquireCurrentPosition,
     this.navigationExportCoordinator,
     this.routeStore,
@@ -100,6 +101,7 @@ class RideMapFeature extends StatefulWidget {
     ValueChanged<ImportedRoute?>? onRouteChanged,
     Object? changeRouteRequestToken,
     VoidCallback? onChangeRouteRequestHandled,
+    PickedGpxFile? pendingSharedGpxFile,
     Future<GeoPoint?> Function()? acquireCurrentPosition,
     RouteStore? routeStore,
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
@@ -128,6 +130,7 @@ class RideMapFeature extends StatefulWidget {
     onRouteChanged: onRouteChanged,
     changeRouteRequestToken: changeRouteRequestToken,
     onChangeRouteRequestHandled: onChangeRouteRequestHandled,
+    pendingSharedGpxFile: pendingSharedGpxFile,
     acquireCurrentPosition: acquireCurrentPosition,
     routeStore: routeStore,
     distanceUnit: distanceUnit,
@@ -157,6 +160,7 @@ class RideMapFeature extends StatefulWidget {
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final Object? changeRouteRequestToken;
   final VoidCallback? onChangeRouteRequestHandled;
+  final PickedGpxFile? pendingSharedGpxFile;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
   final RouteStore? routeStore;
@@ -266,6 +270,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         onRouteChanged: widget.onRouteChanged,
         changeRouteRequestToken: widget.changeRouteRequestToken,
         onChangeRouteRequestHandled: widget.onChangeRouteRequestHandled,
+        pendingSharedGpxFile: widget.pendingSharedGpxFile,
         acquireCurrentPosition: widget.acquireCurrentPosition,
         navigationExportCoordinator: widget.navigationExportCoordinator,
         distanceUnit: widget.distanceUnit,
@@ -320,6 +325,7 @@ class RideMapScreen extends StatefulWidget {
     this.onRouteChanged,
     this.changeRouteRequestToken,
     this.onChangeRouteRequestHandled,
+    this.pendingSharedGpxFile,
     this.acquireCurrentPosition,
     this.navigationExportCoordinator,
     this.destinationRoutePlanner,
@@ -357,6 +363,7 @@ class RideMapScreen extends StatefulWidget {
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final Object? changeRouteRequestToken;
   final VoidCallback? onChangeRouteRequestHandled;
+  final PickedGpxFile? pendingSharedGpxFile;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
   final DestinationRoutePlanner? destinationRoutePlanner;
@@ -2295,10 +2302,30 @@ class _RideMapScreenState extends State<RideMapScreen> {
       return;
     }
     _handledChangeRouteRequestToken = token;
+    final sharedFile = widget.pendingSharedGpxFile;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.onChangeRouteRequestHandled?.call();
-      if (mounted) _showChangeRouteSheet();
+      if (!mounted) return;
+      if (sharedFile != null) {
+        unawaited(_importSharedGpx(sharedFile));
+      } else {
+        _showChangeRouteSheet();
+      }
     });
+  }
+
+  /// A file the platform already handed us (Open in..., a share sheet)
+  /// skips the picker sheet entirely and goes straight through the same
+  /// parse-and-activate pipeline a manual import uses.
+  Future<void> _importSharedGpx(PickedGpxFile file) async {
+    try {
+      final route = widget.routeImporter.importFromFile(file);
+      await _activateRoute(route);
+    } on FormatException catch (error) {
+      _showMessage(error.message);
+    } on Object catch (error) {
+      _showMessage('Could not import GPX: $error');
+    }
   }
 
   Future<void> _showChangeRouteSheet() async {

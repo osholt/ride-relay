@@ -12,6 +12,8 @@ import UIKit
   private var discoverer: Discoverer?
   private var connectedPeers = Set<EndpointID>()
   private var pendingPeers = Set<EndpointID>()
+  private var gpxImportChannel: FlutterMethodChannel?
+  private var pendingGpxImport: (data: Data, fileName: String)?
 
   override func application(
     _ application: UIApplication,
@@ -81,6 +83,41 @@ import UIKit
     )
     eventChannel.setStreamHandler(self)
     nearbyEventChannel = eventChannel
+
+    let gpxChannel = FlutterMethodChannel(
+      name: "me.osholt.ride_relay/gpx_import",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    gpxChannel.setMethodCallHandler { [weak self] call, result in
+      guard call.method == "consumePendingGpxImport" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      guard let pending = self?.pendingGpxImport else {
+        result(nil)
+        return
+      }
+      self?.pendingGpxImport = nil
+      result([
+        "bytes": FlutterStandardTypedData(bytes: pending.data),
+        "fileName": pending.fileName,
+      ])
+    }
+    gpxImportChannel = gpxChannel
+  }
+
+  /// Called from SceneDelegate when the OS hands this app a file URL (Open
+  /// in..., a share sheet, or a cold launch from one of those). Dart pulls
+  /// this on its own schedule via consumePendingGpxImport rather than being
+  /// pushed to live, since a cold-start URL arrives before Dart's engine -
+  /// and therefore any method call handler - is guaranteed to exist yet.
+  func handleIncomingGpx(url: URL) {
+    let isSecurityScoped = url.startAccessingSecurityScopedResource()
+    defer {
+      if isSecurityScoped { url.stopAccessingSecurityScopedResource() }
+    }
+    guard let data = try? Data(contentsOf: url) else { return }
+    pendingGpxImport = (data: data, fileName: url.lastPathComponent)
   }
 
   private func startNearby(serviceID: String, endpointName: String, result: @escaping FlutterResult) {

@@ -5,6 +5,7 @@ import 'app/ride_relay_app.dart';
 import 'controllers/distance_unit_controller.dart';
 import 'controllers/ride_controller.dart';
 import 'controllers/rider_profile_controller.dart';
+import 'controllers/shared_route_controller.dart';
 import 'data/shared_preferences_session_store.dart';
 import 'data/sqlite_event_store.dart';
 import 'services/nearby_bridge.dart';
@@ -29,12 +30,14 @@ Future<void> main() async {
     locale: WidgetsBinding.instance.platformDispatcher.locale,
   );
   final riderProfile = await RiderProfileController.load();
+  final sharedRoutes = await SharedRouteController.load();
 
   runApp(
     RideRelayApp(
       controller: controller,
       distanceUnits: distanceUnits,
       riderProfile: riderProfile,
+      sharedRoutes: sharedRoutes,
     ),
   );
 }

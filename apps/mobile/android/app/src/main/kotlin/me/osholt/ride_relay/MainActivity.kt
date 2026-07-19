@@ -1,8 +1,12 @@
 package me.osholt.ride_relay
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.os.Bundle
+import android.provider.OpenableColumns
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.google.android.gms.nearby.Nearby
@@ -28,9 +32,12 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val METHOD_CHANNEL = "me.osholt.ride_relay/nearby"
         private const val EVENT_CHANNEL = "me.osholt.ride_relay/nearby_events"
+        private const val GPX_METHOD_CHANNEL = "me.osholt.ride_relay/gpx_import"
         private const val PERMISSION_REQUEST = 7102
         private const val LOCAL_NETWORK_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
     }
+
+    private var pendingGpxImport: Pair<ByteArray, String>? = null
 
     private val connectionsClient: ConnectionsClient by lazy {
         Nearby.getConnectionsClient(this)
@@ -97,6 +104,70 @@ class MainActivity : FlutterActivity() {
                 }
                 else -> result.notImplemented()
             }
+        }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            GPX_METHOD_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            if (call.method != "consumePendingGpxImport") {
+                result.notImplemented()
+                return@setMethodCallHandler
+            }
+            val pending = pendingGpxImport
+            if (pending == null) {
+                result.success(null)
+            } else {
+                pendingGpxImport = null
+                result.success(mapOf("bytes" to pending.first, "fileName" to pending.second))
+            }
+        }
+    }
+
+    // Dart pulls this on its own schedule via consumePendingGpxImport rather
+    // than being pushed to live, since a cold launch's intent arrives before
+    // the Flutter engine - and therefore any method call handler - exists.
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        captureGpxIntent(intent)
+    }
+
+    // launchMode="singleTop" routes a new VIEW/SEND intent here instead of a
+    // fresh onCreate while this activity is already on screen.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        captureGpxIntent(intent)
+    }
+
+    private fun captureGpxIntent(intent: Intent?) {
+        val uri = when (intent?.action) {
+            Intent.ACTION_VIEW -> intent.data
+            Intent.ACTION_SEND -> extraStreamUri(intent)
+            else -> null
+        } ?: return
+        val bytes = try {
+            contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        } catch (error: Exception) {
+            null
+        } ?: return
+        pendingGpxImport = bytes to (queryDisplayName(uri) ?: uri.lastPathSegment ?: "shared.gpx")
+    }
+
+    @Suppress("DEPRECATION")
+    private fun extraStreamUri(intent: Intent): Uri? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM)
+        }
+
+    private fun queryDisplayName(uri: Uri): String? {
+        if (uri.scheme != "content") return null
+        return try {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                if (it.moveToFirst()) it.getString(0) else null
+            }
+        } catch (error: Exception) {
+            null
         }
     }
 

@@ -13,6 +13,7 @@ import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/ride_simulation_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
+import '../../controllers/shared_route_controller.dart';
 import '../../controllers/situational_awareness_controller.dart';
 import '../../data/in_memory_event_store.dart';
 import '../../data/json_file_route_store.dart';
@@ -36,6 +37,7 @@ import '../../relay/sqlite_relay_queue.dart';
 import '../../services/device_location_source.dart';
 import '../../services/demo_route_loader.dart';
 import '../../services/external_hazard_provider.dart';
+import '../../services/gpx_import_source.dart';
 import '../../services/leader_ride_status.dart';
 import '../../services/route_decision_point_extractor.dart';
 import '../../services/ride_completion_detector.dart';
@@ -58,6 +60,7 @@ class ActiveRideShell extends StatefulWidget {
     required this.eventStore,
     required this.enableNativeServices,
     required this.riderProfile,
+    required this.sharedRoutes,
   });
 
   final RideController rideController;
@@ -65,6 +68,7 @@ class ActiveRideShell extends StatefulWidget {
   final EventStore eventStore;
   final bool enableNativeServices;
   final RiderProfileController riderProfile;
+  final SharedRouteController sharedRoutes;
 
   @override
   State<ActiveRideShell> createState() => _ActiveRideShellState();
@@ -200,6 +204,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   int _routeGeneration = 0;
   int _selectedIndex = 0;
   Object? _changeRouteRequestToken;
+  PickedGpxFile? _pendingSharedGpxFile;
   int _handledAutomaticMarkerActivation = 0;
   int _handledAutomaticMarkerRideOffActivation = 0;
   DateTime? _lastSimulationNavigationUpdateAt;
@@ -218,7 +223,40 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   void initState() {
     super.initState();
     widget.rideController.addListener(_onRideControllerChanged);
+    widget.sharedRoutes.addListener(_onSharedRoutesChanged);
+    if (widget.sharedRoutes.pending case final file?) {
+      _selectedIndex = 0;
+      _changeRouteRequestToken = Object();
+      _pendingSharedGpxFile = file;
+      _clearSharedRoutePending();
+    }
     unawaited(_initialize());
+  }
+
+  /// A GPX file can arrive (via the platform's "Open in..." delivery) while
+  /// this ride is already on screen - e.g. resuming from background. Reuses
+  /// the same request path as the ride menu's "Change route", just with the
+  /// file already in hand instead of asking the map to show its picker.
+  void _onSharedRoutesChanged() {
+    if (!mounted) return;
+    final file = widget.sharedRoutes.pending;
+    if (file == null) return;
+    setState(() {
+      _selectedIndex = 0;
+      _changeRouteRequestToken = Object();
+      _pendingSharedGpxFile = file;
+    });
+    _clearSharedRoutePending();
+  }
+
+  /// Deferred a frame so this never calls notifyListeners() back into
+  /// SharedRouteController from inside its own listener dispatch (this method
+  /// runs either from that listener, or from initState before the first
+  /// frame - neither is a safe place to notify synchronously).
+  void _clearSharedRoutePending() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      widget.sharedRoutes.clearPending();
+    });
   }
 
   Future<void> _initialize() async {
@@ -1193,6 +1231,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       onRouteChanged: _onRouteChanged,
       changeRouteRequestToken: _changeRouteRequestToken,
       onChangeRouteRequestHandled: _clearChangeRouteRequest,
+      pendingSharedGpxFile: _pendingSharedGpxFile,
       acquireCurrentPosition: _isSimulation
           ? () async => _mapPosition.value
           : _acquireCurrentPosition,
@@ -1370,10 +1409,14 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   /// picker itself lives entirely in [RideMapScreen] (it alone owns the
   /// on-disk route file), so this only ever hands it a fresh token to react
   /// to - never duplicates its import/demo-route/destination logic here.
+  /// Explicitly clears any pending shared file: without that, a stale one
+  /// from an earlier "Open in..." delivery would silently skip the picker
+  /// this menu action is supposed to show.
   void _requestRouteChange() {
     setState(() {
       _selectedIndex = 0;
       _changeRouteRequestToken = Object();
+      _pendingSharedGpxFile = null;
     });
   }
 
@@ -1383,7 +1426,10 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   /// can safely null the token back out once the request has been actioned.
   void _clearChangeRouteRequest() {
     if (_changeRouteRequestToken != null) {
-      setState(() => _changeRouteRequestToken = null);
+      setState(() {
+        _changeRouteRequestToken = null;
+        _pendingSharedGpxFile = null;
+      });
     }
   }
 
@@ -1590,6 +1636,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   @override
   void dispose() {
     widget.rideController.removeListener(_onRideControllerChanged);
+    widget.sharedRoutes.removeListener(_onSharedRoutesChanged);
     _simulationController?.removeListener(_onSimulationVisualChanged);
     _simulationController?.dispose();
     _awarenessController?.removeListener(_onAwarenessChanged);

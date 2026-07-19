@@ -21,11 +21,16 @@ class RouteImporter {
   Future<ImportedRoute?> importFromPicker() async {
     final file = await source.pickGpxFile();
     if (file == null) return null;
-    return parser.parse(
-      file.bytes,
-      routeId: _idFactory(),
-      sourceFileName: file.name,
-      importedAt: _clock(),
-    );
+    return importFromFile(file);
   }
+
+  /// Parses a file already obtained some other way - e.g. handed over by the
+  /// platform's "Open in..." delivery - through the same pipeline as a
+  /// manually picked file, so both paths validate and fail identically.
+  ImportedRoute importFromFile(PickedGpxFile file) => parser.parse(
+    file.bytes,
+    routeId: _idFactory(),
+    sourceFileName: file.name,
+    importedAt: _clock(),
+  );
 }

@@ -5,6 +5,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
+import '../../controllers/shared_route_controller.dart';
 import '../../domain/rider_color.dart';
 import '../map/motorcycle_icon.dart';
 import '../settings/emergency_info_sheet.dart';
@@ -16,11 +17,13 @@ class HomeScreen extends StatelessWidget {
     required this.controller,
     required this.distanceUnits,
     required this.riderProfile,
+    required this.sharedRoutes,
   });
 
   final RideController controller;
   final DistanceUnitController distanceUnits;
   final RiderProfileController riderProfile;
+  final SharedRouteController sharedRoutes;
 
   @override
   Widget build(BuildContext context) {
@@ -38,6 +41,13 @@ class HomeScreen extends StatelessWidget {
                     children: [
                       const _BrandMark(),
                       const SizedBox(height: 56),
+                      if (sharedRoutes.pending case final file?) ...[
+                        _PendingSharedRouteBanner(
+                          fileName: file.name,
+                          onDismiss: sharedRoutes.clearPending,
+                        ),
+                        const SizedBox(height: 20),
+                      ],
                       Text(
                         'Ready to ride?',
                         style: Theme.of(context).textTheme.displaySmall,
@@ -160,6 +170,57 @@ class _BrandMark extends StatelessWidget {
       ],
     );
   }
+}
+
+/// A GPX file opened from another app (Files, Mail, a route planner's share
+/// sheet) has nowhere to go yet - there is no ride to attach a route to until
+/// one exists. Surfaces that instead of silently discarding it.
+class _PendingSharedRouteBanner extends StatelessWidget {
+  const _PendingSharedRouteBanner({
+    required this.fileName,
+    required this.onDismiss,
+  });
+
+  final String fileName;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+    decoration: BoxDecoration(
+      color: const Color(0xFF1D2530),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: const Color(0xFF3B4654)),
+    ),
+    child: Row(
+      children: [
+        const Icon(Icons.map_outlined, color: Color(0xFFFFB15C)),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                fileName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const Text(
+                'Start or join a ride, then reopen it to use this route.',
+                style: TextStyle(color: Color(0xFFABB5C1), fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+        IconButton(
+          tooltip: 'Dismiss',
+          onPressed: onDismiss,
+          icon: const Icon(Icons.close, size: 20),
+        ),
+      ],
+    ),
+  );
 }
 
 class _RideForm extends StatefulWidget {
