@@ -1448,13 +1448,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _cameraUpdateInFlight = true;
     final landscape =
         MediaQuery.orientationOf(context) == Orientation.landscape;
-    final speed = _navigationFix?.speedMetersPerSecond ?? 0;
-    final lookAheadMeters = landscape
-        ? (speed * 34).clamp(400, 900).toDouble()
-        : (speed * 22).clamp(250, 560).toDouble();
-    final target =
-        _pointAlongRemainingRoute(position, lookAheadMeters) ??
-        _pointAhead(position, _lastHeadingDegrees, lookAheadMeters);
+    // The camera centers on the rider's own live position, full stop - it
+    // previously aimed hundreds of metres ahead along the route (or, once
+    // more than 150m off-route, along route progress that had stopped
+    // advancing), which could push the rider's own marker off the visible
+    // viewport entirely, worst-case in landscape's steeper tilt/lower zoom.
+    // The tilt below still gives a forward-looking navigation feel through
+    // perspective, without moving the geometric centre away from the rider.
+    final target = position;
     final navigationZoom = landscape ? 13.85 : 14.45;
     final cameraDuration = transitionDuration ?? _cameraTransitionDuration;
     try {
@@ -1778,40 +1779,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
   }
 
-  GeoPoint? _pointAlongRemainingRoute(
-    GeoPoint currentPosition,
-    double distanceAheadMeters,
-  ) {
-    final paths = _progressGeometry.remainingPaths
-        .where((path) => path.length >= 2)
-        .toList(growable: false);
-    if (paths.isEmpty) return null;
-    final path = paths.reduce(
-      (current, candidate) =>
-          _mapDistanceMeters(currentPosition, current.first) <=
-              _mapDistanceMeters(currentPosition, candidate.first)
-          ? current
-          : candidate,
-    );
-    var remaining = distanceAheadMeters;
-    for (var index = 0; index < path.length - 1; index += 1) {
-      final start = path[index];
-      final end = path[index + 1];
-      final segmentLength = _mapDistanceMeters(start, end);
-      if (segmentLength <= 0) continue;
-      if (remaining <= segmentLength) {
-        final fraction = remaining / segmentLength;
-        return GeoPoint(
-          latitude: start.latitude + (end.latitude - start.latitude) * fraction,
-          longitude:
-              start.longitude + (end.longitude - start.longitude) * fraction,
-        );
-      }
-      remaining -= segmentLength;
-    }
-    return path.last;
-  }
-
   Map<String, dynamic> _remainingRouteGeoJson() => MapGeoJson.lines(
     _progressGeometry.remainingPaths,
     idPrefix: 'remaining-route',
@@ -1925,16 +1892,22 @@ class _RideMapScreenState extends State<RideMapScreen> {
     if (request == null || !mounted) return;
     setState(() => _routing = true);
     try {
-      var origin = _effectivePosition;
-      origin ??= await widget.acquireCurrentPosition?.call();
-      origin ??= _effectivePosition;
-      if (origin == null) {
-        throw const FormatException(
-          'A current location is required. Allow location access and try again.',
-        );
+      final hasStartQuery = (request.startQuery ?? '').trim().isNotEmpty;
+      GeoPoint? origin;
+      if (!hasStartQuery) {
+        origin = _effectivePosition;
+        origin ??= await widget.acquireCurrentPosition?.call();
+        origin ??= _effectivePosition;
+        if (origin == null) {
+          throw const FormatException(
+            'A current location is required. Allow location access, or give '
+            'a start location instead, and try again.',
+          );
+        }
       }
       final planned = await _destinationRoutePlanner.plan(
         origin: origin,
+        originQuery: request.startQuery,
         query: request.query,
         distanceUnit: widget.distanceUnit,
       );
