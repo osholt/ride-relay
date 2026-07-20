@@ -107,6 +107,42 @@ void main() {
     expect(result.sharedGpx, isTrue);
   });
 
+  test('a direct handoff that throws (rather than returning false) also falls '
+      'back to GPX sharing', () async {
+    final launcher = _FakeLauncher(result: true, throws: true);
+    final gateway = _FakeShareGateway();
+    final coordinator = NavigationExportCoordinator(
+      launcher: launcher,
+      shareGateway: gateway,
+    );
+
+    final result = await coordinator.export(NavigationTarget.waze, _route(4));
+
+    expect(launcher.opened, hasLength(1));
+    expect(gateway.targets, [NavigationTarget.waze]);
+    expect(result.openedDirectly, isFalse);
+    expect(result.sharedGpx, isTrue);
+  });
+
+  test('a route with no navigable points falls back to GPX sharing without '
+      'attempting to launch a direct link', () async {
+    final launcher = _FakeLauncher(result: true);
+    final gateway = _FakeShareGateway();
+    final coordinator = NavigationExportCoordinator(
+      launcher: launcher,
+      shareGateway: gateway,
+    );
+
+    final result = await coordinator.export(
+      NavigationTarget.googleMaps,
+      _route(0),
+    );
+
+    expect(launcher.opened, isEmpty);
+    expect(gateway.targets, [NavigationTarget.googleMaps]);
+    expect(result.sharedGpx, isTrue);
+  });
+
   test('GPX-only targets never use invented URL schemes', () async {
     final launcher = _FakeLauncher(result: true);
     final gateway = _FakeShareGateway();
@@ -152,14 +188,16 @@ ImportedRoute _route(int count) => ImportedRoute(
 );
 
 class _FakeLauncher implements ExternalUriLauncher {
-  _FakeLauncher({required this.result});
+  _FakeLauncher({required this.result, this.throws = false});
 
   final bool result;
+  final bool throws;
   final List<Uri> opened = [];
 
   @override
   Future<bool> open(Uri uri) async {
     opened.add(uri);
+    if (throws) throw StateError('launch failed');
     return result;
   }
 }
