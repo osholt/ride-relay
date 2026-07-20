@@ -3,27 +3,36 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../controllers/distance_unit_controller.dart';
+import '../../controllers/map_style_mode_controller.dart';
 import '../../domain/distance_unit.dart';
+import '../../domain/map_style_mode.dart';
 import '../../services/basemap_configuration.dart';
 
 class UnitSettingsSheet extends StatelessWidget {
-  const UnitSettingsSheet({super.key, required this.controller});
+  const UnitSettingsSheet({
+    super.key,
+    required this.controller,
+    required this.mapStyleMode,
+  });
 
   final DistanceUnitController controller;
+  final MapStyleModeController mapStyleMode;
 
   static Future<void> show(
     BuildContext context,
     DistanceUnitController controller,
+    MapStyleModeController mapStyleMode,
   ) => showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
     useSafeArea: true,
-    builder: (_) => UnitSettingsSheet(controller: controller),
+    builder: (_) =>
+        UnitSettingsSheet(controller: controller, mapStyleMode: mapStyleMode),
   );
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
-    animation: controller,
+    animation: Listenable.merge([controller, mapStyleMode]),
     builder: (context, _) => SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(22, 4, 22, 28),
       child: Column(
@@ -75,6 +84,35 @@ class UnitSettingsSheet extends StatelessWidget {
           ],
           const SizedBox(height: 22),
           Text(
+            'MAP APPEARANCE',
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              color: const Color(0xFF8D98A7),
+              letterSpacing: 1.1,
+            ),
+          ),
+          const SizedBox(height: 10),
+          SegmentedButton<MapStyleMode>(
+            key: const Key('map-style-mode-selector'),
+            segments: MapStyleMode.values
+                .map(
+                  (mode) => ButtonSegment<MapStyleMode>(
+                    value: mode,
+                    label: Text(mode.label),
+                  ),
+                )
+                .toList(growable: false),
+            selected: {mapStyleMode.value},
+            onSelectionChanged: (selection) {
+              unawaited(mapStyleMode.setMode(selection.single));
+            },
+          ),
+          const SizedBox(height: 12),
+          Text(
+            _mapAppearanceStatus(context, mapStyleMode),
+            style: const TextStyle(color: Color(0xFF98A3B1)),
+          ),
+          const SizedBox(height: 22),
+          Text(
             'MAP DATA',
             style: Theme.of(context).textTheme.labelLarge?.copyWith(
               color: const Color(0xFF8D98A7),
@@ -90,4 +128,24 @@ class UnitSettingsSheet extends StatelessWidget {
       ),
     ),
   );
+}
+
+String _mapAppearanceStatus(
+  BuildContext context,
+  MapStyleModeController mapStyleMode,
+) {
+  final resolvedDark = mapStyleMode.resolveDark(
+    MediaQuery.platformBrightnessOf(context),
+  );
+  return switch (mapStyleMode.value) {
+    MapStyleMode.system =>
+      'Matching your device: currently ${resolvedDark ? 'dark' : 'light'}.',
+    MapStyleMode.sunriseSunset =>
+      mapStyleMode.hasSunPosition
+          ? 'Following sunrise/sunset: currently ${resolvedDark ? 'dark' : 'light'}.'
+          : "Following sunrise/sunset - waiting for a location fix; matching "
+                'your device for now.',
+    MapStyleMode.light ||
+    MapStyleMode.dark => 'Takes effect next time you open the map.',
+  };
 }
