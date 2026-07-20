@@ -3,11 +3,14 @@ import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../controllers/distance_unit_controller.dart';
+import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/shared_route_controller.dart';
+import '../../domain/recorded_route_store.dart';
 import '../../domain/rider_color.dart';
 import '../map/motorcycle_icon.dart';
+import '../ride/route_recorder_screen.dart';
 import '../settings/emergency_info_sheet.dart';
 import '../settings/unit_settings_sheet.dart';
 
@@ -16,14 +19,18 @@ class HomeScreen extends StatelessWidget {
     super.key,
     required this.controller,
     required this.distanceUnits,
+    required this.mapStyleMode,
     required this.riderProfile,
     required this.sharedRoutes,
+    required this.recordedRoutes,
   });
 
   final RideController controller;
   final DistanceUnitController distanceUnits;
+  final MapStyleModeController mapStyleMode;
   final RiderProfileController riderProfile;
   final SharedRouteController sharedRoutes;
+  final RecordedRouteStore recordedRoutes;
 
   @override
   Widget build(BuildContext context) {
@@ -86,6 +93,13 @@ class HomeScreen extends StatelessWidget {
                         icon: const Icon(Icons.science_outlined),
                         label: const Text('Try a simulated ride'),
                       ),
+                      TextButton.icon(
+                        key: const Key('record-a-route-button'),
+                        onPressed: () =>
+                            RouteRecorderScreen.show(context, recordedRoutes),
+                        icon: const Icon(Icons.fiber_manual_record_outlined),
+                        label: const Text('Record a route'),
+                      ),
                       const SizedBox(height: 20),
                       const Text(
                         'No account required · the simulator never shares location',
@@ -113,8 +127,11 @@ class HomeScreen extends StatelessWidget {
                   ),
                   IconButton(
                     tooltip: 'Settings',
-                    onPressed: () =>
-                        UnitSettingsSheet.show(context, distanceUnits),
+                    onPressed: () => UnitSettingsSheet.show(
+                      context,
+                      distanceUnits,
+                      mapStyleMode,
+                    ),
                     icon: const Icon(Icons.settings_outlined),
                   ),
                 ],

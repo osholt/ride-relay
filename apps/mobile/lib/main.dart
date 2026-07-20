@@ -3,9 +3,11 @@ import 'package:maplibre_gl/maplibre_gl.dart';
 
 import 'app/ride_relay_app.dart';
 import 'controllers/distance_unit_controller.dart';
+import 'controllers/map_style_mode_controller.dart';
 import 'controllers/ride_controller.dart';
 import 'controllers/rider_profile_controller.dart';
 import 'controllers/shared_route_controller.dart';
+import 'data/json_file_recorded_route_store.dart';
 import 'data/shared_preferences_session_store.dart';
 import 'data/sqlite_event_store.dart';
 import 'services/nearby_bridge.dart';
@@ -29,15 +31,19 @@ Future<void> main() async {
   final distanceUnits = await DistanceUnitController.load(
     locale: WidgetsBinding.instance.platformDispatcher.locale,
   );
+  final mapStyleMode = await MapStyleModeController.load();
   final riderProfile = await RiderProfileController.load();
   final sharedRoutes = await SharedRouteController.load();
+  final recordedRoutes = await JsonFileRecordedRouteStore.openDefault();
 
   runApp(
     RideRelayApp(
       controller: controller,
       distanceUnits: distanceUnits,
+      mapStyleMode: mapStyleMode,
       riderProfile: riderProfile,
       sharedRoutes: sharedRoutes,
+      recordedRoutes: recordedRoutes,
     ),
   );
 }
