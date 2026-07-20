@@ -126,7 +126,7 @@ class _RideNavigationMenu extends StatelessWidget {
     ];
     return SafeArea(
       top: false,
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1424,6 +1424,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (context) => _RideNavigationMenu(
         simulation: _isSimulation,
         selectedIndex: _selectedIndex,
