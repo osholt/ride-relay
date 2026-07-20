@@ -34,19 +34,27 @@ class RouteDeviationDetector {
     List<GeoPoint> route, {
     this.config = const RouteDeviationConfig(),
     List<List<GeoPoint>>? routeSegments,
-  }) : _routeSegments = List.unmodifiable(
-         (routeSegments ?? [route]).map(
-           (segment) => List<GeoPoint>.unmodifiable(segment),
-         ),
-       );
+  }) : _routeSegments = _normalised(routeSegments ?? [route]);
 
-  final List<List<GeoPoint>> _routeSegments;
+  List<List<GeoPoint>> _routeSegments;
   final RouteDeviationConfig config;
 
   RouteTrackingState _stableState = RouteTrackingState.onRoute;
   int _outsideSamples = 0;
   int _insideSamples = 0;
   DateTime? _offRouteSince;
+
+  /// Replaces the segments riders are compared against - e.g. once the ride
+  /// leader's live trail has grown - without resetting the off-route/
+  /// recovery hysteresis already in progress for this rider.
+  void updateRouteSegments(List<List<GeoPoint>> routeSegments) {
+    _routeSegments = _normalised(routeSegments);
+  }
+
+  static List<List<GeoPoint>> _normalised(List<List<GeoPoint>> segments) =>
+      List.unmodifiable(
+        segments.map((segment) => List<GeoPoint>.unmodifiable(segment)),
+      );
 
   RouteDeviationAssessment evaluate(LocationSample sample, DateTime now) {
     final usableSegments = _routeSegments

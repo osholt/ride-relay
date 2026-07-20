@@ -184,9 +184,10 @@ class DeviceLocationSource {
   }
 
   Future<void> stop() async {
+    final wasActive = _positionSubscription != null;
     await _positionSubscription?.cancel();
     _positionSubscription = null;
-    if (_status.canSample) {
+    if (wasActive && _status.canSample) {
       _emit(
         DeviceLocationStatus(
           state: DeviceLocationState.ready,

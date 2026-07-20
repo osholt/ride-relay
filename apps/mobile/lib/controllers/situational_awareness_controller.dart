@@ -5,6 +5,7 @@ import '../domain/event_store.dart';
 import '../domain/geo_point.dart';
 import '../domain/hazard.dart';
 import '../domain/ride_event.dart';
+import '../domain/ride_role.dart';
 import '../domain/ride_session.dart';
 import '../domain/rider_location.dart';
 import '../domain/route_alert.dart';
@@ -58,6 +59,7 @@ class SituationalAwarenessController extends ChangeNotifier {
   final Map<String, HazardReport> _hazards = {};
   final Map<String, RiderRouteAlert> _alerts = {};
   final Map<String, RouteDeviationDetector> _detectors = {};
+  final List<({DateTime recordedAt, GeoPoint position})> _leaderTrail = [];
   bool _busy = false;
   bool _refreshingStaleness = false;
   String? _errorMessage;
@@ -65,6 +67,12 @@ class SituationalAwarenessController extends ChangeNotifier {
   bool get busy => _busy;
   String? get errorMessage => _errorMessage;
   List<GeoPoint> get route => _route;
+
+  /// The current ride leader's own recorded path so far - the group's live
+  /// ground truth. Riders are judged against this (as well as the planned
+  /// route, if any) so a leader's deliberate on-route deviation, such as a
+  /// road-closure detour, doesn't read as the group having gone off course.
+  List<GeoPoint> get leaderTrail => List.unmodifiable(_leaderTrailPoints);
 
   List<RiderLocation> get riderLocations {
     final values = _locations.values.toList(growable: false);
@@ -404,14 +412,18 @@ class SituationalAwarenessController extends ChangeNotifier {
   }
 
   void _evaluateLocation(RiderLocation location) {
+    if (location.role == RideRole.lead) {
+      _recordLeaderTrailPoint(location.sample);
+    }
     final detector = _detectors.putIfAbsent(
       location.riderId,
       () => RouteDeviationDetector(
         _route,
         config: routeConfig,
-        routeSegments: _routeSegments,
+        routeSegments: _combinedRouteSegments,
       ),
     );
+    detector.updateRouteSegments(_combinedRouteSegments);
     final assessment = detector.evaluate(location.sample, _clock());
     final previous = _alerts[location.riderId];
     if (previous?.assessment.state != assessment.state ||
@@ -423,6 +435,40 @@ class SituationalAwarenessController extends ChangeNotifier {
         assessment: assessment,
       );
     }
+  }
+
+  /// Inserts in chronological order (by [LocationSample.recordedAt], not
+  /// arrival order) since relayed and replayed events are not guaranteed to
+  /// arrive in the order they were recorded. Duplicate/older-or-equal
+  /// timestamps are dropped rather than reordering an already-recorded point.
+  void _recordLeaderTrailPoint(LocationSample sample) {
+    var index = _leaderTrail.length;
+    while (index > 0 &&
+        _leaderTrail[index - 1].recordedAt.isAfter(sample.recordedAt)) {
+      index -= 1;
+    }
+    if (index > 0 &&
+        !_leaderTrail[index - 1].recordedAt.isBefore(sample.recordedAt)) {
+      return;
+    }
+    _leaderTrail.insert(index, (
+      recordedAt: sample.recordedAt,
+      position: sample.position,
+    ));
+  }
+
+  List<GeoPoint> get _leaderTrailPoints => [
+    for (final point in _leaderTrail) point.position,
+  ];
+
+  /// The planned route (if any) plus the leader's live trail (once it has
+  /// at least two points) - a rider is on-route if they are near either,
+  /// so a leader's own live position (always the trail's own endpoint) is
+  /// never flagged, and followers keep matching an abandoned GPX until the
+  /// leader has actually diverged from it.
+  List<List<GeoPoint>> get _combinedRouteSegments {
+    final leaderPoints = _leaderTrailPoints;
+    return [..._routeSegments, if (leaderPoints.length >= 2) leaderPoints];
   }
 
   void _removeExpiredHazards() {
