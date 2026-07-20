@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/app/ride_relay_app.dart';
 import 'package:ride_relay/controllers/distance_unit_controller.dart';
+import 'package:ride_relay/controllers/map_style_mode_controller.dart';
 import 'package:ride_relay/controllers/ride_controller.dart';
 import 'package:ride_relay/controllers/rider_profile_controller.dart';
 import 'package:ride_relay/controllers/shared_route_controller.dart';
 import 'package:ride_relay/data/in_memory_event_store.dart';
 import 'package:ride_relay/data/in_memory_session_store.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
+import 'package:ride_relay/domain/recorded_route_store.dart';
 import 'package:ride_relay/services/nearby_bridge.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -16,6 +18,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     _riderProfile = await RiderProfileController.load();
     _sharedRoutes = await SharedRouteController.load();
+    _mapStyleMode = await MapStyleModeController.load();
   });
 
   testWidgets('home screen exposes the two ride entry points', (tester) async {
@@ -42,8 +45,10 @@ void main() {
       RideRelayApp(
         controller: controller,
         distanceUnits: distanceUnits,
+        mapStyleMode: _mapStyleMode,
         riderProfile: _riderProfile,
         sharedRoutes: _sharedRoutes,
+        recordedRoutes: _recordedRoutes,
         enableNativeServices: false,
       ),
     );
@@ -187,18 +192,27 @@ void main() {
     expect(controller.rideEnded, isTrue);
     expect(controller.hasActiveRide, isTrue);
 
+    await tester.tap(find.text('Share ride recap image'));
+    await tester.pumpAndSettle();
+    expect(find.text('Ride recap'), findsOneWidget);
+    expect(find.byKey(const Key('share-recap-image-button')), findsOneWidget);
+
     controller.dispose();
   });
 }
 
 late RiderProfileController _riderProfile;
 late SharedRouteController _sharedRoutes;
+late MapStyleModeController _mapStyleMode;
+final _recordedRoutes = InMemoryRecordedRouteStore();
 
 RideRelayApp _app(RideController controller) => RideRelayApp(
   controller: controller,
   distanceUnits: DistanceUnitController.forLocale(const Locale('en', 'GB')),
+  mapStyleMode: _mapStyleMode,
   riderProfile: _riderProfile,
   sharedRoutes: _sharedRoutes,
+  recordedRoutes: _recordedRoutes,
   enableNativeServices: false,
 );
 

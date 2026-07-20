@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
 
+import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/internet_relay_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../services/ride_summary_exporter.dart';
 import '../internet/internet_relay_status_card.dart';
 import '../nearby/relay_status_card.dart';
+import 'ride_recap_screen.dart';
 
 class EndedRideScreen extends StatelessWidget {
   const EndedRideScreen({
     super.key,
     required this.controller,
+    required this.distanceUnits,
     this.nearbyRelayController,
     this.internetRelayController,
     this.summarySharer,
@@ -18,6 +21,7 @@ class EndedRideScreen extends StatelessWidget {
   });
 
   final RideController controller;
+  final DistanceUnitController distanceUnits;
   final NearbyRelayController? nearbyRelayController;
   final InternetRelayController? internetRelayController;
   final RideSummarySharer? summarySharer;
@@ -56,6 +60,13 @@ class EndedRideScreen extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         OutlinedButton.icon(
+          key: const Key('share-recap-image-entry-button'),
+          onPressed: () => _openRecap(context),
+          icon: const Icon(Icons.image_outlined),
+          label: const Text('Share ride recap image'),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
           onPressed: () => _confirmRemove(context),
           icon: const Icon(Icons.delete_outline),
           label: const Text('Remove ride from this phone'),
@@ -73,6 +84,7 @@ class EndedRideScreen extends StatelessWidget {
       await (summarySharer ?? const SystemRideSummarySharer()).share(
         controller.session!,
         controller.events,
+        distanceUnit: distanceUnits.value,
         sharePositionOrigin: origin,
       );
     } on Object catch (error) {
@@ -81,6 +93,27 @@ class EndedRideScreen extends StatelessWidget {
         SnackBar(content: Text('Could not share ride summary: $error')),
       );
     }
+  }
+
+  Future<void> _openRecap(BuildContext context) async {
+    const exporter = RideSummaryExporter();
+    final generatedAt = DateTime.now();
+    final summary = exporter.summarize(
+      controller.session!,
+      controller.events,
+      generatedAt: generatedAt,
+    );
+    final route = exporter.traveledRoute(
+      controller.session!,
+      controller.events,
+      generatedAt: generatedAt,
+    );
+    await RideRecapScreen.show(
+      context,
+      summary: summary,
+      routePoints: route?.paths.single.points ?? const [],
+      distanceUnit: distanceUnits.value,
+    );
   }
 
   Future<void> _confirmRemove(BuildContext context) async {
