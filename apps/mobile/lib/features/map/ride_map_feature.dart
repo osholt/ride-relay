@@ -54,13 +54,7 @@ class RideMapFeature extends StatefulWidget {
     this.onEmergencyAlert,
     this.onEmergencyIssue,
     this.ridePaused = false,
-    this.canToggleRidePause = false,
-    this.onToggleRidePause,
-    this.locationSharing,
-    this.onToggleLocationSharing,
     this.onLeaveRide,
-    this.canEndRide = false,
-    this.onEndRide,
     this.onOpenRideMenu,
     this.onRouteChanged,
     this.changeRouteRequestToken,
@@ -90,13 +84,7 @@ class RideMapFeature extends StatefulWidget {
     Future<void> Function()? onEmergencyAlert,
     Future<void> Function(QuickMessage message)? onEmergencyIssue,
     bool ridePaused = false,
-    bool canToggleRidePause = false,
-    Future<void> Function()? onToggleRidePause,
-    ValueListenable<bool>? locationSharing,
-    Future<void> Function()? onToggleLocationSharing,
     Future<void> Function()? onLeaveRide,
-    bool canEndRide = false,
-    Future<void> Function()? onEndRide,
     Future<void> Function()? onOpenRideMenu,
     ValueChanged<ImportedRoute?>? onRouteChanged,
     Object? changeRouteRequestToken,
@@ -119,13 +107,7 @@ class RideMapFeature extends StatefulWidget {
     onEmergencyAlert: onEmergencyAlert,
     onEmergencyIssue: onEmergencyIssue,
     ridePaused: ridePaused,
-    canToggleRidePause: canToggleRidePause,
-    onToggleRidePause: onToggleRidePause,
-    locationSharing: locationSharing,
-    onToggleLocationSharing: onToggleLocationSharing,
     onLeaveRide: onLeaveRide,
-    canEndRide: canEndRide,
-    onEndRide: onEndRide,
     onOpenRideMenu: onOpenRideMenu,
     onRouteChanged: onRouteChanged,
     changeRouteRequestToken: changeRouteRequestToken,
@@ -149,13 +131,7 @@ class RideMapFeature extends StatefulWidget {
   final Future<void> Function()? onEmergencyAlert;
   final Future<void> Function(QuickMessage message)? onEmergencyIssue;
   final bool ridePaused;
-  final bool canToggleRidePause;
-  final Future<void> Function()? onToggleRidePause;
-  final ValueListenable<bool>? locationSharing;
-  final Future<void> Function()? onToggleLocationSharing;
   final Future<void> Function()? onLeaveRide;
-  final bool canEndRide;
-  final Future<void> Function()? onEndRide;
   final Future<void> Function()? onOpenRideMenu;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final Object? changeRouteRequestToken;
@@ -259,13 +235,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         onEmergencyAlert: widget.onEmergencyAlert,
         onEmergencyIssue: widget.onEmergencyIssue,
         ridePaused: widget.ridePaused,
-        canToggleRidePause: widget.canToggleRidePause,
-        onToggleRidePause: widget.onToggleRidePause,
-        locationSharing: widget.locationSharing,
-        onToggleLocationSharing: widget.onToggleLocationSharing,
         onLeaveRide: widget.onLeaveRide,
-        canEndRide: widget.canEndRide,
-        onEndRide: widget.onEndRide,
         onOpenRideMenu: widget.onOpenRideMenu,
         onRouteChanged: widget.onRouteChanged,
         changeRouteRequestToken: widget.changeRouteRequestToken,
@@ -314,13 +284,7 @@ class RideMapScreen extends StatefulWidget {
     this.onEmergencyAlert,
     this.onEmergencyIssue,
     this.ridePaused = false,
-    this.canToggleRidePause = false,
-    this.onToggleRidePause,
-    this.locationSharing,
-    this.onToggleLocationSharing,
     this.onLeaveRide,
-    this.canEndRide = false,
-    this.onEndRide,
     this.onOpenRideMenu,
     this.onRouteChanged,
     this.changeRouteRequestToken,
@@ -352,13 +316,7 @@ class RideMapScreen extends StatefulWidget {
   final Future<void> Function()? onEmergencyAlert;
   final Future<void> Function(QuickMessage message)? onEmergencyIssue;
   final bool ridePaused;
-  final bool canToggleRidePause;
-  final Future<void> Function()? onToggleRidePause;
-  final ValueListenable<bool>? locationSharing;
-  final Future<void> Function()? onToggleLocationSharing;
   final Future<void> Function()? onLeaveRide;
-  final bool canEndRide;
-  final Future<void> Function()? onEndRide;
   final Future<void> Function()? onOpenRideMenu;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final Object? changeRouteRequestToken;
@@ -599,21 +557,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     final statusTop = overlayTop + (_downloadProgress == null ? 8 : 72);
     final emergencyBottom =
         overlayBottom + (markerOverviewActive && !landscape ? 254.0 : 54.0);
-    final showPersonalPause =
-        _route != null &&
-        widget.locationSharing != null &&
-        widget.onToggleLocationSharing != null;
     final showLeaveRide = _route != null && widget.onLeaveRide != null;
-    final showGroupPause =
-        _route != null &&
-        widget.canToggleRidePause &&
-        widget.onToggleRidePause != null;
-    final groupPauseBottom =
-        emergencyBottom +
-        62 +
-        (showPersonalPause ? 62 : 0) +
-        (showLeaveRide ? 62 : 0);
-    final groupEndBottom = groupPauseBottom + (showGroupPause ? 62 : 0);
     return Scaffold(
       appBar: hideChrome
           ? null
@@ -877,35 +821,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       label: Text(_emergencyAlertSent ? 'ALERT SENT' : 'ALERT'),
                     ),
                   ),
-                if (showPersonalPause)
-                  Positioned(
-                    left: overlayLeft + 12,
-                    bottom: emergencyBottom + 62,
-                    child: ValueListenableBuilder<bool>(
-                      valueListenable: widget.locationSharing!,
-                      builder: (context, sharing, _) =>
-                          FloatingActionButton.extended(
-                            key: const Key('location-pause-button'),
-                            heroTag: 'ride-relay-location-pause',
-                            tooltip: sharing
-                                ? 'Pause my location sharing'
-                                : 'Resume my location sharing',
-                            onPressed: widget.onToggleLocationSharing,
-                            backgroundColor: sharing
-                                ? const Color(0xE6252E39)
-                                : const Color(0xFF4D9D70),
-                            foregroundColor: Colors.white,
-                            icon: Icon(
-                              sharing ? Icons.pause : Icons.play_arrow,
-                            ),
-                            label: Text(sharing ? 'PAUSE GPS' : 'RESUME GPS'),
-                          ),
-                    ),
-                  ),
                 if (showLeaveRide)
                   Positioned(
                     left: overlayLeft + 12,
-                    bottom: emergencyBottom + (showPersonalPause ? 124 : 62),
+                    bottom: emergencyBottom + 62,
                     child: FloatingActionButton.extended(
                       key: const Key('leave-ride-button'),
                       heroTag: 'ride-relay-leave',
@@ -915,46 +834,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       foregroundColor: Colors.white,
                       icon: const Icon(Icons.exit_to_app),
                       label: const Text('LEAVE'),
-                    ),
-                  ),
-                if (showGroupPause)
-                  Positioned(
-                    left: overlayLeft + 12,
-                    bottom: groupPauseBottom,
-                    child: FloatingActionButton.extended(
-                      key: const Key('ride-pause-button'),
-                      heroTag: 'ride-relay-group-pause',
-                      tooltip: widget.ridePaused
-                          ? 'Resume group ride'
-                          : 'Pause group ride',
-                      onPressed: widget.onToggleRidePause,
-                      backgroundColor: widget.ridePaused
-                          ? const Color(0xFF4D9D70)
-                          : const Color(0xE6252E39),
-                      foregroundColor: Colors.white,
-                      icon: Icon(
-                        widget.ridePaused ? Icons.play_arrow : Icons.pause,
-                      ),
-                      label: Text(
-                        widget.ridePaused ? 'RESUME GROUP' : 'PAUSE GROUP',
-                      ),
-                    ),
-                  ),
-                if (_route != null &&
-                    widget.canEndRide &&
-                    widget.onEndRide != null)
-                  Positioned(
-                    left: overlayLeft + 12,
-                    bottom: groupEndBottom,
-                    child: FloatingActionButton.extended(
-                      key: const Key('ride-end-button'),
-                      heroTag: 'ride-relay-end',
-                      tooltip: 'End group ride',
-                      onPressed: widget.onEndRide,
-                      backgroundColor: const Color(0xFF9D2639),
-                      foregroundColor: Colors.white,
-                      icon: const Icon(Icons.stop_circle_outlined),
-                      label: const Text('END GROUP'),
                     ),
                   ),
                 if (_route != null && widget.ridePaused)

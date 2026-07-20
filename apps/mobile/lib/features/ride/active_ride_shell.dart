@@ -83,6 +83,11 @@ class _RideNavigationMenu extends StatelessWidget {
     required this.onShareRoster,
     required this.onChangeRoute,
     required this.onEmergencyInfo,
+    required this.ridePaused,
+    required this.canToggleRidePause,
+    required this.onToggleRidePause,
+    required this.canEndRide,
+    required this.onEndRide,
   });
 
   final bool simulation;
@@ -91,6 +96,11 @@ class _RideNavigationMenu extends StatelessWidget {
   final VoidCallback onShareRoster;
   final VoidCallback onChangeRoute;
   final VoidCallback onEmergencyInfo;
+  final bool ridePaused;
+  final bool canToggleRidePause;
+  final VoidCallback onToggleRidePause;
+  final bool canEndRide;
+  final VoidCallback onEndRide;
 
   @override
   Widget build(BuildContext context) {
@@ -164,6 +174,31 @@ class _RideNavigationMenu extends StatelessWidget {
                 onEmergencyInfo();
               },
             ),
+            if (canToggleRidePause || canEndRide) const Divider(height: 20),
+            if (canToggleRidePause)
+              ListTile(
+                key: const Key('ride-menu-toggle-pause'),
+                leading: Icon(ridePaused ? Icons.play_arrow : Icons.pause),
+                title: Text(ridePaused ? 'Resume ride' : 'Pause ride'),
+                subtitle: const Text(
+                  'Pauses tracking and progress for the whole group',
+                ),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  onToggleRidePause();
+                },
+              ),
+            if (canEndRide)
+              ListTile(
+                key: const Key('ride-menu-end-ride'),
+                leading: const Icon(Icons.stop_circle_outlined),
+                title: const Text('End ride'),
+                subtitle: const Text('Ends the group ride for everyone'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  onEndRide();
+                },
+              ),
           ],
         ),
       ),
@@ -178,7 +213,6 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   final _offRouteTraces = ValueNotifier<List<MapOverlayTrace>>(const []);
   final _leaderStatus = ValueNotifier<LeaderRideStatus?>(null);
   final _junctionMarkerOverlay = ValueNotifier<MapJunctionMarkerOverlay?>(null);
-  final _locationSharing = ValueNotifier(false);
   final _riderTrails = <String, List<route_domain.GeoPoint>>{};
   final _publishedEventIds = <String>{};
   final _warnings = <String>{};
@@ -311,10 +345,8 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         },
       );
       _locationController = locationController;
-      locationController.addListener(_onLocationSharingChanged);
       try {
         await locationController.initialize();
-        _onLocationSharingChanged();
       } on Object catch (error) {
         _warnings.add('Location capability check failed: $error');
       }
@@ -562,7 +594,6 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   void _onSimulationVisualChanged() {
     if (!mounted || !_isSimulation) return;
     final controller = _simulationController;
-    _locationSharing.value = controller?.isRunning ?? false;
     if (controller != null) _updateJunctionMarkerOverlay(controller);
     if (controller != null &&
         controller.automaticMarkerActivation >
@@ -1218,15 +1249,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       onEmergencyAlert: _sendEmergencyMapAlert,
       onEmergencyIssue: _sendEmergencyMapIssue,
       ridePaused: widget.rideController.ridePaused,
-      canToggleRidePause:
-          !_isSimulation &&
-          widget.rideController.session?.role == RideRole.lead,
-      onToggleRidePause: _toggleRidePause,
-      locationSharing: _locationSharing,
-      onToggleLocationSharing: _toggleMapLocationSharing,
       onLeaveRide: _confirmLeaveRideFromMap,
-      canEndRide: widget.rideController.session?.role == RideRole.lead,
-      onEndRide: _confirmEndRideFromMap,
       onOpenRideMenu: _openRideMenu,
       onRouteChanged: _onRouteChanged,
       changeRouteRequestToken: _changeRouteRequestToken,
@@ -1306,35 +1329,6 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     }
   }
 
-  void _onLocationSharingChanged() {
-    _locationSharing.value = _locationController?.sharing ?? false;
-  }
-
-  Future<void> _toggleMapLocationSharing() async {
-    if (_isSimulation) {
-      final simulation = _simulationController;
-      if (simulation == null ||
-          simulation.state == RideSimulationState.completed) {
-        return;
-      }
-      if (simulation.isRunning) {
-        simulation.pause();
-      } else {
-        simulation.start();
-      }
-      _locationSharing.value = simulation.isRunning;
-      return;
-    }
-    final locationController = _locationController;
-    if (locationController == null) return;
-    if (locationController.sharing) {
-      await locationController.stop();
-    } else {
-      await locationController.requestAndStart();
-    }
-    _onLocationSharingChanged();
-  }
-
   Future<void> _confirmLeaveRideFromMap() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1359,7 +1353,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     if (confirmed ?? false) await _leaveRide();
   }
 
-  Future<void> _confirmEndRideFromMap() async {
+  Future<void> _confirmEndRide() async {
     if (widget.rideController.session?.role != RideRole.lead) return;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1401,6 +1395,13 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         onChangeRoute: _requestRouteChange,
         onEmergencyInfo: () =>
             EmergencyInfoSheet.show(context, widget.riderProfile),
+        ridePaused: widget.rideController.ridePaused,
+        canToggleRidePause:
+            !_isSimulation &&
+            widget.rideController.session?.role == RideRole.lead,
+        onToggleRidePause: _toggleRidePause,
+        canEndRide: widget.rideController.session?.role == RideRole.lead,
+        onEndRide: _confirmEndRide,
       ),
     );
   }
@@ -1646,7 +1647,6 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     unawaited(_internetReceivedEventSubscription?.cancel());
     _stalenessTimer?.cancel();
     _markerExitChromeTimer?.cancel();
-    _locationController?.removeListener(_onLocationSharingChanged);
     _locationController?.dispose();
     unawaited(_relayController?.close());
     unawaited(_internetRelayController?.close());
@@ -1656,7 +1656,6 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     _offRouteTraces.dispose();
     _leaderStatus.dispose();
     _junctionMarkerOverlay.dispose();
-    _locationSharing.dispose();
     super.dispose();
   }
 }
