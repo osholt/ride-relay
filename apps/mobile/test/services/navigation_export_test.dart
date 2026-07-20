@@ -5,6 +5,68 @@ import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/services/navigation_export.dart';
 
 void main() {
+  test(
+    'capability registry is complete and makes transfer limits explicit',
+    () {
+      expect(
+        navigationHandoffCapabilities.map((capability) => capability.target),
+        unorderedEquals(NavigationTarget.values),
+      );
+      for (final platform in NavigationPlatform.values) {
+        expect(
+          navigationCapabilitiesFor(
+            platform,
+          ).map((capability) => capability.target),
+          unorderedEquals(NavigationTarget.values),
+          reason: 'Every current handoff should declare $platform support',
+        );
+      }
+
+      expect(
+        NavigationTarget.googleMaps.capability.routeTransfer,
+        NavigationRouteTransfer.sampledWaypoints,
+      );
+      expect(
+        NavigationTarget.waze.capability.routeTransfer,
+        NavigationRouteTransfer.destinationOnly,
+      );
+      for (final target in [
+        NavigationTarget.shareGpx,
+        NavigationTarget.calimoto,
+        NavigationTarget.myRouteApp,
+        NavigationTarget.garmin,
+        NavigationTarget.bmwMotorrad,
+      ]) {
+        expect(
+          target.capability.routeTransfer,
+          NavigationRouteTransfer.fullGpx,
+        );
+        expect(target.hasDocumentedDirectLink, isFalse);
+      }
+    },
+  );
+
+  test(
+    'a platform-exclusive capability is excluded from the other platform',
+    () {
+      // Every current entry declares both platforms, so this is the only
+      // path that exercises exclusion - a synthetic capability here, not a
+      // fabricated real provider, since none of the seven actual entries are
+      // genuinely platform-exclusive.
+      const androidOnly = NavigationHandoffCapability(
+        target: NavigationTarget.garmin,
+        label: 'Garmin (Android only, hypothetical)',
+        transport: NavigationHandoffTransport.gpxShare,
+        routeTransfer: NavigationRouteTransfer.fullGpx,
+        platforms: {NavigationPlatform.android},
+        limitation: 'test fixture',
+      );
+
+      expect(androidOnly.supports(NavigationPlatform.android), isTrue);
+      expect(androidOnly.supports(NavigationPlatform.iOS), isFalse);
+    },
+  );
+
   test('Google Maps link is bounded to three sampled via points', () {
     final uri = RouteNavigationLinks.googleMaps(_route(10))!;
 
