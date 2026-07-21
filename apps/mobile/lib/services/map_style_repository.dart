@@ -50,7 +50,7 @@ class MapStyleRepository {
       return cachedStyle;
     }
     try {
-      final style = await _downloadAndNormalize();
+      final style = await _downloadWithRetries();
       if (configuration.persistentCachingAllowed) {
         await directory.create(recursive: true);
         final temporary = File('${cached.path}.tmp');
@@ -62,6 +62,24 @@ class MapStyleRepository {
     } on Object {
       return cachedStyle ?? fallbackStyle;
     }
+  }
+
+  /// Without persistent caching (the default until a build opts in), every
+  /// cold launch needs a fresh fetch to show real tiles at all - one failed
+  /// attempt on a slow ride-start connection otherwise commits the whole
+  /// session to the tile-less fallback. A couple of quick retries covers the
+  /// common transient case without meaningfully delaying a genuine failure.
+  Future<String> _downloadWithRetries() async {
+    const attempts = 3;
+    for (var attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        return await _downloadAndNormalize();
+      } on Object {
+        if (attempt == attempts) rethrow;
+        await Future<void>.delayed(Duration(milliseconds: 400 * attempt));
+      }
+    }
+    throw StateError('unreachable');
   }
 
   Future<String> _downloadAndNormalize() async {
@@ -112,7 +130,49 @@ class MapStyleRepository {
       sources[entry.key] = source;
     }
     style['sources'] = sources;
+    if (configuration.styleUrl == configuration.darkStyleUrl &&
+        configuration.styleUrl.isNotEmpty) {
+      _repaintForLegibleDarkMode(style);
+    }
     return jsonEncode(style);
+  }
+
+  /// The fetched dark style renders most surfaces in near-black tones
+  /// (background rgb(12,12,12); some road fills as dark as #181818, or
+  /// interpolating to pure black at riding zoom levels) - working from its
+  /// own vector tiles rather than a hand-authored style, this is the only
+  /// point with the parsed layers in hand to lighten the specific layers
+  /// that made it hard to read at a glance, closer to the legible dark
+  /// theme common to turn-by-turn apps. Anything not listed here, and any
+  /// layer id no longer present, is left untouched.
+  static const _legibleDarkModePaint = <String, Map<String, Object>>{
+    'background': {'background-color': '#1c1c1e'},
+    'water': {'fill-color': '#15191f'},
+    'landuse_residential': {'fill-color': '#141414'},
+    'landuse_park': {'fill-color': '#242424'},
+    'landcover_wood': {'fill-color': '#242424'},
+    'highway_minor': {'line-color': '#3a3a3a'},
+    'highway_major_casing': {'line-color': 'rgba(70,70,70,0.6)'},
+    'highway_major_inner': {'line-color': '#484848'},
+    'highway_motorway_casing': {'line-color': 'rgba(80,80,80,0.6)'},
+    'highway_motorway_inner': {'line-color': '#565656'},
+  };
+
+  static void _repaintForLegibleDarkMode(Map<String, dynamic> style) {
+    final layers = style['layers'] as List;
+    for (var i = 0; i < layers.length; i++) {
+      final layer = layers[i];
+      if (layer is! Map) continue;
+      final overrides = _legibleDarkModePaint[layer['id']];
+      if (overrides == null) continue;
+      final updated = Map<String, dynamic>.from(layer);
+      final paint = Map<String, dynamic>.from(
+        (updated['paint'] as Map?) ?? const {},
+      );
+      paint.addAll(overrides);
+      updated['paint'] = paint;
+      layers[i] = updated;
+    }
   }
 
   Future<String?> _readValid(File file) async {

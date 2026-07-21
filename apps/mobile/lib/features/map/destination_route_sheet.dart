@@ -3,9 +3,19 @@ import 'package:flutter/material.dart';
 import '../../services/navigation_export.dart';
 
 class DestinationPlanRequest {
-  const DestinationPlanRequest({required this.query, this.handoffTarget});
+  const DestinationPlanRequest({
+    required this.query,
+    this.startQuery,
+    this.handoffTarget,
+  });
 
   final String query;
+
+  /// A place/postcode/lat-lng to start from instead of the rider's current
+  /// location - e.g. planning a ride from a meeting point before setting off.
+  /// Null or blank means "use my current location", same as before this
+  /// field existed.
+  final String? startQuery;
   final NavigationTarget? handoffTarget;
 }
 
@@ -25,12 +35,14 @@ class DestinationRouteSheet extends StatefulWidget {
 }
 
 class _DestinationRouteSheetState extends State<DestinationRouteSheet> {
+  final _startController = TextEditingController();
   final _destinationController = TextEditingController();
   _DestinationHandoff _handoff = _DestinationHandoff.rideRelay;
   String? _error;
 
   @override
   void dispose() {
+    _startController.dispose();
     _destinationController.dispose();
     super.dispose();
   }
@@ -60,6 +72,17 @@ class _DestinationRouteSheetState extends State<DestinationRouteSheet> {
               style: TextStyle(color: Color(0xFF98A3B1)),
             ),
             const SizedBox(height: 18),
+            TextField(
+              key: const Key('start-field'),
+              controller: _startController,
+              textInputAction: TextInputAction.next,
+              decoration: const InputDecoration(
+                labelText: 'Start location (optional)',
+                hintText: 'Leave blank to use your current location',
+                prefixIcon: Icon(Icons.trip_origin),
+              ),
+            ),
+            const SizedBox(height: 14),
             TextField(
               key: const Key('destination-field'),
               controller: _destinationController,
@@ -117,7 +140,13 @@ class _DestinationRouteSheetState extends State<DestinationRouteSheet> {
     }
     Navigator.pop(
       context,
-      DestinationPlanRequest(query: query, handoffTarget: _handoff.target),
+      DestinationPlanRequest(
+        query: query,
+        startQuery: _startController.text.trim().isEmpty
+            ? null
+            : _startController.text.trim(),
+        handoffTarget: _handoff.target,
+      ),
     );
   }
 }

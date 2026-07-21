@@ -132,6 +132,48 @@ void main() {
     expect(assessment.alertLevel, RouteAlertLevel.none);
   });
 
+  test('updateRouteSegments changes the comparison route without resetting '
+      'hysteresis', () {
+    final detector = RouteDeviationDetector(
+      route,
+      config: const RouteDeviationConfig(
+        enterOffRouteMeters: 100,
+        exitOffRouteMeters: 50,
+        samplesToConfirmOffRoute: 2,
+        samplesToConfirmRecovery: 2,
+      ),
+    );
+    final start = DateTime.utc(2026, 7, 16, 12);
+
+    detector.evaluate(_sample(51.002, start), start);
+    final confirmed = detector.evaluate(
+      _sample(51.002, start.add(const Duration(seconds: 5))),
+      start.add(const Duration(seconds: 5)),
+    );
+    expect(confirmed.state, RouteTrackingState.offRoute);
+
+    // A new comparison route - e.g. the ride leader's live trail having
+    // extended past this point - now runs through the rider's actual
+    // position. Recovery hysteresis still applies rather than the state
+    // snapping straight back to onRoute.
+    detector.updateRouteSegments(const [
+      [
+        GeoPoint(latitude: 51.002, longitude: -1),
+        GeoPoint(latitude: 51.002, longitude: -0.99),
+      ],
+    ]);
+    final recovering = detector.evaluate(
+      _sample(51.002, start.add(const Duration(seconds: 10))),
+      start.add(const Duration(seconds: 10)),
+    );
+    expect(recovering.state, RouteTrackingState.recovering);
+    final recovered = detector.evaluate(
+      _sample(51.002, start.add(const Duration(seconds: 15))),
+      start.add(const Duration(seconds: 15)),
+    );
+    expect(recovered.state, RouteTrackingState.onRoute);
+  });
+
   test('separate GPX segments never create a synthetic connecting road', () {
     final now = DateTime.utc(2026, 7, 16, 12);
     final detector = RouteDeviationDetector(

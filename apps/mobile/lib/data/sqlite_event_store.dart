@@ -77,6 +77,19 @@ class SqliteEventStore implements EventStore {
   }
 
   @override
+  Future<void> deleteEvents(String rideId, Iterable<String> eventIds) async {
+    final ids = eventIds.toList(growable: false);
+    if (ids.isEmpty) return;
+    final db = await _db;
+    await db.delete(
+      'ride_events',
+      where:
+          'ride_id = ? AND id IN (${List.filled(ids.length, '?').join(',')})',
+      whereArgs: [rideId, ...ids],
+    );
+  }
+
+  @override
   Future<List<RideEvent>> eventsForRide(String rideId) async {
     final db = await _db;
     final rows = await db.query(

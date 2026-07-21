@@ -337,15 +337,30 @@ class DestinationRoutePlanner {
   final String Function() _idFactory;
   final DateTime Function() _clock;
 
+  /// [originQuery] is geocoded the same way [query] (the destination)
+  /// already is, and takes priority when given - the route need not start
+  /// from the rider's current location. [origin] is the fallback used only
+  /// when there is no [originQuery]; at least one of the two is required.
   Future<ImportedRoute> plan({
-    required GeoPoint origin,
+    GeoPoint? origin,
+    String? originQuery,
     required String query,
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
   }) async {
+    final GeoPoint resolvedOrigin;
+    if (originQuery != null && originQuery.trim().isNotEmpty) {
+      resolvedOrigin = (await searchService.search(originQuery)).first.point;
+    } else if (origin != null) {
+      resolvedOrigin = origin;
+    } else {
+      throw const FormatException(
+        'A start location or current position is required.',
+      );
+    }
     final matches = await searchService.search(query);
     final destination = matches.first;
     final roadRoute = await routingService.routeThrough([
-      origin,
+      resolvedOrigin,
       destination.point,
     ]);
     final id = _idFactory();
@@ -366,7 +381,11 @@ class DestinationRoutePlanner {
         ),
       ],
       waypoints: [
-        RouteWaypoint(point: origin, name: 'Start', symbol: 'Flag, Blue'),
+        RouteWaypoint(
+          point: resolvedOrigin,
+          name: 'Start',
+          symbol: 'Flag, Blue',
+        ),
         RouteWaypoint(
           point: destination.point,
           name: destination.label,

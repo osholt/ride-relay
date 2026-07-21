@@ -151,6 +151,56 @@ void main() {
     },
   );
 
+  test('destination plan geocodes an explicit start location instead of '
+      'requiring the current position', () async {
+    final search = NominatimDestinationSearchService(
+      client: MockClient((request) async {
+        final query = request.url.queryParameters['q'];
+        final point = query == 'Matlock Bath'
+            ? {'lat': '53.121', 'lon': '-1.562'}
+            : {'lat': '52.0', 'lon': '-1.9'};
+        return http.Response(
+          jsonEncode([
+            {...point, 'display_name': '$query, United Kingdom'},
+          ]),
+          200,
+        );
+      }),
+      baseUrl: Uri.parse('https://geocoding.example.test'),
+    );
+    final routing = _FakeRoadRoutingService();
+    final planner = DestinationRoutePlanner(
+      searchService: search,
+      routingService: routing,
+    );
+
+    final route = await planner.plan(
+      originQuery: 'Bakewell',
+      query: 'Matlock Bath',
+    );
+
+    expect(route.waypoints.first.point.latitude, 52.0);
+    expect(routing.requests.single.first.latitude, 52.0);
+  });
+
+  test(
+    'destination plan requires either a current position or a start query',
+    () async {
+      final planner = DestinationRoutePlanner(
+        searchService: NominatimDestinationSearchService(
+          client: MockClient((_) async => http.Response('[]', 200)),
+          baseUrl: Uri.parse('https://geocoding.example.test'),
+        ),
+        routingService: _FakeRoadRoutingService(),
+      );
+
+      await expectLater(
+        planner.plan(query: 'Matlock Bath'),
+        throwsA(isA<FormatException>()),
+      );
+    },
+  );
+
   test('routing failure preserves the original sparse GPX route', () async {
     final route = ImportedRoute(
       id: 'route',

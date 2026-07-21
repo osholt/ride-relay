@@ -4,6 +4,15 @@ The active route map exposes one `Navigate or export route` action. Tail End Cha
 uses a documented universal link where a target supports one and otherwise
 shares a standards-based GPX 1.1 file through the native share sheet.
 
+The mobile code keeps these choices in one `navigationHandoffCapabilities`
+registry. Each entry declares whether it uses a documented direct link or a
+GPX share, how much route data Tail End Charlie can send, the supported mobile
+platforms, and the rider-facing limitation. The registry can be filtered by
+Android or iOS instead of assuming every future provider works identically on
+both. Adding a provider requires a documented integration and a physical-device
+test; Tail End Charlie does not invent private URL schemes. All current entries still
+require the physical-device evidence tracked in issue #5.
+
 The map also has an `Enter destination` action. It builds and saves a
 road-following route from the current location, then optionally continues
 straight into the Google Maps handoff or the Calimoto/MyRoute-app GPX share
@@ -31,15 +40,21 @@ timestamps from the persisted active route. The native operating-system share
 sheet controls which installed apps are offered; mobile apps cannot safely
 preselect a third-party recipient.
 
-## Planned projected navigation
+## Projected navigation (CarPlay / Android Auto)
 
-Apple CarPlay and Android Auto companion surfaces are P1 roadmap features. The
-intended scope is a low-interaction route view, next-action guidance, group
-separation state, and urgent ride alerts backed by the phone's existing offline
-ride journal. CarPlay requires the appropriate Apple entitlement and approved
-template category; Android Auto must use the Android for Cars App Library and
-comply with its distraction-optimized templates. Neither integration is
-implemented or claimed by the current alpha.
+CarPlay has a working companion: a `CPListTemplate` showing each rider's name,
+role, and an off-route indicator, the current highest-priority alert, and an
+SOS button wired to the same emergency alert as the phone's map. It is not a
+native map. `CPMapTemplate` requires Apple's manually-granted CarPlay
+Navigation entitlement - a bare `CPMapTemplate` attempt crashed Apple's own
+internal chrome code (confirmed via crash report) without it, since Simulator
+ad-hoc builds don't carry the real entitlement. That entitlement has been
+requested from Apple; a native map is a well-scoped follow-up once it is
+granted.
+
+Android Auto is not implemented. It would use the Android for Cars App
+Library and its own distraction-optimized templates, comparable in scope to
+the CarPlay work above.
 
 ## Ride and marker summary
 

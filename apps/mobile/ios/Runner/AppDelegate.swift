@@ -1,3 +1,4 @@
+import CarPlay
 import Flutter
 import NearbyConnections
 import UIKit
@@ -12,6 +13,11 @@ import UIKit
   private var discoverer: Discoverer?
   private var connectedPeers = Set<EndpointID>()
   private var pendingPeers = Set<EndpointID>()
+  private var gpxImportChannel: FlutterMethodChannel?
+  private var pendingGpxImport: (data: Data, fileName: String)?
+  private var carPlayChannel: FlutterMethodChannel?
+  private var latestCarPlaySnapshot: [String: Any]?
+  weak var carPlayListTemplate: CPListTemplate?
 
   override func application(
     _ application: UIApplication,
@@ -81,6 +87,80 @@ import UIKit
     )
     eventChannel.setStreamHandler(self)
     nearbyEventChannel = eventChannel
+
+    let gpxChannel = FlutterMethodChannel(
+      name: "me.osholt.ride_relay/gpx_import",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    gpxChannel.setMethodCallHandler { [weak self] call, result in
+      guard call.method == "consumePendingGpxImport" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      guard let pending = self?.pendingGpxImport else {
+        result(nil)
+        return
+      }
+      self?.pendingGpxImport = nil
+      result([
+        "bytes": FlutterStandardTypedData(bytes: pending.data),
+        "fileName": pending.fileName,
+      ])
+    }
+    gpxImportChannel = gpxChannel
+
+    let carPlayChannel = FlutterMethodChannel(
+      name: "me.osholt.ride_relay/carplay",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    carPlayChannel.setMethodCallHandler { [weak self] call, result in
+      guard call.method == "updateSnapshot" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      guard let snapshot = call.arguments as? [String: Any] else {
+        result(FlutterError(code: "invalid_arguments", message: "Snapshot must be a map", details: nil))
+        return
+      }
+      self?.latestCarPlaySnapshot = snapshot
+      if let template = self?.carPlayListTemplate {
+        CarPlayStatusTemplate.apply(snapshot: snapshot, to: template)
+      }
+      result(nil)
+    }
+    self.carPlayChannel = carPlayChannel
+  }
+
+  /// Called by CarPlaySceneDelegate once the CarPlay scene's list template is
+  /// ready. Applies whatever snapshot Dart already published - the CarPlay
+  /// scene can connect well after the ride screen's first publish.
+  func carPlayDidConnect(_ template: CPListTemplate) {
+    carPlayListTemplate = template
+    if let snapshot = latestCarPlaySnapshot {
+      CarPlayStatusTemplate.apply(snapshot: snapshot, to: template)
+    }
+  }
+
+  func carPlayDidDisconnect() {
+    carPlayListTemplate = nil
+  }
+
+  func triggerCarPlayEmergency() {
+    carPlayChannel?.invokeMethod("triggerEmergency", arguments: nil)
+  }
+
+  /// Called from SceneDelegate when the OS hands this app a file URL (Open
+  /// in..., a share sheet, or a cold launch from one of those). Dart pulls
+  /// this on its own schedule via consumePendingGpxImport rather than being
+  /// pushed to live, since a cold-start URL arrives before Dart's engine -
+  /// and therefore any method call handler - is guaranteed to exist yet.
+  func handleIncomingGpx(url: URL) {
+    let isSecurityScoped = url.startAccessingSecurityScopedResource()
+    defer {
+      if isSecurityScoped { url.stopAccessingSecurityScopedResource() }
+    }
+    guard let data = try? Data(contentsOf: url) else { return }
+    pendingGpxImport = (data: data, fileName: url.lastPathComponent)
   }
 
   private func startNearby(serviceID: String, endpointName: String, result: @escaping FlutterResult) {

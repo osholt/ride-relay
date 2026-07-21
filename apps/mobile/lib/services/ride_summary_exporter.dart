@@ -5,8 +5,20 @@ import 'dart:ui' show Rect;
 
 import 'package:share_plus/share_plus.dart';
 
+import '../domain/distance_unit.dart';
+import '../domain/geo_point.dart' as geo;
+import '../domain/imported_route.dart';
 import '../domain/ride_event.dart';
 import '../domain/ride_session.dart';
+import 'geo_calculations.dart';
+import 'gpx_exporter.dart';
+import 'measurement_formatter.dart';
+
+typedef _TrailPoint = ({
+  double latitude,
+  double longitude,
+  DateTime recordedAt,
+});
 
 class MarkerSessionSummary {
   const MarkerSessionSummary({
@@ -36,6 +48,8 @@ class RideSummary {
     required this.generatedAt,
     required this.eventCount,
     required this.markerSessions,
+    required this.riderCount,
+    required this.totalDistanceMeters,
   });
 
   final String rideId;
@@ -46,6 +60,8 @@ class RideSummary {
   final DateTime generatedAt;
   final int eventCount;
   final List<MarkerSessionSummary> markerSessions;
+  final int riderCount;
+  final double totalDistanceMeters;
 
   Duration get rideDuration =>
       (endedAt ?? generatedAt).difference(startedAt).abs();
@@ -69,11 +85,7 @@ class RideSummaryExporter {
     Iterable<RideEvent> events, {
     required DateTime generatedAt,
   }) {
-    final ordered = events.toList(growable: false)
-      ..sort((left, right) {
-        final time = left.createdAt.compareTo(right.createdAt);
-        return time != 0 ? time : left.id.compareTo(right.id);
-      });
+    final ordered = _sorted(events);
     final startedAt = ordered.isEmpty
         ? session.joinedAt
         : _earlier(session.joinedAt, ordered.first.createdAt);
@@ -122,6 +134,9 @@ class RideSummaryExporter {
     }
     completed.sort((left, right) => left.startedAt.compareTo(right.startedAt));
 
+    final riderIds = {session.localRiderId, ...ordered.map((e) => e.deviceId)};
+    final trail = _ownTrail(session.localRiderId, ordered);
+
     return RideSummary(
       rideId: session.rideId,
       rideCode: session.rideCode,
@@ -131,18 +146,61 @@ class RideSummaryExporter {
       generatedAt: generatedAt,
       eventCount: ordered.length,
       markerSessions: List.unmodifiable(completed),
+      riderCount: riderIds.length,
+      totalDistanceMeters: _trailDistanceMeters(trail),
     );
   }
 
-  String toPlainText(RideSummary summary) {
+  /// The rider's own recorded path as a GPX-exportable track, or null if too
+  /// few position fixes were recorded to plot a meaningful trail.
+  ImportedRoute? traveledRoute(
+    RideSession session,
+    Iterable<RideEvent> events, {
+    required DateTime generatedAt,
+  }) {
+    final trail = _ownTrail(session.localRiderId, _sorted(events));
+    if (trail.length < 2) return null;
+    final trackName = session.rideName ?? 'Ride ${session.rideCode}';
+    return ImportedRoute(
+      id: session.rideId,
+      name: trackName,
+      importedAt: generatedAt,
+      sourceFileName: '${session.rideCode}.gpx',
+      paths: [
+        RoutePath(
+          kind: RoutePathKind.track,
+          name: trackName,
+          points: [
+            for (final point in trail)
+              GeoPoint(
+                latitude: point.latitude,
+                longitude: point.longitude,
+                recordedAt: point.recordedAt,
+              ),
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );
+  }
+
+  String toPlainText(
+    RideSummary summary, {
+    DistanceUnit distanceUnit = DistanceUnit.kilometres,
+  }) {
+    final distance = MeasurementFormatter(
+      distanceUnit,
+    ).distance(summary.totalDistanceMeters);
     final buffer = StringBuffer()
       ..writeln('Tail End Charlie summary · ${summary.rideCode}')
       ..writeln('Rider: ${summary.displayName}')
+      ..writeln('Riders on this ride: ${summary.riderCount}')
       ..writeln('Started: ${summary.startedAt.toLocal().toIso8601String()}')
       ..writeln(
         'Ended: ${summary.endedAt?.toLocal().toIso8601String() ?? 'ride still active'}',
       )
       ..writeln('Ride time: ${_duration(summary.rideDuration)}')
+      ..writeln('Distance covered: $distance')
       ..writeln('Events recorded: ${summary.eventCount}')
       ..writeln('Marker sessions: ${summary.markerSessions.length}')
       ..writeln(
@@ -169,6 +227,8 @@ class RideSummaryExporter {
       ['generated_at_utc', summary.generatedAt.toUtc().toIso8601String()],
       ['ride_duration_seconds', summary.rideDuration.inSeconds],
       ['event_count', summary.eventCount],
+      ['rider_count', summary.riderCount],
+      ['distance_meters', summary.totalDistanceMeters.round()],
       [],
       [
         'marker_device_id',
@@ -193,6 +253,71 @@ class RideSummaryExporter {
 
   String fileName(RideSummary summary) =>
       'ride-relay-${summary.rideCode.toLowerCase()}-summary.csv';
+
+  String trailFileName(RideSummary summary) =>
+      'ride-relay-${summary.rideCode.toLowerCase()}-trail.gpx';
+
+  static List<RideEvent> _sorted(Iterable<RideEvent> events) =>
+      events.toList(growable: false)..sort((left, right) {
+        final time = left.createdAt.compareTo(right.createdAt);
+        return time != 0 ? time : left.id.compareTo(right.id);
+      });
+
+  /// Reconstructs the local rider's own position fixes from
+  /// [RideEventType.riderLocationUpdated] events, walking the raw payload
+  /// defensively (rather than via `RiderLocation.fromJson`) since relayed
+  /// events from other devices are untrusted and a malformed one shouldn't
+  /// break the whole export.
+  static List<_TrailPoint> _ownTrail(
+    String localRiderId,
+    List<RideEvent> ordered,
+  ) {
+    final trail = <_TrailPoint>[];
+    for (final event in ordered) {
+      final point = _ownTrailPoint(event, localRiderId);
+      if (point != null) trail.add(point);
+    }
+    return trail;
+  }
+
+  static _TrailPoint? _ownTrailPoint(RideEvent event, String localRiderId) {
+    if (event.type != RideEventType.riderLocationUpdated) return null;
+    if (event.deviceId != localRiderId) return null;
+    final location = event.payload['location'];
+    if (location is! Map) return null;
+    final sample = location['sample'];
+    if (sample is! Map) return null;
+    final position = sample['position'];
+    if (position is! Map) return null;
+    final latitude = position['latitude'];
+    final longitude = position['longitude'];
+    if (latitude is! num || longitude is! num) return null;
+    final recordedAt = sample['recordedAt'];
+    return (
+      latitude: latitude.toDouble(),
+      longitude: longitude.toDouble(),
+      recordedAt: recordedAt is String
+          ? (DateTime.tryParse(recordedAt)?.toLocal() ?? event.createdAt)
+          : event.createdAt,
+    );
+  }
+
+  static double _trailDistanceMeters(List<_TrailPoint> trail) {
+    var total = 0.0;
+    for (var index = 1; index < trail.length; index += 1) {
+      total += GeoCalculations.distanceMeters(
+        geo.GeoPoint(
+          latitude: trail[index - 1].latitude,
+          longitude: trail[index - 1].longitude,
+        ),
+        geo.GeoPoint(
+          latitude: trail[index].latitude,
+          longitude: trail[index].longitude,
+        ),
+      );
+    }
+    return total;
+  }
 
   static String _csvRow(List<Object?> values) =>
       values.map((value) => _csvCell(value?.toString() ?? '')).join(',');
@@ -239,6 +364,7 @@ abstract interface class RideSummarySharer {
   Future<void> share(
     RideSession session,
     Iterable<RideEvent> events, {
+    DistanceUnit distanceUnit = DistanceUnit.kilometres,
     Rect? sharePositionOrigin,
   });
 }
@@ -252,27 +378,43 @@ class SystemRideSummarySharer implements RideSummarySharer {
   Future<void> share(
     RideSession session,
     Iterable<RideEvent> events, {
+    DistanceUnit distanceUnit = DistanceUnit.kilometres,
     Rect? sharePositionOrigin,
   }) async {
+    final generatedAt = DateTime.now();
     final summary = exporter.summarize(
       session,
       events,
-      generatedAt: DateTime.now(),
+      generatedAt: generatedAt,
     );
-    final fileName = exporter.fileName(summary);
+    final route = exporter.traveledRoute(
+      session,
+      events,
+      generatedAt: generatedAt,
+    );
+    final csvFileName = exporter.fileName(summary);
+    final gpxFileName = exporter.trailFileName(summary);
     await SharePlus.instance.share(
       ShareParams(
         title: 'Ride summary ${summary.rideCode}',
         subject: 'Tail End Charlie summary ${summary.rideCode}',
-        text: exporter.toPlainText(summary),
+        text: exporter.toPlainText(summary, distanceUnit: distanceUnit),
         files: [
           XFile.fromData(
             Uint8List.fromList(utf8.encode(exporter.toCsv(summary))),
             mimeType: 'text/csv',
-            name: fileName,
+            name: csvFileName,
           ),
+          if (route != null)
+            XFile.fromData(
+              Uint8List.fromList(
+                utf8.encode(const GpxExporter().export(route)),
+              ),
+              mimeType: 'application/gpx+xml',
+              name: gpxFileName,
+            ),
         ],
-        fileNameOverrides: [fileName],
+        fileNameOverrides: [csvFileName, if (route != null) gpxFileName],
         sharePositionOrigin: sharePositionOrigin,
       ),
     );

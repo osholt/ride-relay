@@ -24,9 +24,23 @@ first upload:
    Back this file up somewhere durable and encrypted - if it's lost before
    Play App Signing has a copy, Google support can reissue an upload key, but
    it's a real disruption to avoid.
-4. **Create a least-privilege Google Play service account** (Play Console ->
-   Setup -> API access), download its JSON key, and grant it only the
-   permissions needed to manage releases on the internal track.
+4. **Create a least-privilege Google Play service account**, in three parts
+   that are easy to think are one step but aren't:
+   a. Create the service account itself in Google Cloud Console (IAM & Admin
+      -> Service Accounts; Play Console's Setup -> API access page links
+      here) and download its JSON key.
+   b. **Enable the Android Publisher API** on that same Google Cloud project
+      (`console.developers.google.com/apis/api/androidpublisher.googleapis.com/overview?project=<id>`) -
+      it's off by default, and the upload step fails clearly but only at
+      upload time if it's missed. Allow a few minutes for it to propagate.
+   c. **In Play Console itself**, go to Users and permissions, invite the
+      service account's email (the JSON key's `client_email`) as a new
+      user scoped to this app only, and grant **"Release apps to testing
+      tracks"**. Creating the account in Google Cloud grants it no Play
+      Console access by itself - skipping this produces a distinct
+      "The caller does not have permission" upload failure, propagates
+      quickly (no email-acceptance step like a human invite), but is easy
+      to miss since nothing in Google Cloud's UI mentions it.
 5. **Create the protected `android-internal` GitHub environment** (Settings
    -> Environments) with these repository secrets:
    - `ANDROID_KEYSTORE_BASE64` - `base64 -i upload-keystore.jks | pbcopy`

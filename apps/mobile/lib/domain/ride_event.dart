@@ -16,6 +16,8 @@ enum RideEventType {
   ridePaused,
   rideResumed,
   rideEnded,
+  iceInfoShared,
+  iceInfoViewed,
 }
 
 enum EventPriority { routine, important, critical }

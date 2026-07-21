@@ -5,6 +5,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/internet_relay_controller.dart';
+import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/marker_assistance_controller.dart';
@@ -22,6 +23,7 @@ class RideDashboard extends StatelessWidget {
     super.key,
     required this.controller,
     required this.distanceUnits,
+    required this.mapStyleMode,
     required this.onLeaveRide,
     this.relayController,
     this.markerAssistanceController,
@@ -32,6 +34,7 @@ class RideDashboard extends StatelessWidget {
 
   final RideController controller;
   final DistanceUnitController distanceUnits;
+  final MapStyleModeController mapStyleMode;
   final Future<void> Function() onLeaveRide;
   final NearbyRelayController? relayController;
   final MarkerAssistanceController? markerAssistanceController;
@@ -50,7 +53,8 @@ class RideDashboard extends StatelessWidget {
         actions: [
           IconButton(
             tooltip: 'Settings',
-            onPressed: () => UnitSettingsSheet.show(context, distanceUnits),
+            onPressed: () =>
+                UnitSettingsSheet.show(context, distanceUnits, mapStyleMode),
             icon: const Icon(Icons.settings_outlined),
           ),
           IconButton(
@@ -210,6 +214,7 @@ class RideDashboard extends StatelessWidget {
       await (summarySharer ?? const SystemRideSummarySharer()).share(
         controller.session!,
         controller.events,
+        distanceUnit: distanceUnits.value,
         sharePositionOrigin: origin,
       );
     } catch (error) {
@@ -663,6 +668,8 @@ class _EventRow extends StatelessWidget {
       RideEventType.ridePaused => 'Ride paused',
       RideEventType.rideResumed => 'Ride resumed',
       RideEventType.rideEnded => 'Ride ended',
+      RideEventType.iceInfoShared => 'Emergency contact shared',
+      RideEventType.iceInfoViewed => 'Emergency contact viewed',
     };
     final time = TimeOfDay.fromDateTime(event.createdAt).format(context);
     return ListTile(

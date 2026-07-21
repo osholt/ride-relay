@@ -11,5 +11,9 @@ abstract interface class EventStore {
 
   Future<void> deleteRide(String rideId);
 
+  /// Removes specific events (e.g. an unused ICE-info share, purged once a
+  /// ride ends) without discarding the rest of the ride's history.
+  Future<void> deleteEvents(String rideId, Iterable<String> eventIds);
+
   Future<void> close();
 }

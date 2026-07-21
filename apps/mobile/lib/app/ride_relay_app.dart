@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../controllers/distance_unit_controller.dart';
+import '../controllers/map_style_mode_controller.dart';
 import '../controllers/ride_controller.dart';
+import '../controllers/rider_profile_controller.dart';
+import '../controllers/shared_route_controller.dart';
+import '../domain/recorded_route_store.dart';
 import '../features/home/home_screen.dart';
 import '../features/ride/active_ride_shell.dart';
 
@@ -10,11 +14,19 @@ class RideRelayApp extends StatelessWidget {
     super.key,
     required this.controller,
     required this.distanceUnits,
+    required this.mapStyleMode,
+    required this.riderProfile,
+    required this.sharedRoutes,
+    required this.recordedRoutes,
     this.enableNativeServices = true,
   });
 
   final RideController controller;
   final DistanceUnitController distanceUnits;
+  final MapStyleModeController mapStyleMode;
+  final RiderProfileController riderProfile;
+  final SharedRouteController sharedRoutes;
+  final RecordedRouteStore recordedRoutes;
   final bool enableNativeServices;
 
   @override
@@ -91,16 +103,31 @@ class RideRelayApp extends StatelessWidget {
         ),
       ),
       home: AnimatedBuilder(
-        animation: Listenable.merge([controller, distanceUnits]),
+        animation: Listenable.merge([
+          controller,
+          distanceUnits,
+          mapStyleMode,
+          sharedRoutes,
+        ]),
         builder: (context, _) => controller.hasActiveRide
             ? ActiveRideShell(
                 key: ValueKey(controller.session!.rideId),
                 rideController: controller,
                 distanceUnits: distanceUnits,
+                mapStyleMode: mapStyleMode,
                 eventStore: controller.eventStore,
                 enableNativeServices: enableNativeServices,
+                riderProfile: riderProfile,
+                sharedRoutes: sharedRoutes,
               )
-            : HomeScreen(controller: controller, distanceUnits: distanceUnits),
+            : HomeScreen(
+                controller: controller,
+                distanceUnits: distanceUnits,
+                mapStyleMode: mapStyleMode,
+                riderProfile: riderProfile,
+                sharedRoutes: sharedRoutes,
+                recordedRoutes: recordedRoutes,
+              ),
       ),
     );
   }

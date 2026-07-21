@@ -6,12 +6,16 @@ import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
 import '../domain/event_store.dart';
+import '../domain/ice_share.dart';
+import '../domain/join_invite.dart';
 import '../domain/marker_assistance.dart';
 import '../domain/quick_message.dart';
 import '../domain/ride_event.dart';
 import '../domain/ride_role.dart';
 import '../domain/ride_session.dart';
+import '../domain/rider_color.dart';
 import '../domain/session_store.dart';
+import '../features/map/motorcycle_icon.dart';
 import '../services/nearby_bridge.dart';
 import '../services/marker_statistics.dart';
 import '../services/ride_event_authenticator.dart';
@@ -54,6 +58,11 @@ class RideController extends ChangeNotifier {
   String? _errorMessage;
   RideRole? _roleBeforeMarker;
   Timer? _endedRideCleanupTimer;
+
+  /// ICE shares the local rider has acted on (called/texted the contact).
+  /// Kept in memory only, for this session: it gates which received shares
+  /// survive the ride-end purge, not a durable record of anyone's own.
+  final Set<String> _usedIceShareEventIds = {};
 
   RideSession? get session => _session;
   EventStore get eventStore => _eventStore;
@@ -143,10 +152,94 @@ class RideController extends ChangeNotifier {
   int get pendingEventCount =>
       _events.where((event) => !event.acknowledged).length;
 
+  /// ICE shares other riders have sent to me: either an explicit
+  /// whole-group share, or an auto-share addressed to me while I hold the
+  /// lead role. Purged from storage at ride-end unless marked used.
+  List<IceShare> get receivedIceShares {
+    final localId = _session?.localRiderId;
+    if (localId == null) return const [];
+    return _events
+        .where(
+          (event) =>
+              event.type == RideEventType.iceInfoShared &&
+              event.deviceId != localId &&
+              _isAddressedToMe(event, localId),
+        )
+        .map(_iceShareFromEvent)
+        .toList(growable: false);
+  }
+
+  /// ICE shares I have sent, with read-receipt state if a recipient has
+  /// opened one.
+  List<IceShare> get sentIceShares {
+    final localId = _session?.localRiderId;
+    if (localId == null) return const [];
+    return _events
+        .where(
+          (event) =>
+              event.type == RideEventType.iceInfoShared &&
+              event.deviceId == localId,
+        )
+        .map((event) {
+          final share = _iceShareFromEvent(event);
+          final view = _events
+              .where(
+                (candidate) =>
+                    candidate.type == RideEventType.iceInfoViewed &&
+                    candidate.payload['sharedEventId'] == event.id,
+              )
+              .fold<RideEvent?>(
+                null,
+                (earliest, candidate) =>
+                    earliest == null ||
+                        candidate.createdAt.isBefore(earliest.createdAt)
+                    ? candidate
+                    : earliest,
+              );
+          if (view == null) return share;
+          return IceShare(
+            eventId: share.eventId,
+            sharedByRiderId: share.sharedByRiderId,
+            sharedByDisplayName: share.sharedByDisplayName,
+            contactName: share.contactName,
+            contactPhone: share.contactPhone,
+            medicalNotes: share.medicalNotes,
+            sharedAt: share.sharedAt,
+            toWholeGroup: share.toWholeGroup,
+            viewedAt: view.createdAt,
+            viewedByRiderId: view.deviceId,
+          );
+        })
+        .toList(growable: false);
+  }
+
+  bool _isAddressedToMe(RideEvent event, String localId) {
+    final recipients = event.payload['recipientRiderIds'];
+    if (recipients is! List) return true;
+    return recipients.contains(localId);
+  }
+
+  IceShare _iceShareFromEvent(RideEvent event) => IceShare(
+    eventId: event.id,
+    sharedByRiderId: event.deviceId,
+    sharedByDisplayName: event.payload['sharedByDisplayName'] as String? ?? '',
+    contactName: event.payload['contactName'] as String? ?? '',
+    contactPhone: event.payload['contactPhone'] as String? ?? '',
+    medicalNotes: event.payload['medicalNotes'] as String? ?? '',
+    sharedAt: event.createdAt,
+    toWholeGroup: event.payload['recipientRiderIds'] == null,
+  );
+
   String get rideCodeShareText {
     final activeSession = _requireSession();
-    return 'Join my Tail End Charlie group. Enter ride code '
-        '${activeSession.rideCode} in the app.';
+    final name = activeSession.rideName;
+    final group = name == null ? 'my Tail End Charlie group' : '"$name"';
+    final invite = joinInviteText(
+      activeSession.rideCode,
+      activeSession.joinToken,
+    );
+    return 'Join $group. Enter ride code ${activeSession.rideCode} in the '
+        'app, or paste this invite: $invite.';
   }
 
   Future<void> initialize() async {
@@ -156,6 +249,7 @@ class RideController extends ChangeNotifier {
     if (activeSession != null) {
       _events = await _eventStore.eventsForRide(activeSession.rideId);
       await _expireEndedRideIfDue();
+      await _purgeUnusedIceSharesIfEnded();
       _roleBeforeMarker = _activeMarkerPreviousRole();
     }
     notifyListeners();
@@ -168,23 +262,38 @@ class RideController extends ChangeNotifier {
     }
     _events = await _eventStore.eventsForRide(activeSession.rideId);
     await _expireEndedRideIfDue();
+    await _purgeUnusedIceSharesIfEnded();
     notifyListeners();
   }
 
-  Future<void> createRide(String displayName) async {
+  Future<void> createRide(
+    String displayName, {
+    MotorcycleIconStyle motorcycleStyle = motorcycleIconStyleDefault,
+    RiderColor riderColor = riderColorDefault,
+    String? rideName,
+  }) async {
     await _run(() async {
-      await _createRide(displayName: displayName);
+      await _createRide(
+        displayName: displayName,
+        motorcycleStyle: motorcycleStyle,
+        riderColor: riderColor,
+        rideName: rideName,
+      );
     });
   }
 
   Future<void> createSimulationRide({
     int riderCount = RideSession.defaultSimulationRiderCount,
+    MotorcycleIconStyle motorcycleStyle = motorcycleIconStyleDefault,
+    RiderColor riderColor = riderColorDefault,
   }) async {
     await _run(() async {
       await _createRide(
         displayName: 'Demo Lead',
         isSimulation: true,
         simulationRiderCount: _validatedSimulationRiderCount(riderCount),
+        motorcycleStyle: motorcycleStyle,
+        riderColor: riderColor,
       );
     });
   }
@@ -206,6 +315,9 @@ class RideController extends ChangeNotifier {
         simulationRiderCount: _validatedSimulationRiderCount(
           riderCount ?? activeSession.simulationRiderCount,
         ),
+        motorcycleStyle: activeSession.motorcycleStyle,
+        riderColor: activeSession.riderColor,
+        rideName: activeSession.rideName,
       );
     });
   }
@@ -233,22 +345,34 @@ class RideController extends ChangeNotifier {
     }
   }
 
-  Future<void> joinRide(String rideCode, String displayName) async {
+  Future<void> joinRide(
+    String rideCode,
+    String displayName, {
+    MotorcycleIconStyle motorcycleStyle = motorcycleIconStyleDefault,
+    RiderColor riderColor = riderColorDefault,
+    String? joinToken,
+  }) async {
     await _run(() async {
       final normalisedCode = rideCode.trim();
       if (!RegExp(r'^\d{6}$').hasMatch(normalisedCode)) {
         throw const FormatException('Enter a valid six-digit ride code.');
       }
-      final credentials = await _rideCodeDirectory.resolve(normalisedCode);
+      final credentials = await _rideCodeDirectory.resolve(
+        normalisedCode,
+        joinToken: joinToken,
+      );
       final now = _clock();
       final session = RideSession(
         rideId: credentials.rideId,
         rideCode: credentials.rideCode,
         inviteSecret: credentials.inviteSecret,
+        joinToken: credentials.joinToken,
         localRiderId: _idFactory(),
         displayName: _normaliseName(displayName),
         role: RideRole.rider,
         joinedAt: now,
+        motorcycleStyle: motorcycleStyle,
+        riderColor: riderColor,
       );
       _session = session;
       await _sessionStore.save(session);
@@ -257,6 +381,8 @@ class RideController extends ChangeNotifier {
         payload: {
           'displayName': session.displayName,
           'role': session.role.name,
+          'motorcycleStyle': session.motorcycleStyle.name,
+          'riderColor': session.riderColor.name,
         },
       );
     });
@@ -292,6 +418,64 @@ class RideController extends ChangeNotifier {
         },
       );
     });
+  }
+
+  /// Shares ICE (in-case-of-emergency) info into the ride. Pass an empty
+  /// [recipientRiderIds] to share with the whole group (an explicit rider
+  /// action); pass the current leader's rider id to share with just them
+  /// (the opt-in default-share-on-emergency setting). The caller resolves
+  /// who "the leader" currently is, the same way it already resolves
+  /// emergency-alert recipients.
+  Future<void> shareEmergencyInfo({
+    required String contactName,
+    required String contactPhone,
+    required String medicalNotes,
+    required Iterable<String> recipientRiderIds,
+  }) async {
+    await _run(() async {
+      final activeSession = _requireSession();
+      final recipients = recipientRiderIds.toSet().toList(growable: false);
+      await _record(
+        type: RideEventType.iceInfoShared,
+        priority: EventPriority.critical,
+        expiresAt: _clock().add(const Duration(hours: 2)),
+        payload: {
+          'contactName': contactName,
+          'contactPhone': contactPhone,
+          'medicalNotes': medicalNotes,
+          'sharedByDisplayName': activeSession.displayName,
+          if (recipients.isNotEmpty) 'recipientRiderIds': recipients,
+        },
+      );
+    });
+  }
+
+  /// Records that the local rider has opened a share sent to them, so the
+  /// original sharer can see it was seen. A no-op if already recorded.
+  Future<void> markIceInfoViewed(String sharedEventId) async {
+    final localId = _session?.localRiderId;
+    if (localId == null) return;
+    final alreadyViewed = _events.any(
+      (event) =>
+          event.type == RideEventType.iceInfoViewed &&
+          event.deviceId == localId &&
+          event.payload['sharedEventId'] == sharedEventId,
+    );
+    if (alreadyViewed) return;
+    await _run(() async {
+      await _record(
+        type: RideEventType.iceInfoViewed,
+        payload: {'sharedEventId': sharedEventId},
+      );
+    });
+  }
+
+  /// Marks a received ICE share as acted on (called or texted the
+  /// contact), exempting it from the ride-end purge below.
+  void markIceShareUsed(String eventId) {
+    if (_usedIceShareEventIds.add(eventId)) {
+      notifyListeners();
+    }
   }
 
   Future<void> pauseRide() => _setRidePaused(true);
@@ -419,6 +603,7 @@ class RideController extends ChangeNotifier {
         payload: {'markingSummary': summary.toJson()},
       );
       _roleBeforeMarker = null;
+      await _purgeUnusedIceSharesIfEnded();
       await _expireEndedRideIfDue();
     });
   }
@@ -483,18 +668,28 @@ class RideController extends ChangeNotifier {
     required String displayName,
     bool isSimulation = false,
     int simulationRiderCount = RideSession.defaultSimulationRiderCount,
+    MotorcycleIconStyle motorcycleStyle = motorcycleIconStyleDefault,
+    RiderColor riderColor = riderColorDefault,
+    String? rideName,
   }) async {
     final now = _clock();
+    final normalisedRideName = rideName?.trim();
     final session = RideSession(
       rideId: _idFactory(),
       rideCode: _generateCode(),
       inviteSecret: _generateInviteSecret(),
+      joinToken: _generateJoinToken(),
       localRiderId: _idFactory(),
       displayName: _normaliseName(displayName),
       role: RideRole.lead,
       joinedAt: now,
       isSimulation: isSimulation,
       simulationRiderCount: simulationRiderCount,
+      motorcycleStyle: motorcycleStyle,
+      riderColor: riderColor,
+      rideName: normalisedRideName == null || normalisedRideName.isEmpty
+          ? null
+          : normalisedRideName,
     );
     _session = session;
     await _sessionStore.save(session);
@@ -504,6 +699,9 @@ class RideController extends ChangeNotifier {
         'displayName': session.displayName,
         'role': session.role.name,
         if (isSimulation) 'simulation': true,
+        'motorcycleStyle': session.motorcycleStyle.name,
+        'riderColor': session.riderColor.name,
+        if (session.rideName != null) 'rideName': session.rideName,
       },
     );
   }
@@ -565,6 +763,14 @@ class RideController extends ChangeNotifier {
       .encode(List<int>.generate(32, (_) => _random.nextInt(256)))
       .replaceAll('=', '');
 
+  static const _joinTokenAlphabet =
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+
+  String _generateJoinToken() => List.generate(
+    24,
+    (_) => _joinTokenAlphabet[_random.nextInt(_joinTokenAlphabet.length)],
+  ).join();
+
   DateTime? get _rideEndedAt {
     for (final event in _events.reversed) {
       if (event.type == RideEventType.rideEnded) return event.createdAt;
@@ -589,6 +795,31 @@ class RideController extends ChangeNotifier {
     });
   }
 
+  /// Removes ICE shares this device received (not ones it sent) as soon as
+  /// the ride ends, unless the recipient acted on them - so a leader's app
+  /// doesn't go on holding another rider's phone number and medical notes
+  /// once the ride is over, but can still follow up on one they actually
+  /// used.
+  Future<void> _purgeUnusedIceSharesIfEnded() async {
+    final activeSession = _session;
+    if (activeSession == null || !rideEnded) return;
+    final localId = activeSession.localRiderId;
+    final toRemove = _events
+        .where(
+          (event) =>
+              event.type == RideEventType.iceInfoShared &&
+              event.deviceId != localId &&
+              _isAddressedToMe(event, localId) &&
+              !_usedIceShareEventIds.contains(event.id),
+        )
+        .map((event) => event.id)
+        .toList(growable: false);
+    if (toRemove.isEmpty) return;
+    await _eventStore.deleteEvents(activeSession.rideId, toRemove);
+    final removed = toRemove.toSet();
+    _events = _events.where((event) => !removed.contains(event.id)).toList();
+  }
+
   Future<void> _removeRideData() async {
     _endedRideCleanupTimer?.cancel();
     _endedRideCleanupTimer = null;
@@ -598,6 +829,7 @@ class RideController extends ChangeNotifier {
     _session = null;
     _events = const [];
     _roleBeforeMarker = null;
+    _usedIceShareEventIds.clear();
   }
 
   RideRole? _activeMarkerPreviousRole() {

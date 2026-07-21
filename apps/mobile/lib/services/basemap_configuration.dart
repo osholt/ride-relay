@@ -1,6 +1,7 @@
 class BasemapConfiguration {
   const BasemapConfiguration({
     this.styleUrl = '',
+    this.darkStyleUrl = '',
     this.urlTemplate = '',
     this.attribution = '',
     this.cacheNamespace = '',
@@ -12,6 +13,10 @@ class BasemapConfiguration {
     styleUrl: const String.fromEnvironment(
       'RIDE_RELAY_MAP_STYLE_URL',
       defaultValue: 'https://tiles.openfreemap.org/styles/liberty',
+    ),
+    darkStyleUrl: const String.fromEnvironment(
+      'RIDE_RELAY_MAP_STYLE_URL_DARK',
+      defaultValue: 'https://tiles.openfreemap.org/styles/dark',
     ),
     urlTemplate: const String.fromEnvironment('RIDE_RELAY_TILE_URL'),
     attribution: const String.fromEnvironment(
@@ -33,12 +38,32 @@ class BasemapConfiguration {
   /// HTTPS MapLibre style document used by the production vector-map path.
   final String styleUrl;
 
+  /// HTTPS MapLibre style document used at night/in dark mode. Both styles
+  /// are expected to render the same underlying vector tiles, just restyled
+  /// - so offline-cached tiles remain shared and reusable between them.
+  final String darkStyleUrl;
+
   /// Legacy raster XYZ template retained as a route-only development fallback.
   final String urlTemplate;
   final String attribution;
   final String cacheNamespace;
   final bool persistentCachingAllowed;
   final int maximumNativeZoom;
+
+  /// A copy using [darkStyleUrl] in place of [styleUrl] when [dark] is true
+  /// and a dark style is actually configured; otherwise unchanged.
+  BasemapConfiguration forBrightness({required bool dark}) {
+    if (!dark || darkStyleUrl.trim().isEmpty) return this;
+    return BasemapConfiguration(
+      styleUrl: darkStyleUrl,
+      darkStyleUrl: darkStyleUrl,
+      urlTemplate: urlTemplate,
+      attribution: attribution,
+      cacheNamespace: cacheNamespace,
+      persistentCachingAllowed: persistentCachingAllowed,
+      maximumNativeZoom: maximumNativeZoom,
+    );
+  }
 
   bool get usesMapLibre =>
       styleUrl.trim().isNotEmpty &&

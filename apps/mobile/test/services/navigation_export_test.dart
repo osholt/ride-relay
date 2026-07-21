@@ -5,6 +5,68 @@ import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/services/navigation_export.dart';
 
 void main() {
+  test(
+    'capability registry is complete and makes transfer limits explicit',
+    () {
+      expect(
+        navigationHandoffCapabilities.map((capability) => capability.target),
+        unorderedEquals(NavigationTarget.values),
+      );
+      for (final platform in NavigationPlatform.values) {
+        expect(
+          navigationCapabilitiesFor(
+            platform,
+          ).map((capability) => capability.target),
+          unorderedEquals(NavigationTarget.values),
+          reason: 'Every current handoff should declare $platform support',
+        );
+      }
+
+      expect(
+        NavigationTarget.googleMaps.capability.routeTransfer,
+        NavigationRouteTransfer.sampledWaypoints,
+      );
+      expect(
+        NavigationTarget.waze.capability.routeTransfer,
+        NavigationRouteTransfer.destinationOnly,
+      );
+      for (final target in [
+        NavigationTarget.shareGpx,
+        NavigationTarget.calimoto,
+        NavigationTarget.myRouteApp,
+        NavigationTarget.garmin,
+        NavigationTarget.bmwMotorrad,
+      ]) {
+        expect(
+          target.capability.routeTransfer,
+          NavigationRouteTransfer.fullGpx,
+        );
+        expect(target.hasDocumentedDirectLink, isFalse);
+      }
+    },
+  );
+
+  test(
+    'a platform-exclusive capability is excluded from the other platform',
+    () {
+      // Every current entry declares both platforms, so this is the only
+      // path that exercises exclusion - a synthetic capability here, not a
+      // fabricated real provider, since none of the seven actual entries are
+      // genuinely platform-exclusive.
+      const androidOnly = NavigationHandoffCapability(
+        target: NavigationTarget.garmin,
+        label: 'Garmin (Android only, hypothetical)',
+        transport: NavigationHandoffTransport.gpxShare,
+        routeTransfer: NavigationRouteTransfer.fullGpx,
+        platforms: {NavigationPlatform.android},
+        limitation: 'test fixture',
+      );
+
+      expect(androidOnly.supports(NavigationPlatform.android), isTrue);
+      expect(androidOnly.supports(NavigationPlatform.iOS), isFalse);
+    },
+  );
+
   test('Google Maps link is bounded to three sampled via points', () {
     final uri = RouteNavigationLinks.googleMaps(_route(10))!;
 
@@ -42,6 +104,42 @@ void main() {
     expect(launcher.opened, hasLength(1));
     expect(gateway.targets, [NavigationTarget.googleMaps]);
     expect(result.openedDirectly, isFalse);
+    expect(result.sharedGpx, isTrue);
+  });
+
+  test('a direct handoff that throws (rather than returning false) also falls '
+      'back to GPX sharing', () async {
+    final launcher = _FakeLauncher(result: true, throws: true);
+    final gateway = _FakeShareGateway();
+    final coordinator = NavigationExportCoordinator(
+      launcher: launcher,
+      shareGateway: gateway,
+    );
+
+    final result = await coordinator.export(NavigationTarget.waze, _route(4));
+
+    expect(launcher.opened, hasLength(1));
+    expect(gateway.targets, [NavigationTarget.waze]);
+    expect(result.openedDirectly, isFalse);
+    expect(result.sharedGpx, isTrue);
+  });
+
+  test('a route with no navigable points falls back to GPX sharing without '
+      'attempting to launch a direct link', () async {
+    final launcher = _FakeLauncher(result: true);
+    final gateway = _FakeShareGateway();
+    final coordinator = NavigationExportCoordinator(
+      launcher: launcher,
+      shareGateway: gateway,
+    );
+
+    final result = await coordinator.export(
+      NavigationTarget.googleMaps,
+      _route(0),
+    );
+
+    expect(launcher.opened, isEmpty);
+    expect(gateway.targets, [NavigationTarget.googleMaps]);
     expect(result.sharedGpx, isTrue);
   });
 
@@ -90,14 +188,16 @@ ImportedRoute _route(int count) => ImportedRoute(
 );
 
 class _FakeLauncher implements ExternalUriLauncher {
-  _FakeLauncher({required this.result});
+  _FakeLauncher({required this.result, this.throws = false});
 
   final bool result;
+  final bool throws;
   final List<Uri> opened = [];
 
   @override
   Future<bool> open(Uri uri) async {
     opened.add(uri);
+    if (throws) throw StateError('launch failed');
     return result;
   }
 }

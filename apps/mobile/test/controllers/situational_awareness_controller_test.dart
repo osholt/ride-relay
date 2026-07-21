@@ -170,6 +170,67 @@ void main() {
     );
   });
 
+  test(
+    "the leader is never flagged off-route once their own trail exists",
+    () async {
+      await controller.recordLocalLocation(_sample(latitude: 51, at: now));
+      now = now.add(const Duration(seconds: 5));
+      // The leader detours far from the planned route - e.g. a road closure.
+      await controller.recordLocalLocation(_sample(latitude: 52, at: now));
+
+      expect(
+        controller.alertFor(_session.localRiderId)?.assessment.state,
+        RouteTrackingState.onRoute,
+      );
+      expect(controller.leaderTrail, hasLength(2));
+    },
+  );
+
+  test("a follower on the leader's detour is not flagged off-route", () async {
+    await controller.recordLocalLocation(_sample(latitude: 51, at: now));
+    now = now.add(const Duration(seconds: 5));
+    await controller.recordLocalLocation(_sample(latitude: 52, at: now));
+
+    // A follower who took the same detour is judged against where the
+    // leader actually went, not the GPX the leader has since abandoned.
+    await controller.ingestRemoteEvent(
+      _remoteLocationEvent(
+        riderId: 'follower',
+        role: RideRole.rider,
+        latitude: 52,
+        now: now,
+      ),
+    );
+
+    expect(
+      controller.alertFor('follower')?.assessment.state,
+      RouteTrackingState.onRoute,
+    );
+  });
+
+  test(
+    'a follower who genuinely separates from the leader is still flagged',
+    () async {
+      await controller.recordLocalLocation(_sample(latitude: 51, at: now));
+      now = now.add(const Duration(seconds: 5));
+      await controller.recordLocalLocation(_sample(latitude: 51, at: now));
+
+      await controller.ingestRemoteEvent(
+        _remoteLocationEvent(
+          riderId: 'stray',
+          role: RideRole.rider,
+          latitude: 53,
+          now: now,
+        ),
+      );
+
+      expect(
+        controller.alertFor('stray')?.assessment.state,
+        RouteTrackingState.offRoute,
+      );
+    },
+  );
+
   test('unavailable Waze adapter remains explicit and is never fetched', () {
     final provider = controller.externalProviders.single;
 
@@ -200,6 +261,7 @@ final _session = RideSession(
   rideId: 'ride',
   rideCode: 'ABC123',
   inviteSecret: 'shared-secret',
+  joinToken: 'test-join-token-0123456789',
   localRiderId: 'local-rider',
   displayName: 'Oliver',
   role: RideRole.lead,
@@ -212,3 +274,27 @@ LocationSample _sample({required double latitude, required DateTime at}) =>
       recordedAt: at,
       accuracyMeters: 5,
     );
+
+RideEvent _remoteLocationEvent({
+  required String riderId,
+  required RideRole role,
+  required double latitude,
+  required DateTime now,
+}) {
+  final factory = SituationEventFactory(
+    session: _session,
+    clock: () => now,
+    idFactory: () => '$riderId-event',
+  );
+  final location = RiderLocation(
+    riderId: riderId,
+    displayName: riderId,
+    role: role,
+    sample: _sample(latitude: latitude, at: now),
+    receivedAt: now,
+  );
+  return factory.create(
+    type: RideEventType.riderLocationUpdated,
+    payload: {'location': location.toJson()},
+  );
+}
