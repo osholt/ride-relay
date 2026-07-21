@@ -83,6 +83,7 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./maps/styles:/srv/maps/styles:ro
+      - ../apps/planner:/srv/planner:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on:

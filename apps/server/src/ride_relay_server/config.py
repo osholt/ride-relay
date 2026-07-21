@@ -48,6 +48,17 @@ class Settings(BaseSettings):
         ge=1024 * 1024,
         le=1024 * 1024 * 1024,
     )
+    plan_retention_days: int = Field(default=30, ge=1, le=365)
+    maximum_plan_bytes: int = Field(
+        default=11 * 1024 * 1024,
+        ge=1024 * 1024,
+        le=32 * 1024 * 1024,
+    )
+    maximum_plan_points: int = Field(default=200_000, ge=100, le=1_000_000)
+    plan_create_rate_limit_requests: int = Field(default=10, ge=1, le=1000)
+    plan_create_rate_limit_window_seconds: int = Field(default=3600, ge=1, le=86400)
+    plan_lookup_rate_limit_requests: int = Field(default=30, ge=1, le=1000)
+    plan_lookup_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
 
     @field_validator("data_encryption_key", "cursor_signing_key")
     @classmethod
