@@ -18,6 +18,14 @@ class InMemoryEventStore implements EventStore {
   }
 
   @override
+  Future<void> deleteEvents(String rideId, Iterable<String> eventIds) async {
+    final ids = eventIds.toSet();
+    _events.removeWhere(
+      (id, event) => event.rideId == rideId && ids.contains(id),
+    );
+  }
+
+  @override
   Future<List<RideEvent>> eventsForRide(String rideId) async {
     final result = _events.values
         .where((event) => event.rideId == rideId)

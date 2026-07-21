@@ -2330,9 +2330,12 @@ class MapJunctionMarkerOverlay {
 
 /// A ride role that should receive urgent assistance requests.
 ///
-/// Phone numbers are deliberately optional: the ride roster does not currently
-/// exchange personal contact details, so the UI can safely offer Messages
-/// without silently exposing anyone's number to the rest of the group.
+/// Phone numbers are deliberately optional here: this general roster does
+/// not carry personal contact details, so the UI can safely offer Messages
+/// without exposing anyone's number by default. Actual ICE contact numbers
+/// only ever travel through the separate, opt-in sharing flow in
+/// RideController (IceShareInboxSheet / shareEmergencyInfo), never through
+/// this class.
 class MapEmergencyContact {
   const MapEmergencyContact({
     required this.riderId,

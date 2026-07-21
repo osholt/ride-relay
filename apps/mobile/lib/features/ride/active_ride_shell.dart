@@ -47,6 +47,7 @@ import '../../services/ride_completion_detector.dart';
 import '../map/motorcycle_icon.dart';
 import '../map/ride_map.dart';
 import '../settings/emergency_info_sheet.dart';
+import 'ice_share_inbox_sheet.dart';
 import '../situational_awareness/situational_awareness_screen.dart';
 import '../simulation/ride_simulation_screen.dart';
 import 'ended_ride_screen.dart';
@@ -88,6 +89,10 @@ class _RideNavigationMenu extends StatelessWidget {
     required this.onShareRoster,
     required this.onChangeRoute,
     required this.onEmergencyInfo,
+    required this.canShareIceInfo,
+    required this.onShareIceInfo,
+    required this.receivedIceShareCount,
+    required this.onViewIceShares,
     required this.ridePaused,
     required this.canToggleRidePause,
     required this.onToggleRidePause,
@@ -101,6 +106,10 @@ class _RideNavigationMenu extends StatelessWidget {
   final VoidCallback onShareRoster;
   final VoidCallback onChangeRoute;
   final VoidCallback onEmergencyInfo;
+  final bool canShareIceInfo;
+  final VoidCallback onShareIceInfo;
+  final int receivedIceShareCount;
+  final VoidCallback onViewIceShares;
   final bool ridePaused;
   final bool canToggleRidePause;
   final VoidCallback onToggleRidePause;
@@ -173,10 +182,35 @@ class _RideNavigationMenu extends StatelessWidget {
               key: const Key('ride-menu-emergency-info'),
               leading: const Icon(Icons.medical_information_outlined),
               title: const Text('Emergency info'),
-              subtitle: const Text('Kept on this device only'),
+              subtitle: const Text('Edit your details and sharing settings'),
               onTap: () {
                 Navigator.of(context).pop();
                 onEmergencyInfo();
+              },
+            ),
+            if (canShareIceInfo)
+              ListTile(
+                key: const Key('ride-menu-share-ice-info'),
+                leading: const Icon(Icons.contact_emergency_outlined),
+                title: const Text('Share my emergency contact'),
+                subtitle: const Text('Shares it with the whole group, now'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  onShareIceInfo();
+                },
+              ),
+            ListTile(
+              key: const Key('ride-menu-view-ice-shares'),
+              leading: Badge(
+                isLabelVisible: receivedIceShareCount > 0,
+                label: Text('$receivedIceShareCount'),
+                child: const Icon(Icons.contacts_outlined),
+              ),
+              title: const Text('Shared emergency contacts'),
+              subtitle: const Text('From other riders, for this ride only'),
+              onTap: () {
+                Navigator.of(context).pop();
+                onViewIceShares();
               },
             ),
             if (canToggleRidePause || canEndRide) const Divider(height: 20),
@@ -1343,8 +1377,10 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     return contacts.values.toList(growable: false);
   }
 
-  Future<void> _sendEmergencyMapAlert() =>
-      _sendEmergencyQuickMessage(QuickMessage.emergencyStop);
+  Future<void> _sendEmergencyMapAlert() async {
+    await _sendEmergencyQuickMessage(QuickMessage.emergencyStop);
+    await _autoShareIceWithLeaderIfEnabled();
+  }
 
   Future<void> _sendEmergencyMapIssue(QuickMessage message) =>
       _sendEmergencyQuickMessage(message);
@@ -1359,6 +1395,57 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       message,
       recipientRiderIds: recipients,
     );
+  }
+
+  /// The opt-in "share with the leader by default" setting, fired alongside
+  /// the emergency-stop alert so it still happens if the rider can't take a
+  /// further step. A no-op if the setting is off, there's nothing to share,
+  /// or the local rider is themselves the leader.
+  Future<void> _autoShareIceWithLeaderIfEnabled() async {
+    if (!widget.riderProfile.shareIceWithLeaderByDefault ||
+        !widget.riderProfile.hasEmergencyInfo) {
+      return;
+    }
+    final session = widget.rideController.session;
+    final leaderId = _currentLeaderRiderId;
+    if (session == null ||
+        leaderId == null ||
+        leaderId == session.localRiderId) {
+      return;
+    }
+    await widget.rideController.shareEmergencyInfo(
+      contactName: widget.riderProfile.emergencyContactName,
+      contactPhone: widget.riderProfile.emergencyContactPhone,
+      medicalNotes: widget.riderProfile.medicalNotes,
+      recipientRiderIds: [leaderId],
+    );
+  }
+
+  /// An explicit rider action: shares ICE info with everyone in the ride,
+  /// including the phone number, regardless of the default-share setting.
+  Future<void> _shareIceInfoWithGroup() async {
+    await widget.rideController.shareEmergencyInfo(
+      contactName: widget.riderProfile.emergencyContactName,
+      contactPhone: widget.riderProfile.emergencyContactPhone,
+      medicalNotes: widget.riderProfile.medicalNotes,
+      recipientRiderIds: const [],
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Emergency contact shared with the group.')),
+    );
+  }
+
+  Future<void> _openIceShareInbox() =>
+      IceShareInboxSheet.show(context, widget.rideController);
+
+  String? get _currentLeaderRiderId {
+    final session = widget.rideController.session;
+    if (session?.role == RideRole.lead) return session!.localRiderId;
+    for (final rider in _awarenessController?.riderLocations ?? const []) {
+      if (rider.role == RideRole.lead) return rider.riderId;
+    }
+    return null;
   }
 
   Future<void> _toggleRidePause() async {
@@ -1436,6 +1523,10 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         onChangeRoute: _requestRouteChange,
         onEmergencyInfo: () =>
             EmergencyInfoSheet.show(context, widget.riderProfile),
+        canShareIceInfo: widget.riderProfile.hasEmergencyInfo,
+        onShareIceInfo: _shareIceInfoWithGroup,
+        receivedIceShareCount: widget.rideController.receivedIceShares.length,
+        onViewIceShares: _openIceShareInbox,
         ridePaused: widget.rideController.ridePaused,
         canToggleRidePause:
             !_isSimulation &&

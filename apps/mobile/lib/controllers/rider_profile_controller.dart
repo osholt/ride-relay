@@ -17,6 +17,7 @@ class RiderProfileController extends ChangeNotifier {
     this._emergencyContactName,
     this._emergencyContactPhone,
     this._medicalNotes,
+    this._shareIceWithLeaderByDefault,
   );
 
   static const _nameKey = 'rider_profile_display_name';
@@ -25,6 +26,8 @@ class RiderProfileController extends ChangeNotifier {
   static const _emergencyContactNameKey = 'rider_profile_ice_contact_name';
   static const _emergencyContactPhoneKey = 'rider_profile_ice_contact_phone';
   static const _medicalNotesKey = 'rider_profile_ice_medical_notes';
+  static const _shareIceWithLeaderByDefaultKey =
+      'rider_profile_ice_share_with_leader_default';
 
   final SharedPreferences _preferences;
   String _displayName;
@@ -33,14 +36,17 @@ class RiderProfileController extends ChangeNotifier {
   String _emergencyContactName;
   String _emergencyContactPhone;
   String _medicalNotes;
+  bool _shareIceWithLeaderByDefault;
 
   String get displayName => _displayName;
   MotorcycleIconStyle get motorcycleStyle => _motorcycleStyle;
   RiderColor get riderColor => _riderColor;
 
-  // In-case-of-emergency details. Deliberately device-local only: never read
-  // by RideSession/RideEvent, so it can never reach the relay, the event
-  // journal, or another rider's device.
+  // In-case-of-emergency details. Kept device-local by default: not read by
+  // RideSession/RideEvent, so ordinary ride events never carry it. It only
+  // ever leaves the device through an explicit share action, or the opt-in
+  // auto-share-with-leader setting below - both driven from RideController,
+  // never automatically.
   String get emergencyContactName => _emergencyContactName;
   String get emergencyContactPhone => _emergencyContactPhone;
   String get medicalNotes => _medicalNotes;
@@ -48,6 +54,11 @@ class RiderProfileController extends ChangeNotifier {
       _emergencyContactName.isNotEmpty ||
       _emergencyContactPhone.isNotEmpty ||
       _medicalNotes.isNotEmpty;
+
+  /// If true, triggering an emergency-stop alert also shares this rider's
+  /// ICE info with whoever currently holds the lead role, without a further
+  /// explicit step - so it still happens if the rider can't act again.
+  bool get shareIceWithLeaderByDefault => _shareIceWithLeaderByDefault;
 
   static Future<RiderProfileController> load() async {
     final preferences = await SharedPreferences.getInstance();
@@ -59,6 +70,7 @@ class RiderProfileController extends ChangeNotifier {
       preferences.getString(_emergencyContactNameKey) ?? '',
       preferences.getString(_emergencyContactPhoneKey) ?? '',
       preferences.getString(_medicalNotesKey) ?? '',
+      preferences.getBool(_shareIceWithLeaderByDefaultKey) ?? false,
     );
   }
 
@@ -82,14 +94,20 @@ class RiderProfileController extends ChangeNotifier {
     required String emergencyContactName,
     required String emergencyContactPhone,
     required String medicalNotes,
+    required bool shareWithLeaderByDefault,
   }) async {
     _emergencyContactName = emergencyContactName;
     _emergencyContactPhone = emergencyContactPhone;
     _medicalNotes = medicalNotes;
+    _shareIceWithLeaderByDefault = shareWithLeaderByDefault;
     await Future.wait([
       _preferences.setString(_emergencyContactNameKey, emergencyContactName),
       _preferences.setString(_emergencyContactPhoneKey, emergencyContactPhone),
       _preferences.setString(_medicalNotesKey, medicalNotes),
+      _preferences.setBool(
+        _shareIceWithLeaderByDefaultKey,
+        shareWithLeaderByDefault,
+      ),
     ]);
     notifyListeners();
   }

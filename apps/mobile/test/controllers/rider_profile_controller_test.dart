@@ -14,6 +14,7 @@ void main() {
     expect(profile.emergencyContactPhone, isEmpty);
     expect(profile.medicalNotes, isEmpty);
     expect(profile.hasEmergencyInfo, isFalse);
+    expect(profile.shareIceWithLeaderByDefault, isFalse);
   });
 
   test(
@@ -25,6 +26,7 @@ void main() {
         emergencyContactName: 'Jamie Rider',
         emergencyContactPhone: '+44 7700 900123',
         medicalNotes: 'Penicillin allergy',
+        shareWithLeaderByDefault: true,
       );
 
       final reloaded = await RiderProfileController.load();
@@ -32,6 +34,7 @@ void main() {
       expect(reloaded.emergencyContactPhone, '+44 7700 900123');
       expect(reloaded.medicalNotes, 'Penicillin allergy');
       expect(reloaded.hasEmergencyInfo, isTrue);
+      expect(reloaded.shareIceWithLeaderByDefault, isTrue);
     },
   );
 }

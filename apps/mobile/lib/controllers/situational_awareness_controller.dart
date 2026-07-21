@@ -404,6 +404,8 @@ class SituationalAwarenessController extends ChangeNotifier {
       case RideEventType.ridePaused:
       case RideEventType.rideResumed:
       case RideEventType.rideEnded:
+      case RideEventType.iceInfoShared:
+      case RideEventType.iceInfoViewed:
         break;
     }
     if (!replaying) {

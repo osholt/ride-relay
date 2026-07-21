@@ -595,6 +595,10 @@ class RelayService:
             "routeAlertAcknowledged": timedelta(hours=2),
             "hazardReported": timedelta(hours=24),
             "hazardCleared": timedelta(hours=24),
+            # Carries a phone number and medical notes: capped independently
+            # of the client-supplied expiry, not left to the 72h default.
+            "iceInfoShared": timedelta(hours=2),
+            "iceInfoViewed": timedelta(hours=2),
         }.get(event_type, timedelta(hours=72))
 
     @staticmethod

@@ -132,40 +132,46 @@ void main() {
     follower.dispose();
   });
 
-  test('joining rider receives the ride join token for future re-sharing', () async {
-    await controller.createRide('Lead');
-    final leaderSession = controller.session!;
-    await controller.publishRideCode();
+  test(
+    'joining rider receives the ride join token for future re-sharing',
+    () async {
+      await controller.createRide('Lead');
+      final leaderSession = controller.session!;
+      await controller.publishRideCode();
 
-    final follower = RideController(
-      InMemoryEventStore(),
-      InMemorySessionStore(),
-      const _FakeNearbyBridge(),
-      clock: () => DateTime.utc(2026, 7, 16, 12),
-      idFactory: () => 'follower-id',
-      random: Random(7),
-      rideCodeDirectory: rideCodes,
-    );
-    await follower.initialize();
-    await follower.joinRide(leaderSession.rideCode, 'Follower');
+      final follower = RideController(
+        InMemoryEventStore(),
+        InMemorySessionStore(),
+        const _FakeNearbyBridge(),
+        clock: () => DateTime.utc(2026, 7, 16, 12),
+        idFactory: () => 'follower-id',
+        random: Random(7),
+        rideCodeDirectory: rideCodes,
+      );
+      await follower.initialize();
+      await follower.joinRide(leaderSession.rideCode, 'Follower');
 
-    expect(follower.session?.joinToken, leaderSession.joinToken);
-    follower.dispose();
-  });
+      expect(follower.session?.joinToken, leaderSession.joinToken);
+      follower.dispose();
+    },
+  );
 
-  test('ride code share text carries the six digits and a paired invite', () async {
-    await controller.createRide('Lead');
-    final leaderSession = controller.session!;
+  test(
+    'ride code share text carries the six digits and a paired invite',
+    () async {
+      await controller.createRide('Lead');
+      final leaderSession = controller.session!;
 
-    expect(
-      controller.rideCodeShareText,
-      contains('ride code ${leaderSession.rideCode} in the'),
-    );
-    expect(
-      controller.rideCodeShareText,
-      contains('${leaderSession.rideCode}#${leaderSession.joinToken}'),
-    );
-  });
+      expect(
+        controller.rideCodeShareText,
+        contains('ride code ${leaderSession.rideCode} in the'),
+      );
+      expect(
+        controller.rideCodeShareText,
+        contains('${leaderSession.rideCode}#${leaderSession.joinToken}'),
+      );
+    },
+  );
 
   test('non-numeric ride code is rejected before lookup', () async {
     await controller.joinRide('ABC234', 'Oliver');
@@ -403,6 +409,243 @@ void main() {
     expect(await sessionStore.load(), isNull);
     expect(await eventStore.eventsForRide(rideId), isEmpty);
   });
+
+  test('explicit ICE share carries no recipient filter', () async {
+    await controller.createRide('Oliver');
+    await controller.shareEmergencyInfo(
+      contactName: 'Sam',
+      contactPhone: '+44 7700 900111',
+      medicalNotes: 'Type 1 diabetic',
+      recipientRiderIds: const [],
+    );
+
+    final shared = controller.events.singleWhere(
+      (event) => event.type == RideEventType.iceInfoShared,
+    );
+    expect(shared.payload.containsKey('recipientRiderIds'), isFalse);
+    expect(controller.sentIceShares.single.toWholeGroup, isTrue);
+    expect(controller.sentIceShares.single.viewedAt, isNull);
+  });
+
+  test('default-share-with-leader carries a recipient filter', () async {
+    await controller.createRide('Oliver');
+    await controller.shareEmergencyInfo(
+      contactName: 'Sam',
+      contactPhone: '+44 7700 900111',
+      medicalNotes: '',
+      recipientRiderIds: const ['leader-device'],
+    );
+
+    final shared = controller.events.singleWhere(
+      (event) => event.type == RideEventType.iceInfoShared,
+    );
+    expect(shared.payload['recipientRiderIds'], ['leader-device']);
+    expect(controller.sentIceShares.single.toWholeGroup, isFalse);
+  });
+
+  test('received ICE shares include broadcasts and shares addressed to me, '
+      'not shares addressed elsewhere', () async {
+    await controller.createRide('Oliver');
+    final rideId = controller.session!.rideId;
+    final myId = controller.session!.localRiderId;
+
+    await eventStore.append(
+      RideEvent(
+        id: 'broadcast-share',
+        rideId: rideId,
+        deviceId: 'remote-device-a',
+        type: RideEventType.iceInfoShared,
+        priority: EventPriority.critical,
+        createdAt: DateTime.utc(2026, 7, 16, 12),
+        payload: const {
+          'contactName': 'Alex',
+          'contactPhone': '+44 7700 900222',
+          'medicalNotes': '',
+          'sharedByDisplayName': 'Remote A',
+        },
+        signature: 'relay-test',
+      ),
+    );
+    await eventStore.append(
+      RideEvent(
+        id: 'addressed-to-me',
+        rideId: rideId,
+        deviceId: 'remote-device-b',
+        type: RideEventType.iceInfoShared,
+        priority: EventPriority.critical,
+        createdAt: DateTime.utc(2026, 7, 16, 12),
+        payload: {
+          'contactName': 'Jo',
+          'contactPhone': '+44 7700 900333',
+          'medicalNotes': '',
+          'sharedByDisplayName': 'Remote B',
+          'recipientRiderIds': [myId],
+        },
+        signature: 'relay-test',
+      ),
+    );
+    await eventStore.append(
+      RideEvent(
+        id: 'addressed-elsewhere',
+        rideId: rideId,
+        deviceId: 'remote-device-c',
+        type: RideEventType.iceInfoShared,
+        priority: EventPriority.critical,
+        createdAt: DateTime.utc(2026, 7, 16, 12),
+        payload: const {
+          'contactName': 'Chris',
+          'contactPhone': '+44 7700 900444',
+          'medicalNotes': '',
+          'sharedByDisplayName': 'Remote C',
+          'recipientRiderIds': ['someone-else'],
+        },
+        signature: 'relay-test',
+      ),
+    );
+    await controller.reloadEvents();
+
+    final receivedIds = controller.receivedIceShares
+        .map((share) => share.eventId)
+        .toSet();
+    expect(receivedIds, {'broadcast-share', 'addressed-to-me'});
+  });
+
+  test('viewing a share records exactly one view event, however many times '
+      "it's opened", () async {
+    await controller.createRide('Oliver');
+    final rideId = controller.session!.rideId;
+    final myId = controller.session!.localRiderId;
+
+    await eventStore.append(
+      RideEvent(
+        id: 'their-share',
+        rideId: rideId,
+        deviceId: 'remote-device',
+        type: RideEventType.iceInfoShared,
+        priority: EventPriority.critical,
+        createdAt: DateTime.utc(2026, 7, 16, 12),
+        payload: const {
+          'contactName': 'Alex',
+          'contactPhone': '+44 7700 900222',
+          'medicalNotes': '',
+          'sharedByDisplayName': 'Remote',
+        },
+        signature: 'relay-test',
+      ),
+    );
+    await controller.reloadEvents();
+
+    await controller.markIceInfoViewed('their-share');
+    await controller.markIceInfoViewed('their-share');
+
+    final views = controller.events.where(
+      (event) => event.type == RideEventType.iceInfoViewed,
+    );
+    expect(views, hasLength(1));
+    expect(views.single.deviceId, myId);
+  });
+
+  test("a received view event updates the sharer's own share with who saw it "
+      'and when', () async {
+    await controller.createRide('Oliver');
+    final rideId = controller.session!.rideId;
+
+    await controller.shareEmergencyInfo(
+      contactName: 'Sam',
+      contactPhone: '+44 7700 900111',
+      medicalNotes: '',
+      recipientRiderIds: const [],
+    );
+    final sharedEventId = controller.events
+        .singleWhere((event) => event.type == RideEventType.iceInfoShared)
+        .id;
+    expect(controller.sentIceShares.single.viewedAt, isNull);
+
+    await eventStore.append(
+      RideEvent(
+        id: 'their-view',
+        rideId: rideId,
+        deviceId: 'remote-device',
+        type: RideEventType.iceInfoViewed,
+        priority: EventPriority.routine,
+        createdAt: DateTime.utc(2026, 7, 16, 13),
+        payload: {'sharedEventId': sharedEventId},
+        signature: 'relay-test',
+      ),
+    );
+    await controller.reloadEvents();
+
+    final sent = controller.sentIceShares.single;
+    expect(sent.viewedAt, DateTime.utc(2026, 7, 16, 13));
+    expect(sent.viewedByRiderId, 'remote-device');
+  });
+
+  test('ending the ride purges unused received ICE shares, keeps used and '
+      'self-sent ones', () async {
+    await controller.createRide('Oliver');
+    final rideId = controller.session!.rideId;
+    final myId = controller.session!.localRiderId;
+
+    await eventStore.append(
+      RideEvent(
+        id: 'unused-share',
+        rideId: rideId,
+        deviceId: 'remote-device-a',
+        type: RideEventType.iceInfoShared,
+        priority: EventPriority.critical,
+        createdAt: DateTime.utc(2026, 7, 16, 12),
+        payload: const {
+          'contactName': 'Alex',
+          'contactPhone': '+44 7700 900222',
+          'medicalNotes': '',
+          'sharedByDisplayName': 'Remote A',
+        },
+        signature: 'relay-test',
+      ),
+    );
+    await eventStore.append(
+      RideEvent(
+        id: 'used-share',
+        rideId: rideId,
+        deviceId: 'remote-device-b',
+        type: RideEventType.iceInfoShared,
+        priority: EventPriority.critical,
+        createdAt: DateTime.utc(2026, 7, 16, 12),
+        payload: {
+          'contactName': 'Jo',
+          'contactPhone': '+44 7700 900333',
+          'medicalNotes': '',
+          'sharedByDisplayName': 'Remote B',
+          'recipientRiderIds': [myId],
+        },
+        signature: 'relay-test',
+      ),
+    );
+    await controller.reloadEvents();
+    controller.markIceShareUsed('used-share');
+
+    await controller.shareEmergencyInfo(
+      contactName: 'Own contact',
+      contactPhone: '+44 7700 900555',
+      medicalNotes: '',
+      recipientRiderIds: const [],
+    );
+    final ownShareId = controller.events
+        .singleWhere(
+          (event) =>
+              event.type == RideEventType.iceInfoShared &&
+              event.deviceId == myId,
+        )
+        .id;
+
+    await controller.endRide();
+
+    final remainingIds = (await eventStore.eventsForRide(rideId))
+        .where((event) => event.type == RideEventType.iceInfoShared)
+        .map((event) => event.id)
+        .toSet();
+    expect(remainingIds, {'used-share', ownShareId});
+  });
 }
 
 Future<void> _appendLocationEvidence({
@@ -481,7 +724,10 @@ class _InMemoryRideCodeDirectory implements RideCodeDirectory {
   }
 
   @override
-  Future<RideCodeCredentials> resolve(String rideCode, {String? joinToken}) async {
+  Future<RideCodeCredentials> resolve(
+    String rideCode, {
+    String? joinToken,
+  }) async {
     final credentials = _credentials[rideCode];
     if (credentials == null) {
       throw const RideCodeDirectoryException('That ride code is not active.');

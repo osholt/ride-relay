@@ -668,6 +668,8 @@ class _EventRow extends StatelessWidget {
       RideEventType.ridePaused => 'Ride paused',
       RideEventType.rideResumed => 'Ride resumed',
       RideEventType.rideEnded => 'Ride ended',
+      RideEventType.iceInfoShared => 'Emergency contact shared',
+      RideEventType.iceInfoViewed => 'Emergency contact viewed',
     };
     final time = TimeOfDay.fromDateTime(event.createdAt).format(context);
     return ListTile(

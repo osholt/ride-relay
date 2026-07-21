@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../../controllers/rider_profile_controller.dart';
 
-/// Editor for in-case-of-emergency details. Deliberately device-local only -
-/// stored solely in [RiderProfileController]'s SharedPreferences, never
-/// threaded into RideSession/RideEvent, so it can never reach the relay, the
-/// event journal, or another rider's device.
+/// Editor for in-case-of-emergency details. Stored in
+/// [RiderProfileController]'s SharedPreferences and kept off ordinary ride
+/// events by default. It only leaves the device via an explicit share action
+/// or the opt-in "share with the leader by default" setting below, both
+/// driven from RideController - never as a side effect of anything else.
 class EmergencyInfoSheet extends StatefulWidget {
   const EmergencyInfoSheet({super.key, required this.riderProfile});
 
@@ -36,6 +37,8 @@ class _EmergencyInfoSheetState extends State<EmergencyInfoSheet> {
   late final _notesController = TextEditingController(
     text: widget.riderProfile.medicalNotes,
   );
+  late bool _shareWithLeaderByDefault =
+      widget.riderProfile.shareIceWithLeaderByDefault;
   bool _saving = false;
 
   @override
@@ -64,8 +67,10 @@ class _EmergencyInfoSheetState extends State<EmergencyInfoSheet> {
         ),
         const SizedBox(height: 8),
         const Text(
-          'Kept only on this device - never shared with other riders or sent '
-          'over the network. Visible to anyone with this phone unlocked.',
+          'Kept on this device by default - not sent over the network unless '
+          'you explicitly share it or trigger an emergency alert with '
+          'sharing switched on below. Visible to anyone with this phone '
+          'unlocked.',
           style: TextStyle(color: Color(0xFF98A3B1)),
         ),
         const SizedBox(height: 20),
@@ -96,7 +101,23 @@ class _EmergencyInfoSheetState extends State<EmergencyInfoSheet> {
             hintText: 'Allergies, conditions, blood type, ...',
           ),
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 4),
+        CheckboxListTile(
+          key: const Key('emergency-info-share-with-leader-default'),
+          contentPadding: EdgeInsets.zero,
+          controlAffinity: ListTileControlAffinity.leading,
+          value: _shareWithLeaderByDefault,
+          onChanged: (value) =>
+              setState(() => _shareWithLeaderByDefault = value ?? false),
+          title: const Text('Share automatically with the ride leader'),
+          subtitle: const Text(
+            'If you send an emergency-stop alert, this info goes straight '
+            'to whoever is currently the leader - useful if you can\'t take '
+            'a further step yourself. You can also share it with the whole '
+            'group at any time from the ride menu.',
+          ),
+        ),
+        const SizedBox(height: 16),
         FilledButton(
           key: const Key('emergency-info-save'),
           onPressed: _saving ? null : _save,
@@ -117,6 +138,7 @@ class _EmergencyInfoSheetState extends State<EmergencyInfoSheet> {
       emergencyContactName: _nameController.text.trim(),
       emergencyContactPhone: _phoneController.text.trim(),
       medicalNotes: _notesController.text.trim(),
+      shareWithLeaderByDefault: _shareWithLeaderByDefault,
     );
     if (mounted) Navigator.of(context).pop();
   }
