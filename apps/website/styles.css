@@ -554,6 +554,10 @@ h3 {
   color: var(--muted);
   font-size: 0.8rem;
 }
+.alpha-actions .alpha-note {
+  margin-top: 0;
+  font-size: 0.8rem;
+}
 
 .site-footer {
   display: grid;
