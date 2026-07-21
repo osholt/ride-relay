@@ -43,6 +43,24 @@ def test_first_sync_claims_ride_and_another_device_receives_event(
     assert second.json()["events"] == [uploaded]
 
 
+def test_ice_info_shared_event_is_accepted_and_relayed(client, synchronize, make_event) -> None:
+    ride_id = "ride-ice"
+    shared = make_event(
+        ride_id,
+        "event-ice-1",
+        event_type="iceInfoShared",
+        payload={"contactName": "A", "contactPhone": "555", "medicalNotes": ""},
+    )
+
+    uploaded = synchronize(client, ride_id=ride_id, secret=SECRET, events=[shared])
+    assert uploaded.status_code == 200
+    assert uploaded.json()["acceptedEventIds"] == ["event-ice-1"]
+
+    downloaded = synchronize(client, ride_id=ride_id, secret=SECRET, device_id="device-b")
+    assert downloaded.status_code == 200
+    assert downloaded.json()["events"] == [shared]
+
+
 def test_wrong_credential_cannot_read_claimed_ride(client, synchronize) -> None:
     ride_id = "ride-private"
     assert synchronize(client, ride_id=ride_id, secret=SECRET).status_code == 200

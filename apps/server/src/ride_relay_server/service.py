@@ -36,6 +36,8 @@ EVENT_TYPES = {
     "routeDeviationChanged",
     "routeAlertAcknowledged",
     "rideEnded",
+    "iceInfoShared",
+    "iceInfoViewed",
 }
 PRIORITIES = {"routine", "important", "critical"}
 EVENT_FIELDS = {
