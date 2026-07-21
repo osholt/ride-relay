@@ -1,0 +1,90 @@
+name: Android internal testing
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: Optional unique Android version code (defaults to GitHub run number)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-internal-upload
+  cancel-in-progress: false
+
+env:
+  FLUTTER_VERSION: 3.44.6
+  MOBILE_DIR: apps/mobile
+  PACKAGE_NAME: app.tailendcharlie
+
+jobs:
+  upload:
+    name: Build and upload Android beta
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: android-internal
+    defaults:
+      run:
+        working-directory: ${{ env.MOBILE_DIR }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Install release signing materials
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_BASE64"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASSWORD"
+          test -n "$STORE_PASSWORD"
+          keystore_path="$RUNNER_TEMP/ride-relay-upload.jks"
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$keystore_path"
+          cat > android/key.properties <<PROPERTIES
+          storeFile=$keystore_path
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          PROPERTIES
+      - name: Build App Bundle
+        env:
+          BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
+          RIDE_RELAY_API_BASE_URL: ${{ vars.RIDE_RELAY_API_BASE_URL }}
+        run: |
+          set -euo pipefail
+          test -n "$RIDE_RELAY_API_BASE_URL" || {
+            echo "::error::Set the RIDE_RELAY_API_BASE_URL repository variable to the deployed relay's HTTPS base URL (see docs/server-runbook.md)." >&2
+            exit 1
+          }
+          flutter pub get
+          flutter build appbundle --release \
+            --build-number="$BUILD_NUMBER" \
+            --dart-define=RIDE_RELAY_API_BASE_URL="$RIDE_RELAY_API_BASE_URL"
+      - name: Validate Play service account secret
+        env:
+          SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: test -n "$SERVICE_ACCOUNT_JSON"
+      - name: Upload to Play internal track
+        uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5 # v1.1.5
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: ${{ env.PACKAGE_NAME }}
+          releaseFiles: ${{ env.MOBILE_DIR }}/build/app/outputs/bundle/release/app-release.aab
+          track: internal
+          status: completed
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: tailendcharlie-android-app-bundle
+          path: ${{ env.MOBILE_DIR }}/build/app/outputs/bundle/release/*.aab
+          if-no-files-found: ignore
