@@ -19,6 +19,17 @@ limits. Catalogue matching stays in the browser. Draft rides and preferences
 are retained in first-party browser storage for save-and-return, with an
 in-planner clear control and no cookies or tracking. Route coordinates and
 other place queries go only to the documented providers.
+
+Three default-off motorcycle discovery layers use the bounded Wales
+proof-of-concept catalogue in `data/discovery-catalogue.geojson`. The planner
+filters it to the current viewport, renders the planned route above the
+highlights, and provides attribution, warnings and route-via-here actions.
+Rider suggestions are queued in first-party local storage and never auto-send.
+Set the `tec-discovery-api` meta value in `planner.html` to the deployed relay
+origin to enable explicit submission. `admin-suggestions.html` is the no-index
+authenticated moderation client; update its default API origin when deploying
+the relay.
+
 Cloudflare Pages is connected directly to this repository and publishes the
 site automatically from `main`.
 

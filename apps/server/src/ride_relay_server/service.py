@@ -585,7 +585,7 @@ class RelayService:
             raise RelayServiceError(400, "Event string is too long")
         elif isinstance(value, float) and not math.isfinite(value):
             raise RelayServiceError(400, "Event number must be finite")
-        elif value is not None and not isinstance(value, (str, int, float, bool)):
+        elif value is not None and not isinstance(value, str | int | float | bool):
             raise RelayServiceError(400, "Event JSON value is invalid")
 
     @staticmethod

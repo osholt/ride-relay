@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex,nofollow" />
+    <meta name="tec-discovery-api" content="http://127.0.0.1:8080" />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" crossorigin="anonymous" />
+    <link rel="stylesheet" href="/planner.css" />
+    <title>Discovery moderation | Tail End Charlie</title>
+  </head>
+  <body class="planner-page admin-page">
+    <header class="planner-header">
+      <a class="brand" href="/"><img src="/assets/tail-end-charlie-icon.png" alt="" width="42" height="42" /><span>Tail End Charlie</span></a>
+      <div class="planner-header-copy"><span>Discovery moderation</span><small>Private administrator queue</small></div>
+    </header>
+    <main class="admin-layout">
+      <section class="admin-login" id="admin-login">
+        <h1>Open moderation queue</h1>
+        <label>API origin <input id="admin-api-origin" type="url" /></label>
+        <label>Administrator token <input id="admin-token" type="password" autocomplete="off" /></label>
+        <button class="button button-primary" id="load-admin-queue" type="button">Load queue</button>
+        <p class="field-help">The token is kept only in memory and is never saved by this page.</p>
+      </section>
+      <aside class="admin-queue" id="admin-queue" hidden>
+        <div class="panel-section-heading"><h1>Pending suggestions</h1><button class="text-button" id="refresh-admin-queue">Refresh</button></div>
+        <div id="admin-queue-items"></div>
+      </aside>
+      <section class="admin-review" id="admin-review" hidden>
+        <div class="admin-map" id="admin-map"></div>
+        <article id="admin-review-detail"></article>
+        <label>Moderation reason <textarea id="moderation-reason" rows="3" maxlength="500"></textarea></label>
+        <div class="suggestion-actions">
+          <button data-moderation="request_changes">Request changes</button>
+          <button data-moderation="reject">Reject</button>
+          <button class="button button-primary" data-moderation="approve">Approve</button>
+        </div>
+        <p id="admin-status" aria-live="polite"></p>
+      </section>
+    </main>
+    <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js" crossorigin="anonymous"></script>
+    <script type="module" src="/admin-suggestions.js"></script>
+  </body>
+</html>

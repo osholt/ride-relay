@@ -30,6 +30,9 @@ const validDraft = {
   avoidTolls: true,
   avoidFerries: false,
   bikerLayerVisible: false,
+  twistyLayerVisible: true,
+  mountainPassLayerVisible: false,
+  goodRoadLayerVisible: true,
 };
 
 test("planner drafts round-trip all locally saved route work", () => {

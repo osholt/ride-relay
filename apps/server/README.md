@@ -26,3 +26,18 @@ uv run ruff format --check .
 Configuration is documented in `.env.example`. Production requires PostgreSQL,
 two independently generated 32-byte keys, TLS termination and a scheduled
 `ride-relay-cleanup` invocation.
+
+## Moderated motorcycle discovery data
+
+`POST /api/v1/discovery/suggestions` accepts a rate-limited, idempotent rider
+suggestion into private pending storage. It never writes directly to the public
+catalogue. `GET /api/v1/discovery/features` requires a viewport no larger than
+10° × 10° and returns approved GeoJSON only.
+
+The `/api/v1/admin/discovery/*` queue and moderation endpoints require
+`Authorization: Bearer <RIDE_RELAY_DISCOVERY_ADMIN_TOKEN>`. Leave that setting
+unset to disable moderation completely. Approved revisions retain their audit
+provenance; rejected and superseded private submissions are removed after the
+configured retention period. The static website's `admin-suggestions.html`
+provides the corresponding no-index review UI and keeps the administrator token
+in memory only.

@@ -25,6 +25,22 @@ import {
   encodePlannerDraft,
   PLANNER_DRAFT_KEY,
 } from "./planner-storage.mjs";
+import {
+  DISCOVERY_CATALOGUE_URL,
+  DISCOVERY_CATEGORIES,
+  discoveryFeatureAnchor,
+  discoveryRouteStop,
+  emptyFeatureCollection,
+  filterDiscoveryFeatures,
+  nearbyDiscoveryFeatures,
+} from "./discovery-catalogue.mjs";
+import {
+  createSuggestionDraft,
+  decodeSuggestionQueue,
+  DISCOVERY_SUGGESTION_QUEUE_KEY,
+  encodeSuggestionQueue,
+  submissionPayload,
+} from "./discovery-suggestions.mjs";
 
 const MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 const ROUTING_URL = "https://router.project-osrm.org";
@@ -34,6 +50,9 @@ const MAX_STOPS = 50;
 const SEARCH_CACHE_KEY = "tec-planner-search-v1";
 const SEARCH_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 const CATALOG_TABLE_BATCH_SIZE = 75;
+const DISCOVERY_API_URL = document
+  .querySelector('meta[name="tec-discovery-api"]')
+  ?.content?.replace(/\/$/, "");
 
 const elements = {
   clearRoute: document.querySelector("#clear-route"),
@@ -59,6 +78,10 @@ const elements = {
   expandLabel: document.querySelector(".map-expand-label"),
   mapInstructions: document.querySelector("#map-instructions"),
   mapShell: document.querySelector("#map-shell"),
+  discoveryLayerStatus: document.querySelector("#discovery-layer-status"),
+  layerGoodRoad: document.querySelector("#layer-good-road"),
+  layerMountainPass: document.querySelector("#layer-mountain-pass"),
+  layerTwisty: document.querySelector("#layer-twisty"),
   placeQuery: document.querySelector("#place-query"),
   placeSearch: document.querySelector("#place-search"),
   rideName: document.querySelector("#ride-name"),
@@ -68,6 +91,18 @@ const elements = {
   searchResults: document.querySelector("#search-results"),
   status: document.querySelector("#route-status"),
   stopList: document.querySelector("#stop-list"),
+  suggestDiscovery: document.querySelector("#suggest-discovery"),
+  suggestionAction: document.querySelector("#suggestion-action"),
+  suggestionCategory: document.querySelector("#suggestion-category"),
+  suggestionDialog: document.querySelector("#suggestion-dialog"),
+  suggestionEvidence: document.querySelector("#suggestion-evidence"),
+  suggestionForm: document.querySelector("#suggestion-form"),
+  suggestionLocation: document.querySelector("#suggestion-location"),
+  suggestionName: document.querySelector("#suggestion-name"),
+  suggestionNearby: document.querySelector("#suggestion-nearby"),
+  suggestionReason: document.querySelector("#suggestion-reason"),
+  pickSuggestionLocation: document.querySelector("#pick-suggestion-location"),
+  sendSuggestionQueue: document.querySelector("#send-suggestion-queue"),
   twistiness: document.querySelector("#route-twistiness"),
   undoRoute: document.querySelector("#undo-route"),
 };
@@ -102,6 +137,16 @@ let catalogTravelTimeSequence = 0;
 let catalogTravelTimes = { startKey: "", durations: new Map() };
 let draftSaveTimer = null;
 let restoringDraft = false;
+let discoveryCatalogue = emptyFeatureCollection();
+let visibleDiscoveryCatalogue = emptyFeatureCollection();
+let discoveryLoadRequest = null;
+let discoveryPopup = null;
+let suggestionCoordinate = null;
+let suggestionGeometry = null;
+let suggestionSegmentStart = null;
+let suggestionPickMode = false;
+let suggestionTargetFeatureId = null;
+let suggestionQueue = loadSuggestionQueue();
 const routeHistory = new StateHistory(50);
 const routePreferenceElements = [
   elements.routeStyle,
@@ -110,10 +155,16 @@ const routePreferenceElements = [
   elements.avoidTolls,
   elements.avoidFerries,
 ];
+const discoveryLayerElements = [
+  elements.layerTwisty,
+  elements.layerMountainPass,
+  elements.layerGoodRoad,
+];
 
 elements.browseBikerStops.textContent =
   `Browse ${BIKER_PLACES.length} biker cafés & start locations`;
 pruneSearchCache();
+updateSuggestionQueueStatus();
 
 const map = new maplibregl.Map({
   container: "map",
@@ -269,6 +320,7 @@ map.on("load", () => {
       map.getCanvas().style.cursor = "";
     });
   }
+  installDiscoveryLayers();
   updateBikerLayerVisibility();
   updateMapLines();
   installRouteDragging();
@@ -281,6 +333,10 @@ map.on("click", async (event) => {
     return;
   }
   if (event.originalEvent.target?.closest?.(".maplibregl-marker, .maplibregl-ctrl")) {
+    return;
+  }
+  if (suggestionPickMode) {
+    await selectSuggestionMapLocation(event.lngLat);
     return;
   }
   const cluster = map.getLayer("biker-place-clusters")
@@ -299,6 +355,24 @@ map.on("click", async (event) => {
     showBikerPlacePopup(bikerPlace);
     return;
   }
+  const discoveryCluster = map.getLayer("discovery-pass-clusters")
+    ? map.queryRenderedFeatures(event.point, {
+        layers: ["discovery-pass-clusters"],
+      })[0]
+    : null;
+  if (discoveryCluster) {
+    const source = map.getSource("discovery-passes");
+    const zoom = await source.getClusterExpansionZoom(
+      discoveryCluster.properties.cluster_id,
+    );
+    map.easeTo({ center: discoveryCluster.geometry.coordinates, zoom });
+    return;
+  }
+  const discoveryFeature = queryDiscoveryFeature(event.point);
+  if (discoveryFeature) {
+    showDiscoveryPopup(discoveryFeature, event.lngLat);
+    return;
+  }
   if (routeCoordinates.length > 1 && closestRouteLeg(event.lngLat, 20) >= 0) {
     insertStopOnRoute(event.lngLat);
     return;
@@ -315,6 +389,7 @@ map.on("error", (event) => {
     setStatus("The map tiles could not be loaded. Check your connection and try again.", true);
   }
 });
+map.on("moveend", updateDiscoveryViewport);
 
 elements.placeSearch.addEventListener("submit", searchPlaces);
 elements.bikerBrowser.addEventListener("toggle", toggleBikerBrowser);
@@ -336,6 +411,16 @@ elements.redoRoute.addEventListener("click", redoRouteChange);
 elements.clearSavedDraft.addEventListener("click", clearSavedPlannerData);
 elements.download.addEventListener("click", downloadGpx);
 elements.expand.addEventListener("click", toggleExpandedMap);
+for (const layerToggle of discoveryLayerElements) {
+  layerToggle.addEventListener("change", changeDiscoveryLayers);
+}
+elements.suggestDiscovery.addEventListener("click", openSuggestionDialog);
+elements.pickSuggestionLocation.addEventListener("click", pickSuggestionLocation);
+elements.suggestionForm.addEventListener("submit", queueSuggestion);
+elements.sendSuggestionQueue.addEventListener("click", confirmSendSuggestionQueue);
+elements.suggestionAction.addEventListener("change", updateSuggestionNearby);
+elements.suggestionCategory.addEventListener("change", changeSuggestionCategory);
+window.addEventListener("online", updateSuggestionQueueStatus);
 elements.rideName.addEventListener("input", () => {
   updateDownloadState();
   scheduleDraftSave();
@@ -348,6 +433,18 @@ for (const preference of routePreferenceElements) {
 document.addEventListener("fullscreenchange", syncExpandedMapState);
 window.addEventListener("pagehide", savePlannerDraft);
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && suggestionPickMode) {
+    suggestionPickMode = false;
+    suggestionSegmentStart = null;
+    suggestionCoordinate = null;
+    suggestionGeometry = null;
+    elements.mapInstructions.textContent = stops.length
+      ? "Tap the route to insert a stop · drag it to reshape · drag purple handles again"
+      : "Tap the map to add a route point";
+    elements.suggestionDialog.showModal();
+    updateSuggestionLocation();
+    return;
+  }
   if (
     (event.metaKey || event.ctrlKey) &&
     !event.altKey &&
@@ -1349,6 +1446,9 @@ function savePlannerDraft() {
         routeDuration,
         routeBendScore: routeBendScoreValue,
         bikerLayerVisible: elements.bikerLayerVisible.checked,
+        twistyLayerVisible: elements.layerTwisty.checked,
+        mountainPassLayerVisible: elements.layerMountainPass.checked,
+        goodRoadLayerVisible: elements.layerGoodRoad.checked,
       }),
     );
   } catch {
@@ -1376,6 +1476,9 @@ function restorePlannerDraft() {
   elements.avoidFerries.checked = draft.avoidFerries;
   elements.bikerLayerVisible.checked = draft.bikerLayerVisible;
   elements.bikerLayerVisibleMenu.checked = draft.bikerLayerVisible;
+  elements.layerTwisty.checked = draft.twistyLayerVisible;
+  elements.layerMountainPass.checked = draft.mountainPassLayerVisible;
+  elements.layerGoodRoad.checked = draft.goodRoadLayerVisible;
   for (const preference of routePreferenceElements) {
     rememberPreferenceValue({ target: preference });
   }
@@ -1397,6 +1500,7 @@ function restorePlannerDraft() {
       : null);
   setSummary(routeDistance, routeDuration, routeBendScoreValue);
   updateBikerLayerVisibility();
+  updateDiscoveryViewport();
   updateMapLines();
   updateDownloadState();
   updateBikerSortAvailability();
@@ -1907,6 +2011,603 @@ function fitRoute() {
 
 function focusStop(id) {
   document.querySelector(`[data-stop-id="${id}"] input`)?.focus({ preventScroll: false });
+}
+
+function installDiscoveryLayers() {
+  map.addSource("discovery-lines", {
+    type: "geojson",
+    data: emptyFeatureCollection(),
+  });
+  map.addSource("discovery-passes", {
+    type: "geojson",
+    data: emptyFeatureCollection(),
+    cluster: true,
+    clusterMaxZoom: 9,
+    clusterRadius: 42,
+  });
+  map.addSource("discovery-road-anchors", {
+    type: "geojson",
+    data: emptyFeatureCollection(),
+  });
+  const beforeRoute = "road-route-casing";
+  map.addLayer(
+    {
+      id: "discovery-line-casing",
+      type: "line",
+      source: "discovery-lines",
+      paint: {
+        "line-color": "#17202a",
+        "line-width": 7,
+        "line-opacity": 0.78,
+      },
+    },
+    beforeRoute,
+  );
+  map.addLayer(
+    {
+      id: "discovery-twisty-lines",
+      type: "line",
+      source: "discovery-lines",
+      filter: ["==", ["get", "category"], "twisty_highlight"],
+      paint: {
+        "line-color": DISCOVERY_CATEGORIES.twisty_highlight.colour,
+        "line-width": 4,
+        "line-opacity": 0.92,
+        "line-dasharray": [1.2, 1.2],
+      },
+    },
+    beforeRoute,
+  );
+  map.addLayer(
+    {
+      id: "discovery-good-road-lines",
+      type: "line",
+      source: "discovery-lines",
+      filter: ["==", ["get", "category"], "good_biking_road"],
+      paint: {
+        "line-color": DISCOVERY_CATEGORIES.good_biking_road.colour,
+        "line-width": 4,
+        "line-opacity": 0.92,
+      },
+    },
+    beforeRoute,
+  );
+  map.addLayer(
+    {
+      id: "discovery-road-anchor-dots",
+      type: "circle",
+      source: "discovery-road-anchors",
+      minzoom: 8,
+      paint: {
+        "circle-color": [
+          "match",
+          ["get", "category"],
+          "twisty_highlight",
+          DISCOVERY_CATEGORIES.twisty_highlight.colour,
+          DISCOVERY_CATEGORIES.good_biking_road.colour,
+        ],
+        "circle-radius": 6,
+        "circle-stroke-color": "#171823",
+        "circle-stroke-width": 2,
+      },
+    },
+    beforeRoute,
+  );
+  map.addLayer(
+    {
+      id: "discovery-pass-clusters",
+      type: "circle",
+      source: "discovery-passes",
+      filter: ["has", "point_count"],
+      paint: {
+        "circle-color": DISCOVERY_CATEGORIES.mountain_pass.colour,
+        "circle-radius": ["step", ["get", "point_count"], 14, 6, 18],
+        "circle-stroke-color": "#171823",
+        "circle-stroke-width": 3,
+      },
+    },
+    beforeRoute,
+  );
+  map.addLayer(
+    {
+      id: "discovery-pass-cluster-count",
+      type: "symbol",
+      source: "discovery-passes",
+      filter: ["has", "point_count"],
+      layout: { "text-field": ["get", "point_count_abbreviated"], "text-size": 11 },
+      paint: { "text-color": "#ffffff" },
+    },
+    beforeRoute,
+  );
+  map.addLayer(
+    {
+      id: "discovery-pass-dots",
+      type: "circle",
+      source: "discovery-passes",
+      filter: ["!", ["has", "point_count"]],
+      paint: {
+        "circle-color": DISCOVERY_CATEGORIES.mountain_pass.colour,
+        "circle-radius": 7,
+        "circle-stroke-color": "#171823",
+        "circle-stroke-width": 3,
+      },
+    },
+    beforeRoute,
+  );
+  for (const layerId of [
+    "discovery-twisty-lines",
+    "discovery-good-road-lines",
+    "discovery-road-anchor-dots",
+    "discovery-pass-dots",
+    "discovery-pass-clusters",
+  ]) {
+    map.on("mouseenter", layerId, () => {
+      map.getCanvas().style.cursor = "pointer";
+    });
+    map.on("mouseleave", layerId, () => {
+      map.getCanvas().style.cursor = "";
+    });
+  }
+  updateDiscoveryViewport();
+}
+
+function enabledDiscoveryCategories() {
+  return [
+    elements.layerTwisty.checked ? "twisty_highlight" : null,
+    elements.layerMountainPass.checked ? "mountain_pass" : null,
+    elements.layerGoodRoad.checked ? "good_biking_road" : null,
+  ].filter(Boolean);
+}
+
+function changeDiscoveryLayers() {
+  discoveryPopup?.remove();
+  updateDiscoveryViewport();
+  scheduleDraftSave();
+}
+
+async function loadDiscoveryCatalogue() {
+  if (discoveryCatalogue.features.length) return discoveryCatalogue;
+  if (discoveryLoadRequest) return discoveryLoadRequest;
+  discoveryLoadRequest = fetch(DISCOVERY_CATALOGUE_URL, {
+    headers: { accept: "application/geo+json, application/json" },
+  })
+    .then((response) => {
+      if (!response.ok) throw new Error("Discovery catalogue unavailable");
+      return response.json();
+    })
+    .then((collection) => {
+      discoveryCatalogue = collection;
+      return collection;
+    })
+    .finally(() => {
+      discoveryLoadRequest = null;
+    });
+  return discoveryLoadRequest;
+}
+
+async function updateDiscoveryViewport() {
+  if (!map.loaded() || !map.getSource("discovery-lines")) return;
+  const categories = enabledDiscoveryCategories();
+  if (!categories.length) {
+    setDiscoverySourceData(emptyFeatureCollection());
+    elements.discoveryLayerStatus.textContent = "Layers are off by default.";
+    return;
+  }
+  elements.discoveryLayerStatus.textContent = "Loading visible highlights…";
+  try {
+    const catalogue = await loadDiscoveryCatalogue();
+    const mapBounds = map.getBounds();
+    const bounds = {
+      west: mapBounds.getWest(),
+      south: mapBounds.getSouth(),
+      east: mapBounds.getEast(),
+      north: mapBounds.getNorth(),
+    };
+    const local = filterDiscoveryFeatures(catalogue, bounds, categories);
+    const publicFeatures = await fetchPublicDiscoveryFeatures(bounds, categories);
+    const knownIds = new Set(local.features.map((feature) => feature.properties.id));
+    visibleDiscoveryCatalogue = {
+      type: "FeatureCollection",
+      features: [
+        ...local.features,
+        ...publicFeatures.features.filter(
+          (feature) => !knownIds.has(feature?.properties?.id),
+        ),
+      ],
+    };
+    setDiscoverySourceData(visibleDiscoveryCatalogue);
+    const count = visibleDiscoveryCatalogue.features.length;
+    elements.discoveryLayerStatus.textContent = count
+      ? `${count} reviewed highlight${count === 1 ? "" : "s"} in this view.`
+      : "No reviewed highlights in this view yet.";
+  } catch {
+    setDiscoverySourceData(emptyFeatureCollection());
+    elements.discoveryLayerStatus.textContent =
+      "Discovery highlights could not be loaded. Your route is unaffected.";
+  }
+}
+
+async function fetchPublicDiscoveryFeatures(bounds, categories) {
+  if (!DISCOVERY_API_URL) return emptyFeatureCollection();
+  const query = new URLSearchParams({
+    west: bounds.west,
+    south: bounds.south,
+    east: bounds.east,
+    north: bounds.north,
+    categories: categories.join(","),
+  });
+  try {
+    const response = await fetch(
+      `${DISCOVERY_API_URL}/api/v1/discovery/features?${query}`,
+      { headers: { accept: "application/geo+json, application/json" } },
+    );
+    return response.ok ? response.json() : emptyFeatureCollection();
+  } catch {
+    return emptyFeatureCollection();
+  }
+}
+
+function setDiscoverySourceData(collection) {
+  visibleDiscoveryCatalogue = collection;
+  const lines = collection.features.filter(
+    (feature) => feature.geometry?.type === "LineString",
+  );
+  const passes = collection.features.filter(
+    (feature) => feature.geometry?.type === "Point",
+  );
+  const anchors = lines.map((feature) => ({
+    type: "Feature",
+    properties: feature.properties,
+    geometry: { type: "Point", coordinates: discoveryFeatureAnchor(feature) },
+  }));
+  map.getSource("discovery-lines")?.setData({
+    type: "FeatureCollection",
+    features: lines,
+  });
+  map.getSource("discovery-passes")?.setData({
+    type: "FeatureCollection",
+    features: passes,
+  });
+  map.getSource("discovery-road-anchors")?.setData({
+    type: "FeatureCollection",
+    features: anchors,
+  });
+}
+
+function queryDiscoveryFeature(point) {
+  const layerIds = [
+    "discovery-pass-dots",
+    "discovery-road-anchor-dots",
+    "discovery-twisty-lines",
+    "discovery-good-road-lines",
+  ].filter((layerId) => map.getLayer(layerId));
+  const rendered = map.queryRenderedFeatures(point, { layers: layerIds })[0];
+  if (!rendered) return null;
+  return (
+    visibleDiscoveryCatalogue.features.find(
+      (feature) => feature.properties.id === rendered.properties.id,
+    ) || rendered
+  );
+}
+
+function showDiscoveryPopup(feature, clickedLocation) {
+  discoveryPopup?.remove();
+  const properties = feature.properties || {};
+  const category = DISCOVERY_CATEGORIES[properties.category];
+  const anchor = discoveryFeatureAnchor(feature) || [
+    clickedLocation.lng,
+    clickedLocation.lat,
+  ];
+  const content = document.createElement("div");
+  content.className = "discovery-popup-content";
+  const kicker = document.createElement("span");
+  kicker.textContent = category?.label || "Discovery highlight";
+  const title = document.createElement("strong");
+  title.textContent = properties.name || "Unnamed highlight";
+  const detail = document.createElement("p");
+  const details = [
+    properties.score == null ? null : `Score ${properties.score}/100`,
+    properties.confidence ? `${properties.confidence} confidence` : null,
+    properties.lastVerified ? `checked ${properties.lastVerified}` : null,
+  ].filter(Boolean);
+  detail.textContent = details.join(" · ");
+  const warning = document.createElement("p");
+  warning.className = "discovery-warning";
+  warning.textContent =
+    properties.warning || "Not a safety endorsement; check current conditions.";
+  const source = document.createElement("a");
+  source.textContent = `Source: ${properties.sourceName || "approved community submission"}`;
+  source.href = properties.sourceUrl || "https://www.openstreetmap.org/copyright";
+  source.target = "_blank";
+  source.rel = "noreferrer";
+  const routeButton = document.createElement("button");
+  routeButton.type = "button";
+  routeButton.textContent = "Add to route via here";
+  routeButton.addEventListener("click", () => {
+    addStop(discoveryRouteStop(feature));
+    discoveryPopup?.remove();
+  });
+  const correctionButton = document.createElement("button");
+  correctionButton.type = "button";
+  correctionButton.textContent = "Suggest a correction";
+  correctionButton.addEventListener("click", () => {
+    suggestionCoordinate = anchor;
+    suggestionGeometry = JSON.parse(JSON.stringify(feature.geometry));
+    suggestionTargetFeatureId = properties.id || null;
+    elements.suggestionAction.value = "correct";
+    elements.suggestionCategory.value = properties.category;
+    elements.suggestionName.value = properties.name || "";
+    openSuggestionDialog(false);
+    discoveryPopup?.remove();
+  });
+  content.append(kicker, title);
+  if (details.length) content.append(detail);
+  content.append(warning, source, routeButton, correctionButton);
+  discoveryPopup = new maplibregl.Popup({ maxWidth: "320px", offset: 12 })
+    .setLngLat(anchor)
+    .setDOMContent(content)
+    .addTo(map);
+}
+
+function openSuggestionDialog(reset = true) {
+  if (reset) {
+    elements.suggestionForm.reset();
+    suggestionCoordinate = null;
+    suggestionGeometry = null;
+    suggestionSegmentStart = null;
+    suggestionTargetFeatureId = null;
+  }
+  updateSuggestionLocation();
+  updateSuggestionNearby();
+  elements.suggestionDialog.showModal();
+  if (!discoveryCatalogue.features.length) {
+    void loadDiscoveryCatalogue()
+      .then(updateSuggestionNearby)
+      .catch(() => {});
+  }
+}
+
+function pickSuggestionLocation() {
+  suggestionPickMode = true;
+  suggestionGeometry = null;
+  suggestionCoordinate = null;
+  suggestionSegmentStart = null;
+  elements.suggestionDialog.close();
+  elements.mapInstructions.textContent = isLineSuggestionCategory()
+    ? "Tap the start of the road section you want to suggest"
+    : "Tap the map to place your private suggestion draft";
+}
+
+function updateSuggestionLocation() {
+  elements.suggestionLocation.textContent =
+    suggestionGeometry?.type === "LineString"
+      ? `Road-following segment · ${suggestionGeometry.coordinates.length} trace points`
+      : suggestionCoordinate
+        ? `${suggestionCoordinate[1].toFixed(5)}, ${suggestionCoordinate[0].toFixed(5)}`
+        : "No point or road segment selected";
+  updateSuggestionNearby();
+}
+
+function changeSuggestionCategory() {
+  const expectsLine = isLineSuggestionCategory();
+  if (
+    suggestionGeometry &&
+    (expectsLine !== (suggestionGeometry.type === "LineString"))
+  ) {
+    suggestionGeometry = null;
+    suggestionCoordinate = null;
+    suggestionSegmentStart = null;
+    updateSuggestionLocation();
+  } else {
+    updateSuggestionNearby();
+  }
+}
+
+function isLineSuggestionCategory() {
+  return ["twisty_highlight", "good_biking_road"].includes(
+    elements.suggestionCategory.value,
+  );
+}
+
+async function selectSuggestionMapLocation(lngLat) {
+  const coordinate = [lngLat.lng, lngLat.lat];
+  if (!isLineSuggestionCategory()) {
+    suggestionPickMode = false;
+    suggestionCoordinate = coordinate;
+    suggestionGeometry = { type: "Point", coordinates: coordinate };
+    elements.mapInstructions.textContent = "Suggestion location selected";
+    updateSuggestionLocation();
+    elements.suggestionDialog.showModal();
+    return;
+  }
+  if (!suggestionSegmentStart) {
+    suggestionSegmentStart = coordinate;
+    elements.mapInstructions.textContent =
+      "Now tap the end of this road section · Esc to cancel";
+    return;
+  }
+  elements.mapInstructions.textContent = "Matching your selected section to roads…";
+  try {
+    const route = await requestRoadRoute(
+      [
+        {
+          id: "suggestion-start",
+          kind: "stop",
+          longitude: suggestionSegmentStart[0],
+          latitude: suggestionSegmentStart[1],
+        },
+        {
+          id: "suggestion-end",
+          kind: "stop",
+          longitude: coordinate[0],
+          latitude: coordinate[1],
+        },
+      ],
+      new AbortController().signal,
+    );
+    suggestionGeometry = {
+      type: "LineString",
+      coordinates: route.geometry.coordinates,
+    };
+    suggestionCoordinate = discoveryFeatureAnchor({ geometry: suggestionGeometry });
+    suggestionPickMode = false;
+    suggestionSegmentStart = null;
+    elements.mapInstructions.textContent = "Road segment selected";
+    updateSuggestionLocation();
+    elements.suggestionDialog.showModal();
+  } catch {
+    suggestionSegmentStart = null;
+    elements.mapInstructions.textContent =
+      "That section could not be matched to roads. Tap its start to try again.";
+  }
+}
+
+function updateSuggestionNearby() {
+  elements.suggestionNearby.replaceChildren();
+  if (!suggestionCoordinate || !discoveryCatalogue.features.length) return;
+  const nearby = nearbyDiscoveryFeatures(discoveryCatalogue, suggestionCoordinate, 5);
+  if (!nearby.length) return;
+  const title = document.createElement("strong");
+  title.textContent = "Nearby reviewed entries";
+  const list = document.createElement("ul");
+  for (const { feature, distanceKm } of nearby.slice(0, 4)) {
+    const item = document.createElement("li");
+    item.textContent = `${feature.properties.name} (${distanceKm.toFixed(1)} km)`;
+    list.append(item);
+  }
+  elements.suggestionNearby.append(title, list);
+}
+
+async function queueSuggestion(event) {
+  if (event.submitter?.value === "cancel") return;
+  event.preventDefault();
+  if (!suggestionCoordinate) {
+    setStatus("Pick the suggestion location on the map first.", true);
+    return;
+  }
+  const nearby = nearbyDiscoveryFeatures(
+    discoveryCatalogue,
+    suggestionCoordinate,
+    1,
+  );
+  if (
+    elements.suggestionAction.value === "add" &&
+    nearby.length &&
+    !window.confirm(
+      `There ${nearby.length === 1 ? "is" : "are"} ${nearby.length} reviewed map ${nearby.length === 1 ? "entry" : "entries"} within 1 km. Submit this as a new suggestion anyway?`,
+    )
+  ) {
+    return;
+  }
+  let draft;
+  try {
+    draft = createSuggestionDraft({
+      action: elements.suggestionAction.value,
+      category: elements.suggestionCategory.value,
+      targetFeatureId: suggestionTargetFeatureId,
+      name: elements.suggestionName.value,
+      reason: elements.suggestionReason.value,
+      evidenceUrl: elements.suggestionEvidence.value,
+      geometry: suggestionGeometry,
+      longitude: suggestionCoordinate[0],
+      latitude: suggestionCoordinate[1],
+    });
+  } catch {
+    setStatus("Check the suggestion fields and location, then try again.", true);
+    return;
+  }
+  suggestionQueue.push(draft);
+  saveSuggestionQueue();
+  elements.suggestionDialog.close();
+  suggestionCoordinate = null;
+  suggestionGeometry = null;
+  suggestionSegmentStart = null;
+  suggestionTargetFeatureId = null;
+  if (navigator.onLine && DISCOVERY_API_URL) {
+    await sendQueuedSuggestions([draft.clientSubmissionId]);
+  } else {
+    setStatus(
+      DISCOVERY_API_URL
+        ? "Suggestion saved on this device. Use Send queued suggestions when you are online."
+        : "Suggestion saved locally. This preview is not connected to the moderation service yet.",
+    );
+  }
+}
+
+function loadSuggestionQueue() {
+  try {
+    return decodeSuggestionQueue(localStorage.getItem(DISCOVERY_SUGGESTION_QUEUE_KEY));
+  } catch {
+    return [];
+  }
+}
+
+function saveSuggestionQueue() {
+  try {
+    if (suggestionQueue.length) {
+      localStorage.setItem(
+        DISCOVERY_SUGGESTION_QUEUE_KEY,
+        encodeSuggestionQueue(suggestionQueue),
+      );
+    } else {
+      localStorage.removeItem(DISCOVERY_SUGGESTION_QUEUE_KEY);
+    }
+  } catch {
+    setStatus("This browser could not save the suggestion draft locally.", true);
+  }
+  updateSuggestionQueueStatus();
+}
+
+function updateSuggestionQueueStatus() {
+  const count = suggestionQueue.filter((draft) => draft.status === "queued").length;
+  elements.sendSuggestionQueue.hidden = count === 0;
+  elements.sendSuggestionQueue.textContent = `Send ${count} queued suggestion${count === 1 ? "" : "s"}`;
+  elements.sendSuggestionQueue.disabled = !navigator.onLine || !DISCOVERY_API_URL;
+}
+
+async function confirmSendSuggestionQueue() {
+  if (!navigator.onLine || !DISCOVERY_API_URL || !suggestionQueue.length) return;
+  if (
+    !window.confirm(
+      "Send your queued suggestions for administrator review now? They will not become public automatically.",
+    )
+  ) {
+    return;
+  }
+  await sendQueuedSuggestions();
+}
+
+async function sendQueuedSuggestions(onlyIds = null) {
+  const selected = suggestionQueue.filter(
+    (draft) => !onlyIds || onlyIds.includes(draft.clientSubmissionId),
+  );
+  let submitted = 0;
+  for (const draft of selected) {
+    try {
+      const response = await fetch(
+        `${DISCOVERY_API_URL}/api/v1/discovery/suggestions`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", accept: "application/json" },
+          body: JSON.stringify(submissionPayload(draft)),
+        },
+      );
+      if (!response.ok) throw new Error("Suggestion rejected");
+      suggestionQueue = suggestionQueue.filter(
+        (item) => item.clientSubmissionId !== draft.clientSubmissionId,
+      );
+      submitted += 1;
+    } catch {
+      // Keep the draft queued; never retry or publish without another user action.
+    }
+  }
+  saveSuggestionQueue();
+  setStatus(
+    submitted
+      ? `${submitted} suggestion${submitted === 1 ? "" : "s"} sent for administrator review.`
+      : "The suggestions could not be sent. They remain saved on this device.",
+    submitted === 0,
+  );
 }
 
 function findStop(item) {

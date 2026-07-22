@@ -92,6 +92,9 @@ export function decodePlannerDraft(
       avoidTolls: Boolean(draft.avoidTolls),
       avoidFerries: Boolean(draft.avoidFerries),
       bikerLayerVisible: draft.bikerLayerVisible !== false,
+      twistyLayerVisible: Boolean(draft.twistyLayerVisible),
+      mountainPassLayerVisible: Boolean(draft.mountainPassLayerVisible),
+      goodRoadLayerVisible: Boolean(draft.goodRoadLayerVisible),
     };
   } catch {
     return null;

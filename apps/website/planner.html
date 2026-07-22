@@ -8,6 +8,8 @@
       content="Plan a road-following group ride and download it as a GPX file for Tail End Charlie."
     />
     <meta name="theme-color" content="#171124" />
+    <!-- Set to the deployed relay API origin when community submissions launch. -->
+    <meta name="tec-discovery-api" content="" />
     <meta property="og:title" content="Ride planner | Tail End Charlie" />
     <meta
       property="og:description"
@@ -184,6 +186,52 @@
           ></div>
         </form>
 
+        <details class="discovery-panel">
+          <summary>Motorcycle discovery layers</summary>
+          <p class="field-help">
+            Optional proof-of-concept highlights. They are not safety
+            endorsements; check restrictions, conditions and closures.
+          </p>
+          <label class="checkbox-field" for="layer-twisty">
+            <input id="layer-twisty" type="checkbox" />
+            <i class="legend-discovery legend-twisty"></i>
+            <span>Twisty highlights</span>
+          </label>
+          <label class="checkbox-field" for="layer-mountain-pass">
+            <input id="layer-mountain-pass" type="checkbox" />
+            <i class="legend-discovery legend-pass"></i>
+            <span>Mountain passes</span>
+          </label>
+          <label class="checkbox-field" for="layer-good-road">
+            <input id="layer-good-road" type="checkbox" />
+            <i class="legend-discovery legend-good-road"></i>
+            <span>Good biking roads</span>
+          </label>
+          <p class="discovery-layer-status" id="discovery-layer-status">
+            Layers are off by default.
+          </p>
+          <button class="text-button" id="suggest-discovery" type="button">
+            Suggest an addition or correction
+          </button>
+          <button
+            class="text-button"
+            id="send-suggestion-queue"
+            type="button"
+            hidden
+          >
+            Send queued suggestions
+          </button>
+          <p class="catalog-attribution">
+            Proof-of-concept data ©
+            <a
+              href="https://www.openstreetmap.org/copyright"
+              target="_blank"
+              rel="noreferrer"
+              >OpenStreetMap contributors</a
+            >, ODbL. Public additions require moderator approval.
+          </p>
+        </details>
+
         <section class="route-stops" aria-labelledby="route-stops-title">
           <div class="panel-section-heading">
             <div>
@@ -285,6 +333,80 @@
         </div>
       </section>
     </main>
+
+    <dialog class="suggestion-dialog" id="suggestion-dialog">
+      <form method="dialog" id="suggestion-form">
+        <div class="suggestion-heading">
+          <div>
+            <span class="section-kicker">Community map</span>
+            <h2>Suggest a map update</h2>
+          </div>
+          <button
+            class="dialog-close"
+            value="cancel"
+            aria-label="Close"
+            formnovalidate
+          >
+            ×
+          </button>
+        </div>
+        <p class="field-help">
+          Suggestions stay private until an administrator approves them. Do
+          not copy locations from proprietary map or route collections.
+        </p>
+        <div class="suggestion-grid">
+          <label>
+            Change
+            <select id="suggestion-action" required>
+              <option value="add">Add a place or road</option>
+              <option value="correct">Correct an existing highlight</option>
+              <option value="remove">Report closed, restricted or unsafe</option>
+            </select>
+          </label>
+          <label>
+            Category
+            <select id="suggestion-category" required>
+              <option value="twisty_highlight">Twisty highlight</option>
+              <option value="mountain_pass">Mountain pass</option>
+              <option value="good_biking_road">Good biking road</option>
+              <option value="biker_stop">Biker stop</option>
+            </select>
+          </label>
+        </div>
+        <label>
+          Name
+          <input id="suggestion-name" maxlength="120" required />
+        </label>
+        <label>
+          Why should it be added or changed?
+          <textarea id="suggestion-reason" maxlength="500" rows="4" required></textarea>
+        </label>
+        <label>
+          Evidence link <span>(optional)</span>
+          <input id="suggestion-evidence" type="url" maxlength="500" placeholder="Official page or reusable source" />
+        </label>
+        <div class="suggestion-location">
+          <div>
+            <span>Location</span>
+            <strong id="suggestion-location">No point selected</strong>
+          </div>
+          <button id="pick-suggestion-location" type="button">
+            Pick point or road on map
+          </button>
+        </div>
+        <div class="suggestion-nearby" id="suggestion-nearby" aria-live="polite"></div>
+        <p class="field-help">
+          Submission does not endorse a road as safe. Offline suggestions are
+          kept on this device and only sent after you explicitly confirm.
+        </p>
+        <div class="suggestion-actions">
+          <button value="cancel" formnovalidate>Cancel</button>
+          <button class="button button-primary" id="queue-suggestion" value="default">
+            Confirm suggestion
+          </button>
+        </div>
+      </form>
+    </dialog>
 
     <noscript>
       <p class="noscript-message">
