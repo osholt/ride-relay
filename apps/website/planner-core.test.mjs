@@ -3,10 +3,13 @@ import test from "node:test";
 
 import {
   buildGpx,
+  chooseRoadRoute,
+  decodePolyline,
   escapeXml,
   formatDistance,
   formatDuration,
   gpxFileName,
+  routeBendScore,
 } from "./planner-core.mjs";
 
 test("buildGpx creates app-compatible GPX metadata, waypoints and track", () => {
@@ -29,6 +32,40 @@ test("buildGpx creates app-compatible GPX metadata, waypoints and track", () => 
   assert.match(gpx, /<wpt lat="53\.1234568" lon="-2\.1234568">/);
   assert.match(gpx, /<trkpt lat="53\.2345679" lon="-1\.9876543" \/>/);
   assert.match(gpx, /<time>2026-07-22T10:30:00\.000Z<\/time>/);
+});
+
+test("twisty routing chooses a bendier reasonable alternative", () => {
+  const quickest = {
+    duration: 600,
+    distance: 10000,
+    geometry: { coordinates: [[-2, 51], [-1.95, 51], [-1.9, 51]] },
+  };
+  const twisty = {
+    duration: 750,
+    distance: 11000,
+    geometry: {
+      coordinates: [[-2, 51], [-1.99, 51.01], [-1.98, 51], [-1.97, 51.01], [-1.9, 51]],
+    },
+  };
+  const excessiveDetour = {
+    duration: 1000,
+    distance: 12000,
+    geometry: twisty.geometry,
+  };
+
+  assert.ok(routeBendScore(twisty) > routeBendScore(quickest));
+  assert.equal(chooseRoadRoute([quickest, twisty], "quickest"), quickest);
+  assert.equal(chooseRoadRoute([quickest, twisty], "twisty"), twisty);
+  assert.equal(chooseRoadRoute([quickest, excessiveDetour], "twisty"), quickest);
+});
+
+test("Valhalla polyline6 route shapes decode to longitude and latitude", () => {
+  const encoded = "_p~iF~ps|U_ulLnnqC_mqNvxq`@";
+  assert.deepEqual(decodePolyline(encoded, 5), [
+    [-120.2, 38.5],
+    [-120.95, 40.7],
+    [-126.453, 43.252],
+  ]);
 });
 
 test("buildGpx requires a named, routed ride", () => {

@@ -51,8 +51,8 @@
           <p class="eyebrow"><span></span> New route</p>
           <h1>Plan your ride.</h1>
           <p>
-            Search for a place or tap the map to add stops. Drag a numbered
-            marker to move it; the route will follow the roads between them.
+            Search for a place or tap the map to add stops. Drag stops to
+            reorder them, or drag the purple route to reshape it along roads.
           </p>
         </div>
 
@@ -67,6 +67,23 @@
             autocomplete="off"
           />
         </div>
+
+        <fieldset class="route-preferences">
+          <legend>Route preferences</legend>
+          <label for="route-style">Routing style</label>
+          <select id="route-style" name="route-style">
+            <option value="quickest">Quickest route</option>
+            <option value="twisty">More bends (up to 50% longer)</option>
+          </select>
+          <label class="checkbox-field" for="avoid-motorways">
+            <input id="avoid-motorways" type="checkbox" />
+            <span>Avoid motorways</span>
+          </label>
+          <p class="field-help">
+            “More bends” chooses the curviest reasonable alternative offered
+            by the road router; availability varies by area.
+          </p>
+        </fieldset>
 
         <form class="place-search" id="place-search" role="search">
           <label for="place-query">Find a point of interest</label>
@@ -85,6 +102,9 @@
             Search runs only when you press Search. Do not enter personal or
             confidential information.
           </p>
+          <button class="catalog-button" id="browse-biker-stops" type="button">
+            Browse biker cafés &amp; start locations
+          </button>
           <div
             class="search-results"
             id="search-results"
@@ -102,6 +122,14 @@
               Clear
             </button>
           </div>
+          <button
+            class="text-button reset-adjustments"
+            id="reset-adjustments"
+            type="button"
+            hidden
+          >
+            Reset dragged route
+          </button>
           <ol class="stop-list" id="stop-list"></ol>
           <div class="empty-stops" id="empty-stops">
             <span aria-hidden="true">＋</span>

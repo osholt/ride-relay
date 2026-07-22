@@ -1,12 +1,20 @@
 import {
   buildGpx,
+  chooseRoadRoute,
+  decodePolyline,
   formatDistance,
   formatDuration,
   gpxFileName,
 } from "./planner-core.mjs";
+import {
+  BIKER_PLACES,
+  normalizePlaceQuery,
+  searchBikerPlaces,
+} from "./biker-places.mjs";
 
 const MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 const ROUTING_URL = "https://router.project-osrm.org";
+const MOTORCYCLE_ROUTING_URL = "https://valhalla1.openstreetmap.de/route";
 const SEARCH_URL = "https://nominatim.openstreetmap.org/search";
 const MAX_STOPS = 50;
 const SEARCH_CACHE_KEY = "tec-planner-search-v1";
@@ -14,6 +22,8 @@ const SEARCH_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 
 const elements = {
   clearRoute: document.querySelector("#clear-route"),
+  avoidMotorways: document.querySelector("#avoid-motorways"),
+  browseBikerStops: document.querySelector("#browse-biker-stops"),
   distance: document.querySelector("#route-distance"),
   download: document.querySelector("#download-gpx"),
   duration: document.querySelector("#route-duration"),
@@ -25,18 +35,27 @@ const elements = {
   placeQuery: document.querySelector("#place-query"),
   placeSearch: document.querySelector("#place-search"),
   rideName: document.querySelector("#ride-name"),
+  routeStyle: document.querySelector("#route-style"),
+  resetAdjustments: document.querySelector("#reset-adjustments"),
   searchResults: document.querySelector("#search-results"),
   status: document.querySelector("#route-status"),
   stopList: document.querySelector("#stop-list"),
 };
 
 let stops = [];
+let shapingPoints = [];
 let routeCoordinates = [];
+let routeLegGeometries = [];
+let routedControls = [];
 let routeRequest = null;
 let routeRequestSequence = 0;
 let searchRequest = null;
 let lastSearchAt = 0;
 let stopSequence = 0;
+let shapeSequence = 0;
+let listDrag = null;
+let routeDrag = null;
+let suppressNextMapClick = false;
 
 const map = new maplibregl.Map({
   container: "map",
@@ -91,11 +110,31 @@ map.on("load", () => {
       "line-width": 6,
     },
   });
+  map.addLayer({
+    id: "road-route-hit",
+    type: "line",
+    source: "road-route",
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: {
+      "line-color": "#6d2ee8",
+      "line-width": 24,
+      "line-opacity": 0.01,
+    },
+  });
   updateMapLines();
+  installRouteDragging();
 });
 
 map.on("click", (event) => {
+  if (suppressNextMapClick) {
+    suppressNextMapClick = false;
+    return;
+  }
   if (event.originalEvent.target.closest(".maplibregl-marker, .maplibregl-ctrl")) {
+    return;
+  }
+  if (routeCoordinates.length > 1 && closestRouteLeg(event.lngLat, 20) >= 0) {
+    insertStopOnRoute(event.lngLat);
     return;
   }
   addStop({
@@ -112,13 +151,20 @@ map.on("error", (event) => {
 });
 
 elements.placeSearch.addEventListener("submit", searchPlaces);
+elements.browseBikerStops.addEventListener("click", () => {
+  renderSearchResults(BIKER_PLACES.slice(0, 12).map((place) => ({ ...place, catalog: true })));
+});
 elements.stopList.addEventListener("input", editStop);
 elements.stopList.addEventListener("change", commitCoordinateEdit);
 elements.stopList.addEventListener("click", handleStopAction);
+elements.stopList.addEventListener("pointerdown", beginListDrag);
 elements.clearRoute.addEventListener("click", clearRoute);
+elements.resetAdjustments.addEventListener("click", resetRouteAdjustments);
 elements.download.addEventListener("click", downloadGpx);
 elements.expand.addEventListener("click", toggleExpandedMap);
 elements.rideName.addEventListener("input", updateDownloadState);
+elements.routeStyle.addEventListener("change", routeStops);
+elements.avoidMotorways.addEventListener("change", routeStops);
 document.addEventListener("fullscreenchange", syncExpandedMapState);
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && elements.mapShell.classList.contains("is-expanded")) {
@@ -126,7 +172,11 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-function addStop({ longitude, latitude, name }) {
+function addStop(
+  { longitude, latitude, name },
+  insertIndex = stops.length,
+  shouldRoute = true,
+) {
   if (stops.length >= MAX_STOPS) {
     setStatus(`A route can contain up to ${MAX_STOPS} stops.`, true);
     return;
@@ -162,9 +212,15 @@ function addStop({ longitude, latitude, name }) {
     routeStops();
   });
 
-  stops.push({ id, longitude, latitude, name: cleanPlaceName(name), marker });
+  stops.splice(insertIndex, 0, {
+    id,
+    longitude,
+    latitude,
+    name: cleanPlaceName(name),
+    marker,
+  });
   renderStops();
-  routeStops();
+  if (shouldRoute) routeStops();
   if (stops.length === 1) map.flyTo({ center: [longitude, latitude], zoom: 11 });
 }
 
@@ -172,8 +228,9 @@ function renderStops() {
   elements.stopList.replaceChildren();
   elements.emptyStops.hidden = stops.length > 0;
   elements.clearRoute.disabled = stops.length === 0;
+  elements.resetAdjustments.hidden = shapingPoints.length === 0;
   elements.mapInstructions.textContent = stops.length
-    ? "Tap to add another stop"
+    ? "Tap the route to insert a stop · drag it to reshape"
     : "Tap the map to add a route point";
 
   stops.forEach((stop, index) => {
@@ -186,7 +243,7 @@ function renderStops() {
     item.className = "stop-card";
     item.dataset.stopId = String(stop.id);
     item.innerHTML = `
-      <span class="stop-number" aria-hidden="true">${index + 1}</span>
+      <button class="stop-number stop-drag-handle" type="button" data-drag-handle aria-label="Drag stop ${index + 1} to reorder" title="Drag to reorder">${index + 1}</button>
       <div class="stop-fields">
         <div class="stop-name-field">
           <label for="stop-name-${stop.id}">Stop ${index + 1} name</label>
@@ -255,9 +312,11 @@ function handleStopAction(event) {
 
   switch (button.dataset.action) {
     case "up":
+      shapingPoints = [];
       if (index > 0) [stops[index - 1], stops[index]] = [stops[index], stops[index - 1]];
       break;
     case "down":
+      shapingPoints = [];
       if (index < stops.length - 1) {
         [stops[index], stops[index + 1]] = [stops[index + 1], stops[index]];
       }
@@ -267,6 +326,7 @@ function handleStopAction(event) {
       focusStop(stops[index].id);
       return;
     case "remove":
+      shapingPoints = [];
       stops[index].marker.remove();
       stops.splice(index, 1);
       break;
@@ -277,16 +337,91 @@ function handleStopAction(event) {
   routeStops();
 }
 
+function beginListDrag(event) {
+  const handle = event.target.closest("[data-drag-handle]");
+  const card = event.target.closest("[data-stop-id]");
+  if (!handle || !card || event.button > 0) return;
+  event.preventDefault();
+  listDrag = {
+    pointerId: event.pointerId,
+    stopId: Number(card.dataset.stopId),
+    targetId: Number(card.dataset.stopId),
+    after: false,
+    handle,
+  };
+  handle.setPointerCapture?.(event.pointerId);
+  card.classList.add("is-dragging");
+  document.body.classList.add("is-reordering-stops");
+  window.addEventListener("pointermove", updateListDrag);
+  window.addEventListener("pointerup", finishListDrag, { once: true });
+  window.addEventListener("pointercancel", cancelListDrag, { once: true });
+}
+
+function updateListDrag(event) {
+  if (!listDrag || event.pointerId !== listDrag.pointerId) return;
+  const target = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-stop-id]");
+  document.querySelectorAll(".stop-card.is-drag-target").forEach((card) => {
+    card.classList.remove("is-drag-target", "drop-after");
+  });
+  if (!target) return;
+  const bounds = target.getBoundingClientRect();
+  listDrag.targetId = Number(target.dataset.stopId);
+  listDrag.after = event.clientY > bounds.top + bounds.height / 2;
+  target.classList.add("is-drag-target");
+  target.classList.toggle("drop-after", listDrag.after);
+}
+
+function finishListDrag(event) {
+  if (!listDrag || event.pointerId !== listDrag.pointerId) return;
+  const { stopId, targetId, after } = listDrag;
+  cleanupListDrag();
+  if (stopId === targetId) return;
+  const fromIndex = stops.findIndex((stop) => stop.id === stopId);
+  let targetIndex = stops.findIndex((stop) => stop.id === targetId);
+  if (fromIndex === -1 || targetIndex === -1) return;
+  const [moved] = stops.splice(fromIndex, 1);
+  targetIndex = stops.findIndex((stop) => stop.id === targetId);
+  stops.splice(targetIndex + (after ? 1 : 0), 0, moved);
+  shapingPoints = [];
+  renderStops();
+  routeStops();
+}
+
+function cancelListDrag() {
+  cleanupListDrag();
+}
+
+function cleanupListDrag() {
+  listDrag?.handle.releasePointerCapture?.(listDrag.pointerId);
+  listDrag = null;
+  window.removeEventListener("pointermove", updateListDrag);
+  window.removeEventListener("pointerup", finishListDrag);
+  window.removeEventListener("pointercancel", cancelListDrag);
+  document.body.classList.remove("is-reordering-stops");
+  document.querySelectorAll(".stop-card.is-dragging, .stop-card.is-drag-target").forEach((card) => {
+    card.classList.remove("is-dragging", "is-drag-target", "drop-after");
+  });
+}
+
 function clearRoute() {
   if (stops.length === 0) return;
   if (!window.confirm("Remove every stop from this route?")) return;
   routeRequest?.abort();
   stops.forEach((stop) => stop.marker.remove());
   stops = [];
+  shapingPoints = [];
   routeCoordinates = [];
+  routeLegGeometries = [];
+  routedControls = [];
   renderStops();
   setSummary();
   setStatus("Add at least two stops to generate a route.");
+}
+
+function resetRouteAdjustments() {
+  shapingPoints = [];
+  renderStops();
+  routeStops();
 }
 
 async function routeStops() {
@@ -294,6 +429,8 @@ async function routeStops() {
   routeRequestSequence += 1;
   const requestSequence = routeRequestSequence;
   routeCoordinates = [];
+  routeLegGeometries = [];
+  routedControls = [];
   setSummary();
   updateMapLines();
   updateDownloadState();
@@ -305,31 +442,42 @@ async function routeStops() {
 
   routeRequest = new AbortController();
   setStatus("Joining your stops by road…");
-  const coordinates = stops
-    .map((stop) => `${stop.longitude.toFixed(6)},${stop.latitude.toFixed(6)}`)
+  const controls = routingControls();
+  const coordinates = controls
+    .map((control) => `${control.longitude.toFixed(6)},${control.latitude.toFixed(6)}`)
     .join(";");
   const url = new URL(`/route/v1/driving/${coordinates}`, ROUTING_URL);
   url.searchParams.set("overview", "full");
   url.searchParams.set("geometries", "geojson");
-  url.searchParams.set("steps", "false");
+  url.searchParams.set("steps", "true");
+  if (elements.routeStyle.value === "twisty") {
+    url.searchParams.set("alternatives", "3");
+  }
 
   try {
-    const response = await fetch(url, {
-      headers: { Accept: "application/json" },
-      signal: routeRequest.signal,
-    });
-    if (!response.ok) throw new Error(`Routing failed (${response.status}).`);
-    const data = await response.json();
-    const route = data?.routes?.[0];
-    if (data?.code !== "Ok" || !Array.isArray(route?.geometry?.coordinates)) {
-      throw new Error(data?.message || "No road route was found for those stops.");
-    }
+    const route = elements.avoidMotorways.checked
+      ? await fetchMotorcycleRoute(controls, routeRequest.signal)
+      : await fetchOsrmRoute(url, routeRequest.signal);
     if (requestSequence !== routeRequestSequence) return;
     routeCoordinates = route.geometry.coordinates;
+    routedControls = controls;
+    routeLegGeometries =
+      route.legGeometries ||
+      (Array.isArray(route.legs) ? route.legs.map(legGeometry) : []);
     setSummary(route.distance, route.duration);
     updateMapLines();
     updateDownloadState();
-    setStatus("Road route ready. You can keep editing or download the GPX file.");
+    const preferenceNotes = [];
+    if (elements.routeStyle.value === "twisty") preferenceNotes.push("Twisty-road bias");
+    if (elements.avoidMotorways.checked) {
+      preferenceNotes.push(
+        preferenceNotes.length ? "motorway avoidance" : "Motorway avoidance",
+      );
+    }
+    const preferenceNote = preferenceNotes.length
+      ? ` ${preferenceNotes.join(" and ")} applied.`
+      : "";
+    setStatus(`Road route ready.${preferenceNote} You can keep editing or download the GPX file.`);
     fitRoute();
   } catch (error) {
     if (error.name === "AbortError") return;
@@ -340,9 +488,63 @@ async function routeStops() {
   }
 }
 
+async function fetchOsrmRoute(url, signal) {
+  const response = await fetch(url, {
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  if (!response.ok) throw new Error(`Routing failed (${response.status}).`);
+  const data = await response.json();
+  const route = chooseRoadRoute(data?.routes, elements.routeStyle.value);
+  if (data?.code !== "Ok" || !Array.isArray(route?.geometry?.coordinates)) {
+    throw new Error(data?.message || "No road route was found for those stops.");
+  }
+  return route;
+}
+
+async function fetchMotorcycleRoute(controls, signal) {
+  const routingRequest = {
+    locations: controls.map((control) => ({
+      lat: control.latitude,
+      lon: control.longitude,
+      type: "break",
+    })),
+    costing: "motorcycle",
+    costing_options: {
+      motorcycle: {
+        use_highways: elements.routeStyle.value === "twisty" ? 0.02 : 0.08,
+      },
+    },
+    units: "kilometers",
+    directions_options: { units: "kilometers" },
+  };
+  const url = new URL(MOTORCYCLE_ROUTING_URL);
+  url.searchParams.set("json", JSON.stringify(routingRequest));
+  const response = await fetch(url, {
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  if (!response.ok) throw new Error(`Routing failed (${response.status}).`);
+  const data = await response.json();
+  const trip = data?.trip;
+  const legGeometries = (trip?.legs || []).map((leg) => decodePolyline(leg.shape));
+  const coordinates = legGeometries.flatMap((leg, index) =>
+    index === 0 ? leg : leg.slice(1),
+  );
+  if (coordinates.length < 2) {
+    throw new Error(data?.error || "No road route was found for those stops.");
+  }
+  return {
+    geometry: { coordinates },
+    legGeometries,
+    distance: Number(trip?.summary?.length) * 1000,
+    duration: Number(trip?.summary?.time),
+  };
+}
+
 function updateMapLines() {
-  if (!map.isStyleLoaded()) return;
-  const draft = stops.map((stop) => [stop.longitude, stop.latitude]);
+  if (!map.getSource("route-draft") || !map.getSource("road-route")) return;
+  const draft = routingControls().map((control) => [control.longitude, control.latitude]);
   map.getSource("route-draft")?.setData(lineData(draft));
   map.getSource("road-route")?.setData(lineData(routeCoordinates));
 }
@@ -389,7 +591,15 @@ async function searchPlaces(event) {
     return;
   }
 
-  const cached = getCachedSearch(query);
+  const catalogResults = searchBikerPlaces(query);
+  if (catalogResults.length > 0) {
+    renderSearchResults(catalogResults);
+    return;
+  }
+
+  const normalisedQuery = normalizePlaceQuery(query);
+
+  const cached = getCachedSearch(normalisedQuery);
   if (cached) {
     renderSearchResults(cached);
     return;
@@ -404,7 +614,7 @@ async function searchPlaces(event) {
   lastSearchAt = Date.now();
   renderSearchMessage("Searching…");
   const url = new URL(SEARCH_URL);
-  url.searchParams.set("q", query);
+  url.searchParams.set("q", normalisedQuery);
   url.searchParams.set("format", "jsonv2");
   url.searchParams.set("limit", "5");
   url.searchParams.set("addressdetails", "0");
@@ -423,11 +633,14 @@ async function searchPlaces(event) {
           .map((result) => ({
             latitude: Number(result.lat),
             longitude: Number(result.lon),
-            name: String(result.display_name || "Search result"),
+            name: String(
+              result.name || result.display_name?.split(",")[0] || "Search result",
+            ),
+            address: String(result.display_name || ""),
           }))
           .filter((result) => isCoordinate(result.longitude, result.latitude))
       : [];
-    cacheSearch(query, results);
+    cacheSearch(normalisedQuery, results);
     renderSearchResults(results);
   } catch (error) {
     if (error.name === "AbortError") return;
@@ -445,20 +658,73 @@ function renderSearchResults(results) {
     const button = document.createElement("button");
     button.className = "search-result";
     button.type = "button";
-    button.textContent = result.name;
-    button.addEventListener("click", () => {
-      addStop(result);
-      elements.searchResults.replaceChildren();
-      elements.placeQuery.value = "";
-      map.flyTo({ center: [result.longitude, result.latitude], zoom: 13 });
+    const title = document.createElement("strong");
+    title.textContent = result.name;
+    const address = document.createElement("span");
+    address.textContent = result.address || "";
+    button.append(title, address);
+    if (result.catalog) {
+      const badge = document.createElement("small");
+      badge.textContent = "Biker stop";
+      button.prepend(badge);
+    }
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      await selectSearchResult(result);
     });
     elements.searchResults.append(button);
   }
   const attribution = document.createElement("div");
   attribution.className = "search-attribution";
   attribution.innerHTML =
-    'Search © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap contributors</a>';
+    'Locations use <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>. Browse the full <a href="https://ukbikercafes.co.uk/bike-and-brew-list/" target="_blank" rel="noreferrer">Bike + Brew venue directory</a>.';
   elements.searchResults.append(attribution);
+}
+
+async function selectSearchResult(result) {
+  let selected = result;
+  if (!isCoordinate(result.longitude, result.latitude)) {
+    renderSearchMessage(`Locating ${result.name}…`);
+    const waitMilliseconds = Math.max(0, 1000 - (Date.now() - lastSearchAt));
+    if (waitMilliseconds > 0) {
+      await new Promise((resolve) => window.setTimeout(resolve, waitMilliseconds));
+    }
+    lastSearchAt = Date.now();
+    const url = new URL(SEARCH_URL);
+    url.searchParams.set("q", result.address || result.name);
+    url.searchParams.set("format", "jsonv2");
+    url.searchParams.set("limit", "1");
+    url.searchParams.set("email", "privacy@tailendcharlie.app");
+    url.searchParams.set("accept-language", document.documentElement.lang || "en-GB");
+
+    try {
+      const response = await fetch(url, { headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error("Location lookup failed.");
+      const [match] = await response.json();
+      selected = {
+        name: result.name,
+        address: result.address,
+        latitude: Number(match?.lat),
+        longitude: Number(match?.lon),
+      };
+    } catch {
+      renderSearchMessage(
+        `We could not place ${result.name} on the map. Try its postcode or tap the map.`,
+      );
+      return;
+    }
+  }
+
+  if (!isCoordinate(selected.longitude, selected.latitude)) {
+    renderSearchMessage(
+      `We could not place ${result.name} on the map. Try its postcode or tap the map.`,
+    );
+    return;
+  }
+  addStop(selected);
+  elements.searchResults.replaceChildren();
+  elements.placeQuery.value = "";
+  map.flyTo({ center: [selected.longitude, selected.latitude], zoom: 13 });
 }
 
 function renderSearchMessage(message) {
@@ -497,6 +763,222 @@ function cacheSearch(query, results) {
   } catch {
     // Search still works when storage is unavailable or full.
   }
+}
+
+function routingControls() {
+  const controls = [];
+  for (let stopIndex = 0; stopIndex < stops.length; stopIndex += 1) {
+    const stop = stops[stopIndex];
+    controls.push({
+      id: stop.id,
+      kind: "stop",
+      longitude: stop.longitude,
+      latitude: stop.latitude,
+    });
+    if (stopIndex === stops.length - 1) continue;
+    for (const shape of shapingPoints) {
+      if (shape.segmentStartId !== stop.id) continue;
+      controls.push({ ...shape, kind: "shape" });
+    }
+  }
+  return controls;
+}
+
+function legGeometry(leg) {
+  const coordinates = [];
+  for (const step of leg?.steps || []) {
+    for (const coordinate of step?.geometry?.coordinates || []) {
+      const previous = coordinates.at(-1);
+      if (!previous || previous[0] !== coordinate[0] || previous[1] !== coordinate[1]) {
+        coordinates.push(coordinate);
+      }
+    }
+  }
+  return coordinates;
+}
+
+function closestRouteLeg(lngLat, maximumDistancePixels = Number.POSITIVE_INFINITY) {
+  if (!lngLat || routeLegGeometries.length === 0) return -1;
+  const target = map.project(lngLat);
+  let closestIndex = -1;
+  let closestDistance = Number.POSITIVE_INFINITY;
+  routeLegGeometries.forEach((coordinates, legIndex) => {
+    for (let index = 1; index < coordinates.length; index += 1) {
+      const distance = squaredPointToSegmentDistance(
+        target,
+        map.project(coordinates[index - 1]),
+        map.project(coordinates[index]),
+      );
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestIndex = legIndex;
+      }
+    }
+  });
+  return closestDistance <= maximumDistancePixels ** 2 ? closestIndex : -1;
+}
+
+function squaredPointToSegmentDistance(point, start, end) {
+  const deltaX = end.x - start.x;
+  const deltaY = end.y - start.y;
+  if (deltaX === 0 && deltaY === 0) {
+    return (point.x - start.x) ** 2 + (point.y - start.y) ** 2;
+  }
+  const position = Math.max(
+    0,
+    Math.min(
+      1,
+      ((point.x - start.x) * deltaX + (point.y - start.y) * deltaY) /
+        (deltaX ** 2 + deltaY ** 2),
+    ),
+  );
+  const projectedX = start.x + position * deltaX;
+  const projectedY = start.y + position * deltaY;
+  return (point.x - projectedX) ** 2 + (point.y - projectedY) ** 2;
+}
+
+function insertStopOnRoute(lngLat) {
+  const legIndex = closestRouteLeg(lngLat);
+  if (legIndex < 0) return;
+  const startControl = routedControls[legIndex];
+  if (!startControl) return;
+  const segmentStartId =
+    startControl.kind === "stop" ? startControl.id : startControl.segmentStartId;
+  const stopIndex = stops.findIndex((stop) => stop.id === segmentStartId);
+  if (stopIndex < 0 || stopIndex >= stops.length - 1) return;
+
+  const afterShapes = shapesAfterControl(segmentStartId, startControl);
+  addStop(
+    {
+      longitude: lngLat.lng,
+      latitude: lngLat.lat,
+      name: `Waypoint ${stopIndex + 2}`,
+    },
+    stopIndex + 1,
+    false,
+  );
+  const newStop = stops[stopIndex + 1];
+  for (const shape of afterShapes) shape.segmentStartId = newStop.id;
+  renderStops();
+  routeStops();
+  focusStop(newStop.id);
+}
+
+function shapesAfterControl(segmentStartId, control) {
+  const shapes = shapingPoints.filter(
+    (shape) => shape.segmentStartId === segmentStartId,
+  );
+  if (control.kind === "stop") return shapes;
+  const controlIndex = shapes.findIndex((shape) => shape.id === control.id);
+  return controlIndex < 0 ? [] : shapes.slice(controlIndex + 1);
+}
+
+function installRouteDragging() {
+  const canvas = map.getCanvas();
+  canvas.addEventListener("pointerdown", (event) => {
+    if (event.button > 0 || routeCoordinates.length < 2) return;
+    const point = mapEventPoint(event, canvas);
+    const startLngLat = map.unproject(point);
+    const legIndex = closestRouteLeg(startLngLat, 20);
+    if (legIndex < 0) return;
+    routeDrag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      legIndex,
+      moved: false,
+      dragPanWasEnabled: map.dragPan.isEnabled(),
+    };
+    canvas.setPointerCapture?.(event.pointerId);
+    map.dragPan.disable();
+    canvas.classList.add("is-reshaping-route");
+    window.addEventListener("pointermove", updateRouteDrag);
+    window.addEventListener("pointerup", finishRouteDrag, { once: true });
+    window.addEventListener("pointercancel", cancelRouteDrag, { once: true });
+  });
+}
+
+function updateRouteDrag(event) {
+  if (!routeDrag || event.pointerId !== routeDrag.pointerId) return;
+  const distance = Math.hypot(
+    event.clientX - routeDrag.startX,
+    event.clientY - routeDrag.startY,
+  );
+  if (distance < 7) return;
+  routeDrag.moved = true;
+  const canvas = map.getCanvas();
+  const lngLat = map.unproject(mapEventPoint(event, canvas));
+  showShapePreview(lngLat);
+}
+
+function finishRouteDrag(event) {
+  if (!routeDrag || event.pointerId !== routeDrag.pointerId) return;
+  const completedDrag = routeDrag;
+  cleanupRouteDrag();
+  if (!completedDrag.moved) return;
+  suppressNextMapClick = true;
+  window.setTimeout(() => {
+    suppressNextMapClick = false;
+  }, 400);
+  const lngLat = map.unproject(mapEventPoint(event, map.getCanvas()));
+  addShapingPoint(completedDrag.legIndex, lngLat);
+}
+
+function cancelRouteDrag() {
+  cleanupRouteDrag();
+}
+
+function cleanupRouteDrag() {
+  if (!routeDrag) return;
+  const canvas = map.getCanvas();
+  canvas.releasePointerCapture?.(routeDrag.pointerId);
+  if (routeDrag.dragPanWasEnabled) map.dragPan.enable();
+  routeDrag = null;
+  canvas.classList.remove("is-reshaping-route");
+  document.querySelector(".route-shape-preview")?.remove();
+  window.removeEventListener("pointermove", updateRouteDrag);
+  window.removeEventListener("pointerup", finishRouteDrag);
+  window.removeEventListener("pointercancel", cancelRouteDrag);
+}
+
+function addShapingPoint(legIndex, lngLat) {
+  const startControl = routedControls[legIndex];
+  if (!startControl) return;
+  const segmentStartId =
+    startControl.kind === "stop" ? startControl.id : startControl.segmentStartId;
+  const shape = {
+    id: ++shapeSequence,
+    segmentStartId,
+    longitude: lngLat.lng,
+    latitude: lngLat.lat,
+  };
+  if (startControl.kind === "shape") {
+    const index = shapingPoints.findIndex((point) => point.id === startControl.id);
+    shapingPoints.splice(index + 1, 0, shape);
+  } else {
+    const index = shapingPoints.findIndex(
+      (point) => point.segmentStartId === segmentStartId,
+    );
+    shapingPoints.splice(index < 0 ? shapingPoints.length : index, 0, shape);
+  }
+  renderStops();
+  routeStops();
+}
+
+function showShapePreview(lngLat) {
+  let preview = document.querySelector(".route-shape-preview");
+  if (!preview) {
+    preview = document.createElement("div");
+    preview.className = "route-shape-preview";
+    map.getCanvasContainer().append(preview);
+  }
+  const point = map.project(lngLat);
+  preview.style.transform = `translate(${point.x - 8}px, ${point.y - 8}px)`;
+}
+
+function mapEventPoint(event, canvas) {
+  const bounds = canvas.getBoundingClientRect();
+  return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
 }
 
 async function toggleExpandedMap() {

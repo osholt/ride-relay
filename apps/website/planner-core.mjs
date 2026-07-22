@@ -35,6 +35,72 @@ export function formatDuration(seconds) {
   return minutes === 0 ? `${hours} hr` : `${hours} hr ${minutes} min`;
 }
 
+export function chooseRoadRoute(routes, preference = "quickest") {
+  if (!Array.isArray(routes) || routes.length === 0) return null;
+  if (preference !== "twisty" || routes.length === 1) return routes[0];
+
+  const quickestDuration = Number(routes[0]?.duration);
+  const eligible = routes.filter((route) => {
+    const duration = Number(route?.duration);
+    return (
+      Number.isFinite(duration) &&
+      (!Number.isFinite(quickestDuration) || duration <= quickestDuration * 1.5)
+    );
+  });
+  if (eligible.length === 0) return routes[0];
+
+  return eligible.reduce((best, candidate) =>
+    routeBendScore(candidate) > routeBendScore(best) ? candidate : best,
+  );
+}
+
+export function routeBendScore(route) {
+  const coordinates = route?.geometry?.coordinates;
+  const distanceMetres = Number(route?.distance);
+  if (!Array.isArray(coordinates) || coordinates.length < 3 || distanceMetres <= 0) {
+    return 0;
+  }
+
+  const sampled = [coordinates[0]];
+  let distanceSinceSample = 0;
+  for (let index = 1; index < coordinates.length; index += 1) {
+    distanceSinceSample += coordinateDistance(coordinates[index - 1], coordinates[index]);
+    if (distanceSinceSample >= 150 || index === coordinates.length - 1) {
+      sampled.push(coordinates[index]);
+      distanceSinceSample = 0;
+    }
+  }
+
+  let totalHeadingChange = 0;
+  for (let index = 2; index < sampled.length; index += 1) {
+    const before = bearing(sampled[index - 2], sampled[index - 1]);
+    const after = bearing(sampled[index - 1], sampled[index]);
+    const change = Math.abs((((after - before) % 360) + 540) % 360 - 180);
+    if (change >= 8) totalHeadingChange += Math.min(change, 120);
+  }
+  return totalHeadingChange / Math.max(distanceMetres / 1000, 1);
+}
+
+export function decodePolyline(encoded, precision = 6) {
+  if (typeof encoded !== "string" || encoded.length === 0) return [];
+  const coordinates = [];
+  const factor = 10 ** precision;
+  let index = 0;
+  let latitude = 0;
+  let longitude = 0;
+
+  while (index < encoded.length) {
+    const latitudeResult = decodePolylineValue(encoded, index);
+    index = latitudeResult.index;
+    latitude += latitudeResult.value;
+    const longitudeResult = decodePolylineValue(encoded, index);
+    index = longitudeResult.index;
+    longitude += longitudeResult.value;
+    coordinates.push([longitude / factor, latitude / factor]);
+  }
+  return coordinates;
+}
+
 export function buildGpx({ rideName, stops, routeCoordinates, createdAt }) {
   const safeName = String(rideName).trim();
   if (!safeName) throw new Error("Name the ride before downloading it.");
@@ -101,4 +167,49 @@ function validateCoordinate(longitude, latitude) {
 
 function formatCoordinate(value) {
   return Number(value).toFixed(7);
+}
+
+function coordinateDistance(first, second) {
+  if (!Array.isArray(first) || !Array.isArray(second)) return 0;
+  const radians = Math.PI / 180;
+  const latitude1 = Number(first[1]) * radians;
+  const latitude2 = Number(second[1]) * radians;
+  const latitudeDelta = latitude2 - latitude1;
+  const longitudeDelta = (Number(second[0]) - Number(first[0])) * radians;
+  const haversine =
+    Math.sin(latitudeDelta / 2) ** 2 +
+    Math.cos(latitude1) * Math.cos(latitude2) * Math.sin(longitudeDelta / 2) ** 2;
+  return 6371000 * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+}
+
+function bearing(first, second) {
+  const radians = Math.PI / 180;
+  const latitude1 = Number(first[1]) * radians;
+  const latitude2 = Number(second[1]) * radians;
+  const longitudeDelta = (Number(second[0]) - Number(first[0])) * radians;
+  const y = Math.sin(longitudeDelta) * Math.cos(latitude2);
+  const x =
+    Math.cos(latitude1) * Math.sin(latitude2) -
+    Math.sin(latitude1) * Math.cos(latitude2) * Math.cos(longitudeDelta);
+  return (Math.atan2(y, x) / radians + 360) % 360;
+}
+
+function decodePolylineValue(encoded, startIndex) {
+  let result = 0;
+  let shift = 0;
+  let index = startIndex;
+  let byte;
+  do {
+    if (index >= encoded.length) {
+      throw new Error("The routing service returned an invalid route shape.");
+    }
+    byte = encoded.charCodeAt(index) - 63;
+    index += 1;
+    result |= (byte & 0x1f) << shift;
+    shift += 5;
+  } while (byte >= 0x20);
+  return {
+    index,
+    value: result & 1 ? ~(result >> 1) : result >> 1,
+  };
 }

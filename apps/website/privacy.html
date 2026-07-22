@@ -155,10 +155,12 @@
         you choose to search for a place, the search text is sent to the
         public Nominatim service. When you add two or more route points, their
         coordinates are sent to the public OSRM routing service so it can
-        calculate a road-following route. Loading the map also connects your
-        browser to OpenFreeMap to retrieve map styles and tiles. As with
-        ordinary web requests, these providers receive your IP address and
-        standard connection information.
+        calculate a road-following route. If you select motorway avoidance,
+        the coordinates are instead sent to the public Valhalla motorcycle
+        routing service operated by FOSSGIS/OpenStreetMap.de. Loading the map
+        also connects your browser to OpenFreeMap to retrieve map styles and
+        tiles. As with ordinary web requests, these providers receive your IP
+        address and standard connection information.
       </p>
 
       <h3>Device identifier</h3>
@@ -225,10 +227,11 @@
         <strong>Maps, destination search and routing.</strong> By default, the
         app and website ride planner send user-requested destination searches
         to the OpenStreetMap Foundation's public Nominatim service and route
-        coordinates to the public Project OSRM service. The website also
-        loads map styles and tiles from OpenFreeMap. These are independent
-        third-party services. Nominatim is covered by the OpenStreetMap
-        Foundation's
+        coordinates to the public Project OSRM service, or to the public
+        FOSSGIS/OpenStreetMap.de Valhalla service when motorway avoidance is
+        selected. The website also loads map styles and tiles from
+        OpenFreeMap. These are independent third-party services. Nominatim is
+        covered by the OpenStreetMap Foundation's
         <a href="https://osmfoundation.org/wiki/Privacy_Policy"
           >privacy policy</a
         >.

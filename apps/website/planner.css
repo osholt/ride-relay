@@ -88,11 +88,13 @@
 }
 
 .field-group,
+.route-preferences,
 .place-search {
   margin-bottom: 24px;
 }
 
 .field-group label,
+.route-preferences > label:not(.checkbox-field),
 .place-search > label,
 .stop-name-field label,
 .coordinate-field label {
@@ -104,7 +106,8 @@
   letter-spacing: 0.05em;
 }
 
-.planner-page input {
+.planner-page input,
+.planner-page select {
   width: 100%;
   min-width: 0;
   border: 1px solid rgba(253, 245, 240, 0.2);
@@ -117,9 +120,55 @@
   font-size: 0.9rem;
 }
 
-.planner-page input:focus {
+.planner-page select {
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 17px) calc(50% - 2px),
+    calc(100% - 12px) calc(50% - 2px);
+  background-repeat: no-repeat;
+  background-size: 5px 5px;
+}
+
+.planner-page input:focus,
+.planner-page select:focus {
   border-color: var(--teal);
   box-shadow: 0 0 0 3px rgba(84, 225, 196, 0.13);
+}
+
+.route-preferences {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  padding: 13px;
+}
+
+.route-preferences legend {
+  padding: 0 6px;
+  color: var(--teal);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.checkbox-field input {
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  accent-color: var(--teal);
 }
 
 .search-row {
@@ -157,6 +206,26 @@
   font-size: 0.7rem;
 }
 
+.catalog-button {
+  width: 100%;
+  margin-top: 10px;
+  border: 1px solid rgba(84, 225, 196, 0.28);
+  border-radius: 10px;
+  padding: 9px 11px;
+  color: var(--teal);
+  background: rgba(84, 225, 196, 0.07);
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.catalog-button:hover,
+.catalog-button:focus-visible {
+  border-color: var(--teal);
+  background: rgba(84, 225, 196, 0.12);
+}
+
 .search-results {
   display: grid;
   gap: 7px;
@@ -176,6 +245,35 @@
   line-height: 1.35;
   text-align: left;
   cursor: pointer;
+}
+
+.search-result strong,
+.search-result span,
+.search-result small {
+  display: block;
+}
+
+.search-result strong {
+  color: var(--ink);
+  font-size: 0.8rem;
+}
+
+.search-result span {
+  margin-top: 2px;
+}
+
+.search-result small {
+  margin-bottom: 3px;
+  color: var(--teal);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.search-result:disabled {
+  opacity: 0.6;
+  cursor: wait;
 }
 
 .search-result:hover,
@@ -235,6 +333,11 @@
   color: var(--peach);
 }
 
+.reset-adjustments {
+  margin: -5px 0 10px;
+  color: var(--teal);
+}
+
 .stop-list {
   display: grid;
   gap: 10px;
@@ -244,6 +347,7 @@
 }
 
 .stop-card {
+  position: relative;
   display: grid;
   grid-template-columns: 30px 1fr;
   gap: 10px;
@@ -251,6 +355,34 @@
   border-radius: 13px;
   padding: 11px;
   background: #20212d;
+}
+
+.stop-card.is-dragging {
+  opacity: 0.45;
+}
+
+.stop-card.is-drag-target::before,
+.stop-card.is-drag-target.drop-after::after {
+  content: "";
+  position: absolute;
+  right: 6px;
+  left: 6px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--teal);
+  box-shadow: 0 0 12px rgba(84, 225, 196, 0.55);
+}
+
+.stop-card.is-drag-target::before {
+  top: -7px;
+}
+
+.stop-card.is-drag-target.drop-after::before {
+  display: none;
+}
+
+.stop-card.is-drag-target.drop-after::after {
+  bottom: -7px;
 }
 
 .stop-number,
@@ -271,6 +403,21 @@
 .stop-number {
   margin-top: 1px;
   border-width: 0;
+}
+
+.stop-drag-handle {
+  padding: 0;
+  font-family: inherit;
+  cursor: grab;
+  touch-action: none;
+}
+
+.stop-drag-handle:active {
+  cursor: grabbing;
+}
+
+.is-reordering-stops {
+  user-select: none;
 }
 
 .stop-fields {
@@ -570,6 +717,24 @@
 
 .route-marker:active {
   cursor: grabbing;
+}
+
+.maplibregl-canvas.is-reshaping-route {
+  cursor: grabbing;
+}
+
+.route-shape-preview {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  border: 3px solid #ffffff;
+  border-radius: 50%;
+  background: var(--purple-bright);
+  box-shadow: 0 3px 12px rgba(16, 7, 37, 0.55);
+  pointer-events: none;
 }
 
 .noscript-message {
