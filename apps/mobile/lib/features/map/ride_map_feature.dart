@@ -38,6 +38,12 @@ import 'destination_route_sheet.dart';
 import 'motorcycle_icon.dart';
 import 'navigation_export_sheet.dart';
 
+@visibleForTesting
+bool shouldUseTiledGroupMiniMap({
+  required bool mapLibreEnabled,
+  required TargetPlatform platform,
+}) => mapLibreEnabled && platform != TargetPlatform.android;
+
 /// Self-contained production entry point for the map/GPX feature.
 ///
 /// Route geometry is local and always renders without a network. Basemap tiles
@@ -753,7 +759,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
                               .toList(growable: false),
                           currentPosition: _effectivePosition,
                           riders: groupRiders,
-                          showTiles: _basemap.usesMapLibre,
+                          showTiles: shouldUseTiledGroupMiniMap(
+                            mapLibreEnabled: _basemap.usesMapLibre,
+                            platform: defaultTargetPlatform,
+                          ),
                           mapStyleString: widget.mapStyleString,
                         );
                       },

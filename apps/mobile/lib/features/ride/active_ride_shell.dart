@@ -266,6 +266,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   SharedPreferencesInternetCursorStore? _internetCursorStore;
   RideSimulationController? _simulationController;
   InMemoryRouteStore? _simulationRouteStore;
+  RouteStore? _rideRouteStore;
   StreamSubscription<RideEvent>? _receivedEventSubscription;
   StreamSubscription<RideEvent>? _internetReceivedEventSubscription;
   Timer? _stalenessTimer;
@@ -369,8 +370,13 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       }
     } else if (widget.enableNativeServices) {
       try {
-        final routeStore = await JsonFileRouteStore.openDefault();
-        route = await routeStore.loadActiveRoute();
+        final session = widget.rideController.session;
+        if (session != null) {
+          _rideRouteStore = await JsonFileRouteStore.openForRide(
+            session.rideId,
+          );
+          route = await _rideRouteStore!.loadActiveRoute();
+        }
       } on Object catch (error) {
         _warnings.add('Route storage could not be opened: $error');
       }
@@ -1329,7 +1335,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       acquireCurrentPosition: _isSimulation
           ? () async => _mapPosition.value
           : _acquireCurrentPosition,
-      routeStore: _simulationRouteStore,
+      routeStore: _isSimulation ? _simulationRouteStore : _rideRouteStore,
       distanceUnit: widget.distanceUnits.value,
       darkMapStyle: widget.mapStyleMode.resolveDark(
         MediaQuery.platformBrightnessOf(context),

@@ -7,6 +7,7 @@ export 'ride_map_feature.dart'
         MapOverlayMarker,
         MapOverlayTrace,
         RideMapFeature,
-        RideMapScreen;
+        RideMapScreen,
+        shouldUseTiledGroupMiniMap;
 export '../../services/navigation_export.dart'
     show NavigationExportCoordinator, NavigationExportResult, NavigationTarget;

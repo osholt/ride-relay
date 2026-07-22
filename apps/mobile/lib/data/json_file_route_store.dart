@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as path;
@@ -9,6 +10,24 @@ import '../domain/route_store.dart';
 class JsonFileRouteStore implements RouteStore {
   JsonFileRouteStore(this.file);
 
+  factory JsonFileRouteStore.forRide(
+    Directory supportDirectory,
+    String rideId,
+  ) {
+    final scope = base64Url.encode(utf8.encode(rideId)).replaceAll('=', '');
+    return JsonFileRouteStore(
+      File(
+        path.join(
+          supportDirectory.path,
+          'routes',
+          'rides',
+          scope,
+          'active-route.json',
+        ),
+      ),
+    );
+  }
+
   final File file;
 
   static Future<JsonFileRouteStore> openDefault() async {
@@ -16,6 +35,14 @@ class JsonFileRouteStore implements RouteStore {
     return JsonFileRouteStore(
       File(path.join(supportDirectory.path, 'routes', 'active-route.json')),
     );
+  }
+
+  static Future<JsonFileRouteStore> openForRide(String rideId) async {
+    if (rideId.trim().isEmpty) {
+      throw ArgumentError.value(rideId, 'rideId', 'Must not be empty');
+    }
+    final supportDirectory = await getApplicationSupportDirectory();
+    return JsonFileRouteStore.forRide(supportDirectory, rideId);
   }
 
   @override

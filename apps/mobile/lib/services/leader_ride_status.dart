@@ -58,22 +58,44 @@ class LeaderRideStatusCalculator {
   }) {
     if (localRole != RideRole.lead) return null;
     final evaluatedAt = now ?? DateTime.now();
-    final offCourseAlerts = routeAlerts
-        .where(
-          (alert) =>
-              alert.riderId != localRiderId &&
-              !alert.acknowledged &&
-              alert.assessment.coordinatorActionRequired,
-        )
-        .map(
-          (alert) => LeaderOffCourseAlert(
-            riderId: alert.riderId,
-            displayName: alert.displayName,
-            level: alert.assessment.alertLevel,
-            distanceFromRouteMeters: alert.assessment.distanceFromRouteMeters,
-          ),
-        )
-        .toList(growable: false);
+    final currentRiderIds = riderLocations
+        .map((location) => location.riderId)
+        .toSet();
+    final currentOffCourseAlerts = <String, RiderRouteAlert>{};
+    for (final alert in routeAlerts) {
+      if (alert.riderId == localRiderId ||
+          !currentRiderIds.contains(alert.riderId) ||
+          alert.acknowledged ||
+          alert.assessment.state != RouteTrackingState.offRoute ||
+          !alert.assessment.coordinatorActionRequired) {
+        continue;
+      }
+      final previous = currentOffCourseAlerts[alert.riderId];
+      if (previous == null ||
+          alert.assessment.evaluatedAt.isAfter(
+            previous.assessment.evaluatedAt,
+          )) {
+        currentOffCourseAlerts[alert.riderId] = alert;
+      }
+    }
+    final offCourseAlerts =
+        currentOffCourseAlerts.values
+            .map(
+              (alert) => LeaderOffCourseAlert(
+                riderId: alert.riderId,
+                displayName: alert.displayName,
+                level: alert.assessment.alertLevel,
+                distanceFromRouteMeters:
+                    alert.assessment.distanceFromRouteMeters,
+              ),
+            )
+            .toList(growable: false)
+          ..sort((first, second) {
+            final byLevel = second.level.index.compareTo(first.level.index);
+            return byLevel != 0
+                ? byLevel
+                : first.displayName.compareTo(second.displayName);
+          });
 
     final tecCandidates =
         riderLocations

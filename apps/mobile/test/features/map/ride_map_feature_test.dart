@@ -18,6 +18,23 @@ import 'package:ride_relay/services/offline_tile_cache.dart';
 import 'package:ride_relay/services/route_importer.dart';
 
 void main() {
+  test('Android group mini-map uses the local fallback', () {
+    expect(
+      shouldUseTiledGroupMiniMap(
+        mapLibreEnabled: true,
+        platform: TargetPlatform.android,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldUseTiledGroupMiniMap(
+        mapLibreEnabled: true,
+        platform: TargetPlatform.iOS,
+      ),
+      isTrue,
+    );
+  });
+
   testWidgets('offers file import and loads bundled demo route offline', (
     tester,
   ) async {
