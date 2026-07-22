@@ -131,7 +131,7 @@ const CURATED_BIKER_PLACES = Object.freeze([
 
 const importedPlaces = BIKE_AND_BREW_PLACES.map((place) => {
   const curatedMatch = CURATED_BIKER_PLACES.find(
-    (candidate) => coordinateDistance(candidate, place) <= 250,
+    (candidate) => distanceBetweenPlaces(candidate, place) <= 250,
   );
   return {
     ...place,
@@ -146,7 +146,7 @@ const importedPlaces = BIKE_AND_BREW_PLACES.map((place) => {
 const curatedOnly = CURATED_BIKER_PLACES.filter(
   (place) =>
     !BIKE_AND_BREW_PLACES.some(
-      (importedPlace) => coordinateDistance(place, importedPlace) <= 250,
+      (importedPlace) => distanceBetweenPlaces(place, importedPlace) <= 250,
     ),
 ).map((place) => ({
   ...place,
@@ -211,11 +211,48 @@ export function searchBikerPlaces(query, limit = 8) {
     .map((entry) => markCatalogPlace(entry.place));
 }
 
+export function bikerPlaceKey(place) {
+  return place.sourceId != null
+    ? `source-${place.sourceId}`
+    : `coordinate-${Number(place.latitude).toFixed(6)},${Number(place.longitude).toFixed(6)}`;
+}
+
+export function sortBikerPlaces(
+  places,
+  mode = "alphabetical",
+  start = null,
+  durations = new Map(),
+) {
+  const sorted = [...places];
+  if (mode === "distance" && start) {
+    return sorted.sort(
+      (left, right) =>
+        distanceBetweenPlaces(start, left) - distanceBetweenPlaces(start, right) ||
+        left.name.localeCompare(right.name),
+    );
+  }
+  if (mode === "duration" && start) {
+    return sorted.sort((left, right) => {
+      const leftDuration = durations.get(bikerPlaceKey(left));
+      const rightDuration = durations.get(bikerPlaceKey(right));
+      const durationDifference =
+        (Number.isFinite(leftDuration) ? leftDuration : Number.POSITIVE_INFINITY) -
+        (Number.isFinite(rightDuration) ? rightDuration : Number.POSITIVE_INFINITY);
+      return (
+        durationDifference ||
+        distanceBetweenPlaces(start, left) - distanceBetweenPlaces(start, right) ||
+        left.name.localeCompare(right.name)
+      );
+    });
+  }
+  return sorted.sort((left, right) => left.name.localeCompare(right.name));
+}
+
 function markCatalogPlace(place) {
   return { ...place, catalog: true };
 }
 
-function coordinateDistance(first, second) {
+export function distanceBetweenPlaces(first, second) {
   const radians = Math.PI / 180;
   const latitude1 = first.latitude * radians;
   const latitude2 = second.latitude * radians;

@@ -66,6 +66,15 @@
             value="Sunday group ride"
             autocomplete="off"
           />
+          <p class="local-save-note">
+            <span id="draft-save-status">
+              Saved on this device for this planner. No tracking.
+              <a href="/privacy.html#website-planner-storage">Privacy</a>
+            </span>
+            <button id="clear-saved-draft" type="button">
+              Clear local data
+            </button>
+          </p>
         </div>
 
         <fieldset class="route-preferences">
@@ -115,9 +124,57 @@
             Search runs only when you press Search. Do not enter personal or
             confidential information.
           </p>
-          <button class="catalog-button" id="browse-biker-stops" type="button">
-            Browse biker cafés &amp; start locations
-          </button>
+          <details class="catalog-browser" id="biker-browser">
+            <summary class="catalog-button" id="browse-biker-stops">
+              Browse biker cafés &amp; start locations
+            </summary>
+            <div class="catalog-browser-body">
+              <div class="catalog-control">
+                <label for="biker-place-filter">Search this list</label>
+                <input
+                  id="biker-place-filter"
+                  type="search"
+                  maxlength="100"
+                  placeholder="Cafe, area or postcode"
+                  autocomplete="off"
+                />
+              </div>
+              <div class="catalog-control">
+                <label for="biker-place-sort">Sort places</label>
+                <select id="biker-place-sort">
+                  <option value="alphabetical">Name A–Z</option>
+                  <option value="distance" disabled>Nearest to start</option>
+                  <option value="duration" disabled>Ride time from start</option>
+                </select>
+              </div>
+              <label
+                class="checkbox-field catalog-layer-toggle"
+                for="biker-layer-visible-menu"
+              >
+                <input id="biker-layer-visible-menu" type="checkbox" checked />
+                <span>Show café dots on the map</span>
+              </label>
+              <p
+                class="catalog-status"
+                id="biker-catalog-status"
+                aria-live="polite"
+              ></p>
+              <div
+                class="catalog-results"
+                id="biker-catalog-results"
+                aria-label="Biker café results"
+              ></div>
+              <p class="catalog-attribution">
+                Authorised Bike + Brew 2026 venues, checked against the
+                <a
+                  href="https://ukbikercafes.co.uk/bike-and-brew-list/"
+                  target="_blank"
+                  rel="noreferrer"
+                  >current directory</a
+                >.
+              </p>
+            </div>
+          </details>
           <div
             class="search-results"
             id="search-results"
@@ -190,7 +247,9 @@
           <button class="button button-primary" id="download-gpx" disabled>
             Download GPX
           </button>
-          <span>Imports directly into the Tail End Charlie app.</span>
+          <span>
+            After downloading, open or share the GPX with Tail End Charlie.
+          </span>
         </div>
       </aside>
 

@@ -59,7 +59,8 @@
           contact details stay on your phone unless you choose to share them,
           or opt in to auto-sharing with the ride leader during an
           emergency-stop alert &mdash; both described below. The website ride
-          planner keeps the ride name and generated GPX file in your browser.
+          planner keeps your draft route and preferences in your browser so it
+          is there when you return. It uses no cookies or tracking storage.
           You can read the full detail below, or jump straight to
           <a href="#your-rights">your rights</a> or
           <a href="#deleting-your-information">how to delete your data</a>.
@@ -147,23 +148,34 @@
         <li>Imported or recorded GPX route files you haven't shared.</li>
       </ul>
 
-      <h3>Website ride planner</h3>
+      <h3 id="website-planner-storage">Website ride planner</h3>
       <p>
-        Your ride name and generated GPX file stay in your browser and are not
-        sent to our relay server. Place-search results are cached in your
-        browser for up to seven days to avoid repeating the same search. The
-        built-in biker café catalogue and its map locations are stored in the
-        website and matched locally in your browser. When a search does not
+        To provide the save-and-return feature you request by using the
+        planner, the browser stores your ride name, stops, route shape, routing
+        preferences, café-layer preference, and most recently generated route
+        in first-party local storage on your device. The draft is ignored after
+        180 days and removed the next time you open the planner; you can remove
+        it sooner with <strong>Clear local data</strong>. Place-search results
+        are cached in the same browser storage for up to seven days to avoid
+        repeating the same search and to respect the search provider's usage
+        limits. The website sets no cookies and uses this storage only for the
+        planner features described here, not for analytics, advertising, or
+        tracking.
+      </p>
+      <p>
+        The built-in biker café catalogue and its map locations are stored in
+        the website and matched locally in your browser. When a search does not
         match that catalogue, the search text is sent to the public Nominatim
         service. When you add two or more route points, their coordinates are
         sent to the public OSRM routing service so it can calculate a
-        road-following route. If you select motorway, major-road, toll, or ferry
-        avoidance, the coordinates are instead sent to the public Valhalla
-        motorcycle routing service operated by FOSSGIS/OpenStreetMap.de.
-        Loading the map also connects your browser to OpenFreeMap to retrieve
-        map styles and tiles. As with
-        ordinary web requests, these providers receive your IP address and
-        standard connection information.
+        road-following route. Sorting cafés by road time also sends the start
+        point and café coordinates to OSRM. If you select motorway, major-road,
+        toll, or ferry avoidance, route coordinates are instead sent to the
+        public Valhalla motorcycle routing service operated by
+        FOSSGIS/OpenStreetMap.de. Loading the map also connects your browser to
+        OpenFreeMap to retrieve map styles and tiles. As with ordinary web
+        requests, these providers receive your IP address and standard
+        connection information.
       </p>
 
       <h3>Device identifier</h3>
@@ -294,8 +306,10 @@
         A cleanup process runs on the server and permanently deletes anything
         past its expiry &mdash; retention limits are enforced automatically,
         not just promised. Information kept only on your device (see above)
-        is kept until you delete it, uninstall the app, clear the website's
-        browser storage, or close the planner page, as applicable.
+        is kept until you delete it, uninstall the app, or clear the website's
+        browser storage, as applicable. A planner draft is ignored after 180
+        days and removed on your next visit; cached searches expire after seven
+        days.
       </p>
 
       <h2>How we protect your information</h2>

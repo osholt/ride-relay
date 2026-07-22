@@ -3,9 +3,12 @@ import test from "node:test";
 
 import {
   BIKER_PLACES,
+  bikerPlaceKey,
   bikerPlacesGeoJson,
+  distanceBetweenPlaces,
   normalizePlaceQuery,
   searchBikerPlaces,
+  sortBikerPlaces,
 } from "./biker-places.mjs";
 
 test("place normalisation tolerates apostrophes and ampersands", () => {
@@ -73,4 +76,37 @@ test("every catalogue entry has a directly mappable location", () => {
     BIKER_PLACES[0].longitude,
     BIKER_PLACES[0].latitude,
   ]);
+});
+
+test("catalogue browsing sorts by name, distance, or road time", () => {
+  const places = [
+    { sourceId: 2, name: "Zulu", latitude: 51.5, longitude: -2.5 },
+    { sourceId: 1, name: "Alpha", latitude: 51.51, longitude: -2.5 },
+  ];
+  const start = { latitude: 51.5005, longitude: -2.5 };
+
+  assert.deepEqual(
+    sortBikerPlaces(places).map((place) => place.name),
+    ["Alpha", "Zulu"],
+  );
+  assert.deepEqual(
+    sortBikerPlaces(places, "distance", start).map((place) => place.name),
+    ["Zulu", "Alpha"],
+  );
+  assert.ok(
+    distanceBetweenPlaces(start, places[0]) <
+      distanceBetweenPlaces(start, places[1]),
+  );
+  assert.deepEqual(
+    sortBikerPlaces(
+      places,
+      "duration",
+      start,
+      new Map([
+        [bikerPlaceKey(places[0]), 900],
+        [bikerPlaceKey(places[1]), 600],
+      ]),
+    ).map((place) => place.name),
+    ["Alpha", "Zulu"],
+  );
 });

@@ -10,10 +10,18 @@ import {
 } from "./planner-core.mjs";
 import {
   BIKER_PLACES,
+  bikerPlaceKey,
   bikerPlacesGeoJson,
+  distanceBetweenPlaces,
   normalizePlaceQuery,
   searchBikerPlaces,
+  sortBikerPlaces,
 } from "./biker-places.mjs";
+import {
+  decodePlannerDraft,
+  encodePlannerDraft,
+  PLANNER_DRAFT_KEY,
+} from "./planner-storage.mjs";
 
 const MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 const ROUTING_URL = "https://router.project-osrm.org";
@@ -22,6 +30,7 @@ const SEARCH_URL = "https://nominatim.openstreetmap.org/search";
 const MAX_STOPS = 50;
 const SEARCH_CACHE_KEY = "tec-planner-search-v1";
 const SEARCH_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
+const CATALOG_TABLE_BATCH_SIZE = 75;
 
 const elements = {
   clearRoute: document.querySelector("#clear-route"),
@@ -29,11 +38,19 @@ const elements = {
   avoidMajorRoads: document.querySelector("#avoid-major-roads"),
   avoidMotorways: document.querySelector("#avoid-motorways"),
   avoidTolls: document.querySelector("#avoid-tolls"),
+  bikerBrowser: document.querySelector("#biker-browser"),
+  bikerCatalogResults: document.querySelector("#biker-catalog-results"),
+  bikerCatalogStatus: document.querySelector("#biker-catalog-status"),
+  bikerFilter: document.querySelector("#biker-place-filter"),
   bikerLayerVisible: document.querySelector("#biker-layer-visible"),
+  bikerLayerVisibleMenu: document.querySelector("#biker-layer-visible-menu"),
+  bikerSort: document.querySelector("#biker-place-sort"),
   browseBikerStops: document.querySelector("#browse-biker-stops"),
+  clearSavedDraft: document.querySelector("#clear-saved-draft"),
   distance: document.querySelector("#route-distance"),
   download: document.querySelector("#download-gpx"),
   duration: document.querySelector("#route-duration"),
+  draftSaveStatus: document.querySelector("#draft-save-status"),
   emptyStops: document.querySelector("#empty-stops"),
   expand: document.querySelector("#map-expand"),
   expandLabel: document.querySelector(".map-expand-label"),
@@ -56,6 +73,8 @@ let shapingPoints = [];
 let routeCoordinates = [];
 let routeLegGeometries = [];
 let routedControls = [];
+let routeDistance = null;
+let routeDuration = null;
 let routeRequest = null;
 let routeRequestSequence = 0;
 let searchRequest = null;
@@ -72,6 +91,11 @@ let previewRouteTimer = null;
 let pendingPreviewControls = null;
 let previewRouteSequence = 0;
 let lastPreviewRouteAt = 0;
+let catalogTravelTimeRequest = null;
+let catalogTravelTimeSequence = 0;
+let catalogTravelTimes = { startKey: "", durations: new Map() };
+let draftSaveTimer = null;
+let restoringDraft = false;
 const routeHistory = new StateHistory(50);
 const routePreferenceElements = [
   elements.routeStyle,
@@ -83,6 +107,7 @@ const routePreferenceElements = [
 
 elements.browseBikerStops.textContent =
   `Browse ${BIKER_PLACES.length} biker cafés & start locations`;
+pruneSearchCache();
 
 const map = new maplibregl.Map({
   container: "map",
@@ -201,6 +226,7 @@ map.on("load", () => {
   updateBikerLayerVisibility();
   updateMapLines();
   installRouteDragging();
+  restorePlannerDraft();
 });
 
 map.on("click", async (event) => {
@@ -245,11 +271,14 @@ map.on("error", (event) => {
 });
 
 elements.placeSearch.addEventListener("submit", searchPlaces);
-elements.browseBikerStops.addEventListener("click", () => {
-  renderSearchResults(BIKER_PLACES.map((place) => ({ ...place, catalog: true })));
-  fitBikerPlaces();
+elements.bikerBrowser.addEventListener("toggle", toggleBikerBrowser);
+elements.bikerFilter.addEventListener("input", renderBikerCatalog);
+elements.bikerFilter.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") event.preventDefault();
 });
-elements.bikerLayerVisible.addEventListener("change", updateBikerLayerVisibility);
+elements.bikerSort.addEventListener("change", changeBikerSort);
+elements.bikerLayerVisible.addEventListener("change", changeBikerLayerVisibility);
+elements.bikerLayerVisibleMenu.addEventListener("change", changeBikerLayerVisibility);
 elements.stopList.addEventListener("input", editStop);
 elements.stopList.addEventListener("change", commitCoordinateEdit);
 elements.stopList.addEventListener("click", handleStopAction);
@@ -258,15 +287,20 @@ elements.clearRoute.addEventListener("click", clearRoute);
 elements.resetAdjustments.addEventListener("click", resetRouteAdjustments);
 elements.undoRoute.addEventListener("click", undoRouteChange);
 elements.redoRoute.addEventListener("click", redoRouteChange);
+elements.clearSavedDraft.addEventListener("click", clearSavedPlannerData);
 elements.download.addEventListener("click", downloadGpx);
 elements.expand.addEventListener("click", toggleExpandedMap);
-elements.rideName.addEventListener("input", updateDownloadState);
+elements.rideName.addEventListener("input", () => {
+  updateDownloadState();
+  scheduleDraftSave();
+});
 for (const preference of routePreferenceElements) {
   preference.addEventListener("focus", rememberPreferenceValue);
   preference.addEventListener("change", changeRoutePreference);
   rememberPreferenceValue({ target: preference });
 }
 document.addEventListener("fullscreenchange", syncExpandedMapState);
+window.addEventListener("pagehide", savePlannerDraft);
 document.addEventListener("keydown", (event) => {
   if (
     (event.metaKey || event.ctrlKey) &&
@@ -396,6 +430,14 @@ function renderStops() {
   updateMapLines();
   updateDownloadState();
   updateHistoryButtons();
+  updateBikerSortAvailability();
+  if (elements.bikerBrowser.open) {
+    renderBikerCatalog();
+    if (stops.length > 0 && elements.bikerSort.value === "duration") {
+      void loadCatalogTravelTimes(stops[0]);
+    }
+  }
+  scheduleDraftSave();
 }
 
 function editStop(event) {
@@ -412,6 +454,7 @@ function editStop(event) {
   stop.marker
     .getElement()
     .setAttribute("aria-label", `Edit ${stop.name || "unnamed stop"}`);
+  scheduleDraftSave();
 }
 
 function commitCoordinateEdit(event) {
@@ -664,6 +707,7 @@ function changeRoutePreference(event) {
       : event.target.dataset.previousValue || "quickest";
   recordRouteChange(previousState);
   rememberPreferenceValue(event);
+  scheduleDraftSave();
   routeStops(false);
 }
 
@@ -677,17 +721,19 @@ function routePreferenceStateKey(preference) {
   }[preference.id];
 }
 
-async function routeStops(shouldFit = true) {
+async function routeStops(shouldFit = true, preserveExistingRoute = false) {
   cancelRoutePreview();
   routeRequest?.abort();
   routeRequestSequence += 1;
   const requestSequence = routeRequestSequence;
-  routeCoordinates = [];
-  routeLegGeometries = [];
-  routedControls = [];
-  setSummary();
-  updateMapLines();
-  updateDownloadState();
+  if (!preserveExistingRoute) {
+    routeCoordinates = [];
+    routeLegGeometries = [];
+    routedControls = [];
+    setSummary();
+    updateMapLines();
+    updateDownloadState();
+  }
 
   if (stops.length < 2) {
     setStatus("Add at least two stops to generate a route.");
@@ -722,10 +768,14 @@ async function routeStops(shouldFit = true) {
     if (shouldFit) fitRoute();
   } catch (error) {
     if (error.name === "AbortError") return;
-    setStatus(
-      "The road route could not be generated. Move a stop nearer a road or turn off one of the avoidances and try again.",
-      true,
-    );
+    if (preserveExistingRoute && routeCoordinates.length > 1) {
+      setStatus("Your saved route is restored. It could not be refreshed from the road router yet.");
+    } else {
+      setStatus(
+        "The road route could not be generated. Move a stop nearer a road or turn off one of the avoidances and try again.",
+        true,
+      );
+    }
   }
 }
 
@@ -816,8 +866,11 @@ function updateMapLines(draftControls = routingControls()) {
 }
 
 function setSummary(distance, duration) {
+  routeDistance = Number.isFinite(distance) && distance >= 0 ? distance : null;
+  routeDuration = Number.isFinite(duration) && duration >= 0 ? duration : null;
   elements.distance.textContent = formatDistance(distance);
   elements.duration.textContent = formatDuration(duration);
+  scheduleDraftSave();
 }
 
 function setStatus(message, isError = false) {
@@ -921,30 +974,164 @@ function renderSearchResults(results) {
     return;
   }
   for (const result of results) {
-    const button = document.createElement("button");
-    button.className = "search-result";
-    button.type = "button";
-    const title = document.createElement("strong");
-    title.textContent = result.name;
-    const address = document.createElement("span");
-    address.textContent = result.address || "";
-    button.append(title, address);
-    if (result.catalog) {
-      const badge = document.createElement("small");
-      badge.textContent = bikerPlaceLabel(result);
-      button.prepend(badge);
-    }
-    button.addEventListener("click", async () => {
-      button.disabled = true;
-      await selectSearchResult(result);
-    });
-    elements.searchResults.append(button);
+    elements.searchResults.append(createPlaceResultButton(result));
   }
   const attribution = document.createElement("div");
   attribution.className = "search-attribution";
   attribution.innerHTML =
     'General search uses <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>. Biker venues are authorised from the <a href="https://www.google.com/maps/d/viewer?mid=1N4Oey1CiDFqn2vJuqrgnT4oQhTvyxqU" target="_blank" rel="noreferrer">Bike + Brew 2026 map</a> and checked against its <a href="https://ukbikercafes.co.uk/bike-and-brew-list/" target="_blank" rel="noreferrer">current directory</a>.';
   elements.searchResults.append(attribution);
+}
+
+function createPlaceResultButton(result, metric = "") {
+  const button = document.createElement("button");
+  button.className = "search-result";
+  button.type = "button";
+  const title = document.createElement("strong");
+  title.textContent = result.name;
+  const address = document.createElement("span");
+  address.textContent = result.address || "";
+  button.append(title, address);
+  if (result.catalog) {
+    const badge = document.createElement("small");
+    badge.textContent = bikerPlaceLabel(result);
+    button.prepend(badge);
+  }
+  if (metric) {
+    const metricElement = document.createElement("span");
+    metricElement.className = "catalog-result-metric";
+    metricElement.textContent = metric;
+    button.append(metricElement);
+  }
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      await selectSearchResult(result);
+    } finally {
+      button.disabled = false;
+    }
+  });
+  return button;
+}
+
+function toggleBikerBrowser() {
+  if (!elements.bikerBrowser.open) return;
+  updateBikerSortAvailability();
+  renderBikerCatalog();
+  if (stops.length === 0) fitBikerPlaces();
+}
+
+function updateBikerSortAvailability() {
+  const hasStart = stops.length > 0;
+  for (const option of elements.bikerSort.options) {
+    if (["distance", "duration"].includes(option.value)) option.disabled = !hasStart;
+  }
+  if (!hasStart && elements.bikerSort.value !== "alphabetical") {
+    elements.bikerSort.value = "alphabetical";
+  }
+}
+
+function renderBikerCatalog() {
+  const query = elements.bikerFilter.value.trim();
+  const start = stops[0] || null;
+  const mode = start ? elements.bikerSort.value : "alphabetical";
+  const matches = searchBikerPlaces(query, BIKER_PLACES.length);
+  const startKey = start
+    ? `${start.longitude.toFixed(5)},${start.latitude.toFixed(5)}`
+    : "";
+  const durations = catalogTravelTimes.startKey === startKey
+    ? catalogTravelTimes.durations
+    : new Map();
+  const sorted = sortBikerPlaces(
+    matches,
+    mode,
+    start,
+    durations,
+  );
+  elements.bikerCatalogResults.replaceChildren();
+
+  for (const place of sorted) {
+    let metric = "";
+    if (mode === "distance") {
+      metric = `${formatDistance(distanceBetweenPlaces(start, place))} from start`;
+    } else if (mode === "duration") {
+      const duration = durations.get(bikerPlaceKey(place));
+      metric = Number.isFinite(duration)
+        ? `${formatDuration(duration)} from start by road`
+        : "Road time unavailable";
+    }
+    elements.bikerCatalogResults.append(
+      createPlaceResultButton({ ...place, catalog: true }, metric),
+    );
+  }
+
+  const placeWord = sorted.length === 1 ? "place" : "places";
+  const startHelp = start
+    ? mode === "duration"
+      ? " Times use the quickest standard road route."
+      : ""
+    : " Add a start point to enable distance and ride-time sorting.";
+  elements.bikerCatalogStatus.textContent = `${sorted.length} ${placeWord}.${startHelp}`;
+}
+
+async function changeBikerSort() {
+  renderBikerCatalog();
+  if (elements.bikerSort.value !== "duration" || stops.length === 0) return;
+  await loadCatalogTravelTimes(stops[0]);
+}
+
+async function loadCatalogTravelTimes(start) {
+  const startKey = `${start.longitude.toFixed(5)},${start.latitude.toFixed(5)}`;
+  if (catalogTravelTimes.startKey === startKey) {
+    renderBikerCatalog();
+    return;
+  }
+
+  catalogTravelTimeRequest?.abort();
+  catalogTravelTimeRequest = new AbortController();
+  const signal = catalogTravelTimeRequest.signal;
+  const sequence = ++catalogTravelTimeSequence;
+  elements.bikerCatalogStatus.textContent = "Calculating road times from your start…";
+  const batches = [];
+  for (let index = 0; index < BIKER_PLACES.length; index += CATALOG_TABLE_BATCH_SIZE) {
+    batches.push(BIKER_PLACES.slice(index, index + CATALOG_TABLE_BATCH_SIZE));
+  }
+
+  const results = await Promise.allSettled(
+    batches.map(async (batch) => {
+      const coordinates = [start, ...batch]
+        .map((place) => `${place.longitude.toFixed(6)},${place.latitude.toFixed(6)}`)
+        .join(";");
+      const url = new URL(`/table/v1/driving/${coordinates}`, ROUTING_URL);
+      url.searchParams.set("sources", "0");
+      url.searchParams.set(
+        "destinations",
+        batch.map((_place, index) => String(index + 1)).join(";"),
+      );
+      url.searchParams.set("annotations", "duration");
+      const response = await fetch(url, { headers: { Accept: "application/json" }, signal });
+      if (!response.ok) throw new Error(`Travel-time lookup failed (${response.status}).`);
+      const data = await response.json();
+      if (data?.code !== "Ok" || !Array.isArray(data?.durations?.[0])) {
+        throw new Error(data?.message || "Travel-time lookup returned no durations.");
+      }
+      return batch.map((place, index) => [bikerPlaceKey(place), data.durations[0][index]]);
+    }),
+  );
+
+  if (signal.aborted || sequence !== catalogTravelTimeSequence) return;
+  const durations = new Map();
+  for (const result of results) {
+    if (result.status !== "fulfilled") continue;
+    for (const [key, duration] of result.value) {
+      if (Number.isFinite(duration)) durations.set(key, duration);
+    }
+  }
+  catalogTravelTimes = { startKey, durations };
+  renderBikerCatalog();
+  if (durations.size < BIKER_PLACES.length) {
+    elements.bikerCatalogStatus.textContent += ` Road time was unavailable for ${BIKER_PLACES.length - durations.size}.`;
+  }
 }
 
 async function selectSearchResult(result) {
@@ -1050,8 +1237,16 @@ function fitBikerPlaces() {
   map.fitBounds(bounds, { padding: 60, maxZoom: 8, duration: 700 });
 }
 
+function changeBikerLayerVisibility(event) {
+  const visible = event.target.checked;
+  elements.bikerLayerVisible.checked = visible;
+  elements.bikerLayerVisibleMenu.checked = visible;
+  updateBikerLayerVisibility();
+}
+
 function updateBikerLayerVisibility() {
   const visibility = elements.bikerLayerVisible.checked ? "visible" : "none";
+  elements.bikerLayerVisibleMenu.checked = elements.bikerLayerVisible.checked;
   for (const layerId of [
     "biker-place-clusters",
     "biker-place-cluster-count",
@@ -1060,6 +1255,7 @@ function updateBikerLayerVisibility() {
     if (map.getLayer(layerId)) map.setLayoutProperty(layerId, "visibility", visibility);
   }
   if (visibility === "none") bikerPlacePopup?.remove();
+  scheduleDraftSave();
 }
 
 function bikerPlaceLabel(place) {
@@ -1068,6 +1264,94 @@ function bikerPlaceLabel(place) {
   return place.passportNumber
     ? `Bike + Brew #${place.passportNumber}`
     : "Biker café";
+}
+
+function scheduleDraftSave() {
+  if (restoringDraft || routeDrag) return;
+  window.clearTimeout(draftSaveTimer);
+  draftSaveTimer = window.setTimeout(savePlannerDraft, 180);
+}
+
+function savePlannerDraft() {
+  if (restoringDraft || routeDrag) return;
+  try {
+    localStorage.setItem(
+      PLANNER_DRAFT_KEY,
+      encodePlannerDraft({
+        ...routeStateSnapshot(),
+        rideName: elements.rideName.value,
+        routeCoordinates,
+        routeDistance,
+        routeDuration,
+        bikerLayerVisible: elements.bikerLayerVisible.checked,
+      }),
+    );
+  } catch {
+    elements.draftSaveStatus.textContent = "Local saving is unavailable in this browser.";
+  }
+}
+
+function restorePlannerDraft() {
+  let draft;
+  try {
+    const savedDraft = localStorage.getItem(PLANNER_DRAFT_KEY);
+    draft = decodePlannerDraft(savedDraft);
+    if (savedDraft && !draft) localStorage.removeItem(PLANNER_DRAFT_KEY);
+  } catch {
+    return;
+  }
+  if (!draft) return;
+
+  restoringDraft = true;
+  elements.rideName.value = draft.rideName;
+  elements.routeStyle.value = draft.routeStyle;
+  elements.avoidMotorways.checked = draft.avoidMotorways;
+  elements.avoidMajorRoads.checked = draft.avoidMajorRoads;
+  elements.avoidTolls.checked = draft.avoidTolls;
+  elements.avoidFerries.checked = draft.avoidFerries;
+  elements.bikerLayerVisible.checked = draft.bikerLayerVisible;
+  elements.bikerLayerVisibleMenu.checked = draft.bikerLayerVisible;
+  for (const preference of routePreferenceElements) {
+    rememberPreferenceValue({ target: preference });
+  }
+  for (const stop of draft.stops) addStop(stop, stops.length, false, false);
+  for (const shape of draft.shapingPoints) {
+    createShapingPoint(shape, shapingPoints.length);
+  }
+  routeCoordinates = draft.routeCoordinates;
+  routedControls = routingControls();
+  routeDistance = draft.routeDistance;
+  routeDuration = draft.routeDuration;
+  setSummary(routeDistance, routeDuration);
+  updateBikerLayerVisibility();
+  updateMapLines();
+  updateDownloadState();
+  updateBikerSortAvailability();
+  restoringDraft = false;
+
+  if (routeCoordinates.length > 1) {
+    setStatus("Your saved route has been restored.");
+    fitRoute();
+    if (stops.length > 1) void routeStops(false, true);
+  } else if (stops.length > 1) {
+    void routeStops();
+  } else if (stops.length === 1) {
+    map.flyTo({ center: [stops[0].longitude, stops[0].latitude], zoom: 11 });
+    setStatus("Your saved start point has been restored.");
+  }
+}
+
+function clearSavedPlannerData() {
+  if (!window.confirm("Clear this saved route, preferences and cached place searches?")) {
+    return;
+  }
+  window.clearTimeout(draftSaveTimer);
+  try {
+    localStorage.removeItem(PLANNER_DRAFT_KEY);
+    localStorage.removeItem(SEARCH_CACHE_KEY);
+  } finally {
+    window.location.reload();
+  }
 }
 
 function getCachedSearch(query) {
@@ -1079,6 +1363,28 @@ function getCachedSearch(query) {
       : null;
   } catch {
     return null;
+  }
+}
+
+function pruneSearchCache() {
+  try {
+    const cache = JSON.parse(localStorage.getItem(SEARCH_CACHE_KEY) || "{}");
+    const current = Object.fromEntries(
+      Object.entries(cache).filter(
+        ([, entry]) => Date.now() - entry.savedAt < SEARCH_CACHE_MAX_AGE,
+      ),
+    );
+    if (Object.keys(current).length === 0) {
+      localStorage.removeItem(SEARCH_CACHE_KEY);
+    } else if (Object.keys(current).length !== Object.keys(cache).length) {
+      localStorage.setItem(SEARCH_CACHE_KEY, JSON.stringify(current));
+    }
+  } catch {
+    try {
+      localStorage.removeItem(SEARCH_CACHE_KEY);
+    } catch {
+      // Place search still works when browser storage is unavailable.
+    }
   }
 }
 
@@ -1226,6 +1532,8 @@ function installRouteDragging() {
       baseRouteCoordinates: routeCoordinates.map((coordinate) => [...coordinate]),
       baseDistance: elements.distance.textContent,
       baseDuration: elements.duration.textContent,
+      baseDistanceValue: routeDistance,
+      baseDurationValue: routeDuration,
       controlsAtStart: routedControls.map((control) => ({ ...control })),
     };
     canvas.setPointerCapture?.(event.pointerId);
@@ -1289,6 +1597,8 @@ function cleanupRouteDrag(restoreRoute = true) {
   cancelRoutePreview();
   if (restoreRoute) {
     routeCoordinates = completedDrag.baseRouteCoordinates;
+    routeDistance = completedDrag.baseDistanceValue;
+    routeDuration = completedDrag.baseDurationValue;
     elements.distance.textContent = completedDrag.baseDistance;
     elements.duration.textContent = completedDrag.baseDuration;
     updateMapLines();

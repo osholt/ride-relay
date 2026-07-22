@@ -206,9 +206,53 @@
   font-size: 0.7rem;
 }
 
-.catalog-button {
-  width: 100%;
+.local-save-note {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 7px 0 0;
+  color: #8e8794;
+  font-size: 0.68rem;
+}
+
+.local-save-note button {
+  flex: 0 0 auto;
+  border: 0;
+  padding: 0;
+  color: var(--teal);
+  background: transparent;
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.local-save-note button:hover,
+.local-save-note button:focus-visible {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+.local-save-note a {
+  color: var(--muted);
+  text-decoration: underline;
+}
+
+.local-save-note a:hover,
+.local-save-note a:focus-visible {
+  color: var(--ink);
+}
+
+.catalog-browser {
   margin-top: 10px;
+}
+
+.catalog-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
   border: 1px solid rgba(84, 225, 196, 0.28);
   border-radius: 10px;
   padding: 9px 11px;
@@ -218,12 +262,92 @@
   font-size: 0.76rem;
   font-weight: 750;
   cursor: pointer;
+  list-style: none;
+}
+
+.catalog-button::-webkit-details-marker {
+  display: none;
+}
+
+.catalog-button::after {
+  content: "Show";
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.catalog-browser[open] .catalog-button::after {
+  content: "Hide";
 }
 
 .catalog-button:hover,
 .catalog-button:focus-visible {
   border-color: var(--teal);
   background: rgba(84, 225, 196, 0.12);
+}
+
+.catalog-browser-body {
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.catalog-control + .catalog-control {
+  margin-top: 8px;
+}
+
+.catalog-control label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 750;
+}
+
+.catalog-control input,
+.catalog-control select {
+  padding: 8px 9px;
+  font-size: 0.78rem;
+}
+
+.catalog-layer-toggle {
+  margin-top: 9px;
+  font-size: 0.74rem;
+}
+
+.catalog-status {
+  min-height: 16px;
+  margin: 8px 1px 5px;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.catalog-results {
+  display: grid;
+  gap: 7px;
+  max-height: min(360px, 46dvh);
+  overflow-y: auto;
+  padding-right: 4px;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--purple-bright) #20212d;
+}
+
+.catalog-result-metric {
+  margin-top: 4px !important;
+  color: var(--peach);
+  font-size: 0.68rem;
+  font-weight: 750;
+}
+
+.catalog-attribution {
+  margin: 8px 1px 0;
+  color: #8e8794;
+  font-size: 0.64rem;
+}
+
+.catalog-attribution a {
+  color: var(--teal);
 }
 
 .search-results {
