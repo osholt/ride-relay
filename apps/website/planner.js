@@ -943,7 +943,7 @@ function renderSearchResults(results) {
   const attribution = document.createElement("div");
   attribution.className = "search-attribution";
   attribution.innerHTML =
-    'Locations use <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>. Browse the full <a href="https://ukbikercafes.co.uk/bike-and-brew-list/" target="_blank" rel="noreferrer">Bike + Brew venue directory</a>.';
+    'General search uses <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>. Biker venues are authorised from the <a href="https://www.google.com/maps/d/viewer?mid=1N4Oey1CiDFqn2vJuqrgnT4oQhTvyxqU" target="_blank" rel="noreferrer">Bike + Brew 2026 map</a> and checked against its <a href="https://ukbikercafes.co.uk/bike-and-brew-list/" target="_blank" rel="noreferrer">current directory</a>.';
   elements.searchResults.append(attribution);
 }
 
@@ -1064,6 +1064,7 @@ function updateBikerLayerVisibility() {
 
 function bikerPlaceLabel(place) {
   if (place.category === "start" || /car park/i.test(place.name)) return "Common start";
+  if (place.source === "Bike + Brew Passport 2026") return "Bike + Brew 2026";
   return place.passportNumber
     ? `Bike + Brew #${place.passportNumber}`
     : "Biker café";

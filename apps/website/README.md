@@ -7,14 +7,22 @@ The site uses no analytics, web fonts, cookies, or server-side user data.
 `planner.html` uses pinned MapLibre GL JS, OpenFreeMap tiles, OSRM road routing,
 Valhalla motorcycle routing for motorway, major-road, toll, and ferry
 preferences, and user-triggered Nominatim searches. It includes a default-on,
-toggleable local starter catalogue of biker cafés and common starts with stored
-map locations, clickable POI dots, and a link to the complete Bike + Brew venue
-directory. Routes can be reshaped with visible, reusable adjustment handles;
-the road route previews while a handle is dragged, and route edits can be
-undone or redone. Catalogue matching stays in the browser. Ride names and
-generated GPX files also stay in the browser; route coordinates and other place
-queries go only to the documented providers. Cloudflare Pages is connected
-directly to this repository and publishes the site automatically from `main`.
+toggleable catalogue containing the authorised Bike + Brew Passport 2026 Google
+My Maps export plus locally maintained common starts. Exported venues are
+retained only while they also appear on the event's current directory map, so
+withdrawn or stale entries are excluded. Routes can be reshaped with visible,
+reusable adjustment handles; the road route previews while a handle is dragged,
+and route edits can be undone or redone. Catalogue matching stays in the
+browser. Ride names and generated GPX files also stay in the browser; route
+coordinates and other place queries go only to the documented providers.
+Cloudflare Pages is connected directly to this repository and publishes the
+site automatically from `main`.
+
+Refresh and revalidate the authorised catalogue with:
+
+```bash
+node scripts/refresh-bike-and-brew.mjs
+```
 
 Run the planner unit tests with:
 

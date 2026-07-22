@@ -1,4 +1,6 @@
-export const BIKER_PLACES = Object.freeze([
+import { BIKE_AND_BREW_PLACES } from "./bike-and-brew-places.mjs";
+
+const CURATED_BIKER_PLACES = Object.freeze([
   {
     name: "King's Oak Academy car park",
     address: "Brook Road, Kingswood, Bristol BS15 4JT",
@@ -127,6 +129,32 @@ export const BIKER_PLACES = Object.freeze([
   },
 ]);
 
+const importedPlaces = BIKE_AND_BREW_PLACES.map((place) => {
+  const curatedMatch = CURATED_BIKER_PLACES.find(
+    (candidate) => coordinateDistance(candidate, place) <= 250,
+  );
+  return {
+    ...place,
+    aliases: [curatedMatch?.name, ...(curatedMatch?.aliases || [])].filter(
+      (alias, index, aliases) =>
+        alias && alias !== place.name && aliases.indexOf(alias) === index,
+    ),
+    category: "cafe",
+  };
+});
+
+const curatedOnly = CURATED_BIKER_PLACES.filter(
+  (place) =>
+    !BIKE_AND_BREW_PLACES.some(
+      (importedPlace) => coordinateDistance(place, importedPlace) <= 250,
+    ),
+).map((place) => ({
+  ...place,
+  category: /car park/i.test(place.name) ? "start" : "cafe",
+}));
+
+export const BIKER_PLACES = Object.freeze([...curatedOnly, ...importedPlaces]);
+
 export function bikerPlacesGeoJson() {
   return {
     type: "FeatureCollection",
@@ -136,6 +164,7 @@ export function bikerPlacesGeoJson() {
         index,
         name: place.name,
         address: place.address,
+        category: place.category,
       },
       geometry: {
         type: "Point",
@@ -184,4 +213,18 @@ export function searchBikerPlaces(query, limit = 8) {
 
 function markCatalogPlace(place) {
   return { ...place, catalog: true };
+}
+
+function coordinateDistance(first, second) {
+  const radians = Math.PI / 180;
+  const latitude1 = first.latitude * radians;
+  const latitude2 = second.latitude * radians;
+  const latitudeDelta = latitude2 - latitude1;
+  const longitudeDelta = (second.longitude - first.longitude) * radians;
+  const haversine =
+    Math.sin(latitudeDelta / 2) ** 2 +
+    Math.cos(latitude1) *
+      Math.cos(latitude2) *
+      Math.sin(longitudeDelta / 2) ** 2;
+  return 6371000 * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
 }
