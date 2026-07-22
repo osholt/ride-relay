@@ -30,6 +30,21 @@ class Settings(BaseSettings):
     join_code_lookup_rate_limit_requests: int = Field(default=30, ge=1, le=1000)
     join_code_lookup_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
     join_code_global_rate_limit_requests: int = Field(default=20, ge=1, le=1000)
+    discovery_suggestion_rate_limit_requests: int = Field(default=10, ge=1, le=1000)
+    discovery_suggestion_rate_limit_window_seconds: int = Field(
+        default=3600,
+        ge=60,
+        le=24 * 3600,
+    )
+    discovery_admin_token: SecretStr | None = None
+    discovery_admin_name: str = Field(default="discovery-admin", min_length=1, max_length=120)
+    discovery_rejected_retention_days: int = Field(default=90, ge=7, le=365)
+    discovery_allowed_origins: list[str] = Field(
+        default_factory=lambda: [
+            "https://tailendcharlie.app",
+            "https://www.tailendcharlie.app",
+        ]
+    )
     maximum_request_bytes: int = Field(default=64 * 1024, ge=1024, le=1024 * 1024)
     maximum_response_bytes: int = Field(default=128 * 1024, ge=4096, le=2 * 1024 * 1024)
     maximum_event_bytes: int = Field(default=8 * 1024, ge=1024, le=64 * 1024)
@@ -62,6 +77,17 @@ class Settings(BaseSettings):
     update_url: str = "https://tailendcharlie.app"
     ios_update_url: str = "https://tailendcharlie.app"
     android_update_url: str = "https://tailendcharlie.app"
+    plan_retention_days: int = Field(default=30, ge=1, le=365)
+    maximum_plan_bytes: int = Field(
+        default=11 * 1024 * 1024,
+        ge=1024 * 1024,
+        le=32 * 1024 * 1024,
+    )
+    maximum_plan_points: int = Field(default=200_000, ge=100, le=1_000_000)
+    plan_create_rate_limit_requests: int = Field(default=10, ge=1, le=1000)
+    plan_create_rate_limit_window_seconds: int = Field(default=3600, ge=1, le=86400)
+    plan_lookup_rate_limit_requests: int = Field(default=30, ge=1, le=1000)
+    plan_lookup_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
 
     @field_validator("data_encryption_key", "cursor_signing_key")
     @classmethod
@@ -73,6 +99,19 @@ class Settings(BaseSettings):
             raise ValueError("must be a base64url-encoded 32-byte key") from error
         if len(decoded) != 32:
             raise ValueError("must decode to exactly 32 bytes")
+        return value
+
+    @field_validator("discovery_admin_token", mode="before")
+    @classmethod
+    def validate_discovery_admin_token(
+        cls,
+        value: object,
+    ) -> object:
+        if value is None or value == "":
+            return None
+        raw_value = value.get_secret_value() if isinstance(value, SecretStr) else str(value)
+        if len(raw_value) < 32:
+            raise ValueError("must contain at least 32 characters when configured")
         return value
 
     def decoded_key(self, field: str) -> bytes:
