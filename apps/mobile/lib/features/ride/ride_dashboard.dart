@@ -67,11 +67,12 @@ class RideDashboard extends StatelessWidget {
             onPressed: () => _shareRideSummary(context),
             icon: const Icon(Icons.summarize_outlined),
           ),
-          IconButton(
-            tooltip: 'End ride',
-            onPressed: () => _confirmEndRide(context),
-            icon: const Icon(Icons.logout),
-          ),
+          if (controller.isLocalRideLeader)
+            IconButton(
+              tooltip: 'End ride',
+              onPressed: () => _confirmEndRide(context),
+              icon: const Icon(Icons.logout),
+            ),
           const SizedBox(width: 8),
         ],
       ),
@@ -401,6 +402,7 @@ class _MarkerCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final active = controller.markerActive;
+    final rideStarted = controller.rideStarted;
     final primary = Theme.of(context).colorScheme.primary;
     return Container(
       padding: const EdgeInsets.all(18),
@@ -444,7 +446,9 @@ class _MarkerCard extends StatelessWidget {
                                   'verified riders'
                             : '${controller.verifiedMarkerPassCount} verified · '
                                   '${controller.markerPassCount} total riders'
-                      : 'Assistance only suggests; you always confirm marker mode',
+                      : rideStarted
+                      ? 'Assistance only suggests; you always confirm marker mode'
+                      : 'Marker assistance begins after the leader starts the ride',
                   style: const TextStyle(
                     color: Color(0xFF9CA7B5),
                     fontSize: 12,
@@ -455,7 +459,7 @@ class _MarkerCard extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           FilledButton.tonal(
-            onPressed: controller.busy
+            onPressed: controller.busy || !rideStarted
                 ? null
                 : active
                 ? controller.endMarker
@@ -655,6 +659,7 @@ class _EventRow extends StatelessWidget {
       RideEventType.rideCreated => 'Ride created',
       RideEventType.riderJoined => 'Joined ride',
       RideEventType.roleChanged => 'Role changed',
+      RideEventType.rideStarted => 'Ride started',
       RideEventType.markerStarted => 'Marker started',
       RideEventType.markerPass => 'Rider passed marker',
       RideEventType.markerEnded => 'Marker finished',

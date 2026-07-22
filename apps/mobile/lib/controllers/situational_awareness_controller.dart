@@ -23,6 +23,8 @@ class SituationalAwarenessController extends ChangeNotifier {
     List<ExternalHazardProvider> externalProviders = const [],
     SituationClock? clock,
     SituationIdFactory? idFactory,
+    this.rideStarted = true,
+    this.rideStartedAt,
     this.expiryPolicy = const HazardExpiryPolicy(),
     this.deduplicator = const HazardDeduplicator(),
     this.routeConfig = const RouteDeviationConfig(),
@@ -49,6 +51,8 @@ class SituationalAwarenessController extends ChangeNotifier {
   final List<ExternalHazardProvider> _externalProviders;
   final SituationClock _clock;
   final SituationIdFactory _idFactory;
+  final bool rideStarted;
+  final DateTime? rideStartedAt;
   final HazardExpiryPolicy expiryPolicy;
   final HazardDeduplicator deduplicator;
   final RouteDeviationConfig routeConfig;
@@ -145,6 +149,10 @@ class SituationalAwarenessController extends ChangeNotifier {
   }
 
   Future<void> recordLocalLocation(LocationSample sample) async {
+    if (!rideStarted ||
+        (rideStartedAt != null && sample.recordedAt.isBefore(rideStartedAt!))) {
+      return;
+    }
     final location = RiderLocation(
       riderId: _session.localRiderId,
       displayName: _session.displayName,
@@ -350,11 +358,18 @@ class SituationalAwarenessController extends ChangeNotifier {
     if (event.rideId != _session.rideId) {
       return;
     }
+    if (_isRideActivityEvent(event.type) && !_isWithinRideActivity(event)) {
+      return;
+    }
     switch (event.type) {
       case RideEventType.riderLocationUpdated:
         final location = RiderLocation.fromJson(
           _mapPayload(event.payload['location']),
         );
+        if (rideStartedAt != null &&
+            location.sample.recordedAt.isBefore(rideStartedAt!)) {
+          break;
+        }
         final previous = _locations[location.riderId];
         if (previous == null ||
             !location.sample.recordedAt.isBefore(previous.sample.recordedAt)) {
@@ -397,6 +412,7 @@ class SituationalAwarenessController extends ChangeNotifier {
       case RideEventType.rideCreated:
       case RideEventType.riderJoined:
       case RideEventType.roleChanged:
+      case RideEventType.rideStarted:
       case RideEventType.markerStarted:
       case RideEventType.markerPass:
       case RideEventType.markerEnded:
@@ -412,6 +428,19 @@ class SituationalAwarenessController extends ChangeNotifier {
       _removeExpiredHazards();
     }
   }
+
+  bool _isWithinRideActivity(RideEvent event) {
+    if (!rideStarted) return false;
+    final startedAt = rideStartedAt;
+    return startedAt == null || !event.createdAt.isBefore(startedAt);
+  }
+
+  static bool _isRideActivityEvent(RideEventType type) => switch (type) {
+    RideEventType.riderLocationUpdated ||
+    RideEventType.routeDeviationChanged ||
+    RideEventType.routeAlertAcknowledged => true,
+    _ => false,
+  };
 
   void _evaluateLocation(RiderLocation location) {
     if (location.role == RideRole.lead) {

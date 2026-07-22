@@ -19,6 +19,7 @@ import '../features/map/motorcycle_icon.dart';
 import '../services/nearby_bridge.dart';
 import '../services/marker_statistics.dart';
 import '../services/ride_event_authenticator.dart';
+import '../services/ride_lifecycle.dart';
 import '../services/situation_event_factory.dart';
 import '../internet/internet_relay_client.dart';
 
@@ -58,6 +59,7 @@ class RideController extends ChangeNotifier {
   String? _errorMessage;
   RideRole? _roleBeforeMarker;
   Timer? _endedRideCleanupTimer;
+  RideLifecycle _lifecycle = const RideLifecycle();
 
   /// ICE shares the local rider has acted on (called/texted the contact).
   /// Kept in memory only, for this session: it gates which received shares
@@ -72,6 +74,75 @@ class RideController extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
   bool get hasActiveRide => _session != null;
 
+  bool get rideStarted => _lifecycle.started;
+  DateTime? get rideStartedAt => _lifecycle.startedAt;
+  bool get isLocalRideLeader =>
+      _session?.role == RideRole.lead ||
+      (markerActive && _roleBeforeMarker == RideRole.lead);
+  RidePhase get ridePhase => rideEnded
+      ? RidePhase.ended
+      : rideStarted
+      ? RidePhase.started
+      : RidePhase.open;
+
+  List<RideParticipant> get participants {
+    final activeSession = _session;
+    if (activeSession == null) return const [];
+    final participants = <String, RideParticipant>{
+      activeSession.localRiderId: RideParticipant(
+        riderId: activeSession.localRiderId,
+        displayName: activeSession.displayName,
+        role: activeSession.role,
+        joinedAt: activeSession.joinedAt,
+        isLocal: true,
+      ),
+    };
+    final ordered = _events.toList(growable: false)
+      ..sort(RideLifecycleReducer.compareEvents);
+    for (final event in ordered) {
+      if (event.rideId != activeSession.rideId ||
+          !RideEventAuthenticator.verify(event, activeSession.inviteSecret)) {
+        continue;
+      }
+      if (event.type == RideEventType.rideCreated ||
+          event.type == RideEventType.riderJoined) {
+        final displayName = event.payload['displayName'];
+        final role = _roleFromPayload(event.payload['role']);
+        if (displayName is! String ||
+            displayName.trim().isEmpty ||
+            role == null) {
+          continue;
+        }
+        final existing = participants[event.deviceId];
+        participants[event.deviceId] = RideParticipant(
+          riderId: event.deviceId,
+          displayName: displayName,
+          role: role,
+          joinedAt: event.createdAt,
+          isLocal: event.deviceId == activeSession.localRiderId,
+        );
+        if (existing?.isLocal == true) {
+          participants[event.deviceId] = participants[event.deviceId]!.copyWith(
+            isLocal: true,
+          );
+        }
+      } else if (event.type == RideEventType.roleChanged) {
+        final existing = participants[event.deviceId];
+        final role = _roleFromPayload(event.payload['role']);
+        if (existing != null && role != null) {
+          participants[event.deviceId] = existing.copyWith(role: role);
+        }
+      }
+    }
+    final result = participants.values.toList(growable: false)
+      ..sort((left, right) {
+        final byJoin = left.joinedAt.compareTo(right.joinedAt);
+        if (byJoin != 0) return byJoin;
+        return left.riderId.compareTo(right.riderId);
+      });
+    return List.unmodifiable(result);
+  }
+
   bool get rideEnded {
     return _events.any((event) => event.type == RideEventType.rideEnded);
   }
@@ -79,6 +150,7 @@ class RideController extends ChangeNotifier {
   /// A lead-owned group coordination pause. It deliberately does not suppress
   /// GPS evidence: riders can still be found while the group is stopped.
   bool get ridePaused {
+    if (!rideStarted) return false;
     RideEvent? latest;
     for (final event in _events) {
       if (event.type != RideEventType.ridePaused &&
@@ -110,7 +182,7 @@ class RideController extends ChangeNotifier {
   }
 
   RideMarkingSummary get markingSummary => MarkerStatistics.fromEvents(
-    _events,
+    _rideActivityEvents,
     asOf: _clock(),
     markerDeviceId: _session?.localRiderId,
     authenticatedLocationEvidence: _authenticatedLocationEvidence,
@@ -118,17 +190,24 @@ class RideController extends ChangeNotifier {
 
   Map<String, String> get _authenticatedLocationEvidence {
     final activeSession = _session;
-    if (activeSession == null) return const {};
+    final startedAt = rideStartedAt;
+    if (activeSession == null || startedAt == null) return const {};
     final result = <String, String>{};
     for (final event in _events) {
       if (event.type != RideEventType.riderLocationUpdated ||
+          event.createdAt.isBefore(startedAt) ||
           !SituationEventFactory.verify(event, activeSession.inviteSecret)) {
         continue;
       }
       final rawLocation = event.payload['location'];
       if (rawLocation is! Map) continue;
       final riderId = rawLocation['riderId'];
+      final sample = rawLocation['sample'];
+      final recordedAt = sample is Map
+          ? DateTime.tryParse(sample['recordedAt'] as String? ?? '')
+          : null;
       if (riderId is String && riderId == event.deviceId) {
+        if (recordedAt != null && recordedAt.isBefore(startedAt)) continue;
         result[event.id] = riderId;
       }
     }
@@ -248,6 +327,7 @@ class RideController extends ChangeNotifier {
     final activeSession = _session;
     if (activeSession != null) {
       _events = await _eventStore.eventsForRide(activeSession.rideId);
+      _rebuildLifecycle();
       await _expireEndedRideIfDue();
       await _purgeUnusedIceSharesIfEnded();
       _roleBeforeMarker = _activeMarkerPreviousRole();
@@ -261,6 +341,7 @@ class RideController extends ChangeNotifier {
       return;
     }
     _events = await _eventStore.eventsForRide(activeSession.rideId);
+    _rebuildLifecycle();
     await _expireEndedRideIfDue();
     await _purgeUnusedIceSharesIfEnded();
     notifyListeners();
@@ -482,10 +563,31 @@ class RideController extends ChangeNotifier {
 
   Future<void> resumeRide() => _setRidePaused(false);
 
+  Future<void> startRide() async {
+    if (rideStarted || rideEnded) return;
+    await _run(() async {
+      final session = _requireSession();
+      if (session.role != RideRole.lead) {
+        throw const FormatException('Only the ride leader can start the ride.');
+      }
+      await _record(
+        type: RideEventType.rideStarted,
+        priority: EventPriority.important,
+        payload: {
+          'leaderRiderId': session.localRiderId,
+          'leaderDisplayName': session.displayName,
+        },
+      );
+    });
+  }
+
   Future<void> _setRidePaused(bool paused) async {
     if (ridePaused == paused) return;
     await _run(() async {
       final session = _requireSession();
+      if (!rideStarted) {
+        throw const FormatException('Start the ride before pausing it.');
+      }
       if (session.role != RideRole.lead) {
         throw const FormatException(
           'Only the ride leader can pause the group.',
@@ -507,6 +609,9 @@ class RideController extends ChangeNotifier {
       return;
     }
     await _run(() async {
+      if (!rideStarted) {
+        throw const FormatException('Start the ride before using marker mode.');
+      }
       final activeSession = _requireSession();
       _roleBeforeMarker = activeSession.role;
       final markerSessionId = _idFactory();
@@ -582,6 +687,10 @@ class RideController extends ChangeNotifier {
   Future<void> endRide() async {
     if (rideEnded) return;
     await _run(() async {
+      _requireSession();
+      if (!isLocalRideLeader) {
+        throw const FormatException('Only the ride leader can end the ride.');
+      }
       if (markerActive) {
         final current = currentMarkerSession;
         await _record(
@@ -662,6 +771,7 @@ class RideController extends ChangeNotifier {
     );
     await _eventStore.append(event);
     _events = [..._events, event];
+    _rebuildLifecycle();
   }
 
   Future<void> _createRide({
@@ -704,6 +814,17 @@ class RideController extends ChangeNotifier {
         if (session.rideName != null) 'rideName': session.rideName,
       },
     );
+    if (isSimulation) {
+      await _record(
+        type: RideEventType.rideStarted,
+        priority: EventPriority.important,
+        payload: {
+          'leaderRiderId': session.localRiderId,
+          'leaderDisplayName': session.displayName,
+          'simulation': true,
+        },
+      );
+    }
   }
 
   int _validatedSimulationRiderCount(int value) {
@@ -828,6 +949,7 @@ class RideController extends ChangeNotifier {
     await _sessionStore.clear();
     _session = null;
     _events = const [];
+    _lifecycle = const RideLifecycle();
     _roleBeforeMarker = null;
     _usedIceShareEventIds.clear();
   }
@@ -851,6 +973,32 @@ class RideController extends ChangeNotifier {
     return null;
   }
 
+  Iterable<RideEvent> get _rideActivityEvents {
+    final startedAt = rideStartedAt;
+    if (startedAt == null) return const [];
+    return _events.where((event) => !event.createdAt.isBefore(startedAt));
+  }
+
+  void _rebuildLifecycle() {
+    final activeSession = _session;
+    _lifecycle = activeSession == null
+        ? const RideLifecycle()
+        : RideLifecycleReducer.fromEvents(
+            rideId: activeSession.rideId,
+            inviteSecret: activeSession.inviteSecret,
+            events: _events,
+          );
+  }
+
+  static RideRole? _roleFromPayload(Object? value) {
+    if (value is! String) return null;
+    try {
+      return RideRole.values.byName(value);
+    } on ArgumentError {
+      return null;
+    }
+  }
+
   @override
   void dispose() {
     _endedRideCleanupTimer?.cancel();
@@ -858,4 +1006,28 @@ class RideController extends ChangeNotifier {
     _eventStore.close();
     super.dispose();
   }
+}
+
+class RideParticipant {
+  const RideParticipant({
+    required this.riderId,
+    required this.displayName,
+    required this.role,
+    required this.joinedAt,
+    required this.isLocal,
+  });
+
+  final String riderId;
+  final String displayName;
+  final RideRole role;
+  final DateTime joinedAt;
+  final bool isLocal;
+
+  RideParticipant copyWith({RideRole? role, bool? isLocal}) => RideParticipant(
+    riderId: riderId,
+    displayName: displayName,
+    role: role ?? this.role,
+    joinedAt: joinedAt,
+    isLocal: isLocal ?? this.isLocal,
+  );
 }

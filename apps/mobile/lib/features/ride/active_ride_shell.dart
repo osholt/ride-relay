@@ -249,6 +249,102 @@ class _RideNavigationMenu extends StatelessWidget {
   }
 }
 
+class _PreStartRidePanel extends StatelessWidget {
+  const _PreStartRidePanel({
+    required this.rideCode,
+    required this.participants,
+    required this.isLeader,
+    required this.busy,
+    required this.onStartRide,
+  });
+
+  final String rideCode;
+  final List<RideParticipant> participants;
+  final bool isLeader;
+  final bool busy;
+  final VoidCallback onStartRide;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: const Color(0xFF17212B),
+    child: SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.groups_outlined, color: Color(0xFFFFC857)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Waiting to start',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      Text(
+                        'Ride $rideCode · No locations or traces are shared yet',
+                        style: const TextStyle(
+                          color: Color(0xFFA9B4C2),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (isLeader)
+                  FilledButton.icon(
+                    key: const Key('start-ride-button'),
+                    onPressed: busy ? null : onStartRide,
+                    icon: const Icon(Icons.play_arrow),
+                    label: const Text('Start ride'),
+                  )
+                else
+                  const Text(
+                    'LEADER STARTS',
+                    style: TextStyle(
+                      color: Color(0xFFFFC857),
+                      fontWeight: FontWeight.w800,
+                      fontSize: 11,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 9),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                key: const Key('pre-start-roster'),
+                children: [
+                  for (final participant in participants) ...[
+                    Chip(
+                      avatar: Icon(
+                        participant.role == RideRole.lead
+                            ? Icons.navigation
+                            : Icons.motorcycle,
+                        size: 16,
+                      ),
+                      label: Text(
+                        '${participant.displayName}${participant.isLocal ? ' (you)' : ''}',
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 class _ActiveRideShellState extends State<ActiveRideShell> {
   final _mapPosition = ValueNotifier<route_domain.GeoPoint?>(null);
   final _mapNavigationPosition = ValueNotifier<MapNavigationPosition?>(null);
@@ -400,6 +496,10 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       final locationController = ForegroundLocationController(
         DeviceLocationSource(),
         (sample) async {
+          final startedAt = widget.rideController.rideStartedAt;
+          if (startedAt == null || sample.recordedAt.isBefore(startedAt)) {
+            return;
+          }
           final awareness = _awarenessController;
           if (awareness != null) {
             await awareness.recordLocalLocation(sample);
@@ -469,7 +569,12 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         ? 'none'
         : '${route.id}:${route.importedAt.toUtc().toIso8601String()}:'
               '${route.pathPointCount}';
-    if (_awarenessController != null && fingerprint == _routeFingerprint) {
+    final lifecycleFingerprint =
+        widget.rideController.rideStartedAt?.toUtc().toIso8601String() ??
+        'open';
+    final effectiveFingerprint = '$fingerprint:$lifecycleFingerprint';
+    if (_awarenessController != null &&
+        effectiveFingerprint == _routeFingerprint) {
       return;
     }
     final generation = ++_routeGeneration;
@@ -510,6 +615,8 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
           configurationHint: 'No external traffic provider is configured.',
         ),
       ],
+      rideStarted: widget.rideController.rideStarted,
+      rideStartedAt: widget.rideController.rideStartedAt,
     );
     await controller.initialize();
     if (!mounted || generation != _routeGeneration) {
@@ -547,7 +654,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     previousMarker?.dispose();
     _awarenessController = controller;
     _markerAssistanceController = markerController;
-    _routeFingerprint = fingerprint;
+    _routeFingerprint = effectiveFingerprint;
     _riderTrails.clear();
     _offRouteTraces.value = const [];
     controller.addListener(_onAwarenessChanged);
@@ -940,6 +1047,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     SituationalAwarenessController awareness,
   ) async {
     if (_autoEndingRide ||
+        !widget.rideController.rideStarted ||
         widget.rideController.rideEnded ||
         widget.rideController.ridePaused ||
         widget.rideController.markerActive) {
@@ -1124,6 +1232,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     if (session != null) {
       _awarenessController?.updateLocalSession(session);
       _updateMapOverlays();
+      unawaited(_replaceAwarenessController(_activeRoute));
     }
     _applyRidePauseState();
     if (widget.rideController.rideEnded && !_rideEndHandled) {
@@ -1203,7 +1312,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         onRemoveRide: _removeEndedRide,
       );
     }
-    final body = _isSimulation
+    final selectedBody = _isSimulation
         ? switch (_selectedIndex) {
             0 => _buildMap(),
             1 => _buildSimulation(),
@@ -1215,6 +1324,27 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
             1 => _buildDetails(),
             _ => _buildAwareness(),
           };
+    final session = widget.rideController.session!;
+    final body = widget.rideController.rideStarted
+        ? selectedBody
+        : Column(
+            children: [
+              _PreStartRidePanel(
+                rideCode: session.rideCode,
+                participants: widget.rideController.participants,
+                isLeader: session.role == RideRole.lead,
+                busy: widget.rideController.busy,
+                onStartRide: _confirmStartRide,
+              ),
+              Expanded(
+                child: MediaQuery.removePadding(
+                  context: context,
+                  removeTop: true,
+                  child: selectedBody,
+                ),
+              ),
+            ],
+          );
 
     return ValueListenableBuilder<MapNavigationPosition?>(
       valueListenable: _mapNavigationPosition,
@@ -1457,6 +1587,36 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     }
   }
 
+  Future<void> _confirmStartRide() async {
+    if (widget.rideController.session?.role != RideRole.lead ||
+        widget.rideController.rideStarted) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Start this ride?'),
+        content: const Text(
+          'Live location sharing, route progress, off-course alerts and ride '
+          'recording will begin for the group.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            key: const Key('confirm-start-ride-button'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.play_arrow),
+            label: const Text('Start ride'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed ?? false) await widget.rideController.startRide();
+  }
+
   Future<void> _confirmLeaveRideFromMap() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1531,9 +1691,10 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         ridePaused: widget.rideController.ridePaused,
         canToggleRidePause:
             !_isSimulation &&
+            widget.rideController.rideStarted &&
             widget.rideController.session?.role == RideRole.lead,
         onToggleRidePause: _toggleRidePause,
-        canEndRide: widget.rideController.session?.role == RideRole.lead,
+        canEndRide: widget.rideController.isLocalRideLeader,
         onEndRide: _confirmEndRide,
       ),
     );
@@ -1713,6 +1874,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   );
 
   Future<route_domain.GeoPoint?> _acquireCurrentPosition() async {
+    if (!widget.rideController.rideStarted) return null;
     final existing = _mapPosition.value;
     if (existing != null) return existing;
     final locationController = _locationController;
@@ -1749,6 +1911,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     }
     return SituationalAwarenessScreen(
       controller: awareness,
+      rideStarted: widget.rideController.rideStarted,
       locationController: widget.enableNativeServices && !_isSimulation
           ? _locationController
           : null,

@@ -153,6 +153,8 @@ server automatically when any rider regains connectivity.
 #### Ride lifecycle and roles
 
 - Create/join/leave/end ride using a QR code or six-character code.
+- Join into an explicit pre-start state; only the current lead can confirm and
+  publish the durable ride start.
 - Roles: Lead, Rider, Tail End Charlie, Marker.
 - Ephemeral device key pair and ride-scoped identity; no email/password.
 - A reconnecting device resumes its previous ride state.
@@ -160,6 +162,10 @@ server automatically when any rider regains connectivity.
 Acceptance:
 
 - Ten test phones can join the same ride in under two minutes.
+- Pre-start riders appear in the roster without publishing coordinates or
+  accumulating route traces, progress, deviation alerts, or ride duration.
+- Early joiners, late joiners, offline devices and restarted devices converge on
+  one authoritative start time without duplicating the transition.
 - Reinstalling or joining from an uninvited device does not reveal the ride.
 - Ending a ride prevents further live-location exchange and starts the retention
   deletion timer.

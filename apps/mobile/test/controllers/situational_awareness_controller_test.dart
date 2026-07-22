@@ -56,6 +56,83 @@ void main() {
   });
 
   test(
+    'pre-start location fixes are neither persisted nor displayed',
+    () async {
+      final waiting = SituationalAwarenessController(
+        store,
+        _session,
+        route: const [
+          GeoPoint(latitude: 51, longitude: -1),
+          GeoPoint(latitude: 51, longitude: -0.99),
+        ],
+        rideStarted: false,
+        rideStartedAt: null,
+        clock: () => now,
+        idFactory: () => 'waiting-${nextId++}',
+      );
+      await waiting.initialize();
+
+      await waiting.recordLocalLocation(_sample(latitude: 51, at: now));
+      await waiting.ingestRemoteEvent(
+        _remoteLocationEvent(
+          riderId: 'early-rider',
+          role: RideRole.rider,
+          latitude: 51,
+          now: now,
+        ),
+      );
+
+      expect(waiting.riderLocations, isEmpty);
+      final stored = await store.eventsForRide(_session.rideId);
+      expect(stored, hasLength(1));
+      expect(stored.single.id, 'early-rider-event');
+      waiting.dispose();
+    },
+  );
+
+  test(
+    'activity replay rejects fixes recorded before the start anchor',
+    () async {
+      final startedAt = now.add(const Duration(minutes: 1));
+      await store.append(
+        _remoteLocationEvent(
+          riderId: 'early-rider',
+          role: RideRole.rider,
+          latitude: 51,
+          now: now,
+        ),
+      );
+      await store.append(
+        _remoteLocationEvent(
+          riderId: 'late-rider',
+          role: RideRole.rider,
+          latitude: 51,
+          now: startedAt,
+        ),
+      );
+      final started = SituationalAwarenessController(
+        store,
+        _session,
+        route: const [
+          GeoPoint(latitude: 51, longitude: -1),
+          GeoPoint(latitude: 51, longitude: -0.99),
+        ],
+        rideStarted: true,
+        rideStartedAt: startedAt,
+        clock: () => startedAt,
+        idFactory: () => 'started-${nextId++}',
+      );
+
+      await started.initialize();
+
+      expect(started.riderLocations.map((location) => location.riderId), [
+        'late-rider',
+      ]);
+      started.dispose();
+    },
+  );
+
+  test(
     'hazard report deduplicates, persists, expires, and can clear',
     () async {
       final first = await controller.reportHazard(

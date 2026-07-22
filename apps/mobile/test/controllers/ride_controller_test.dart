@@ -32,7 +32,7 @@ void main() {
       sessionStore,
       const _FakeNearbyBridge(),
       clock: () => DateTime.utc(2026, 7, 16, 12),
-      idFactory: () => 'id-${id++}',
+      idFactory: () => 'id-${(id++).toString().padLeft(3, '0')}',
       random: Random(42),
       rideCodeDirectory: rideCodes,
     );
@@ -50,10 +50,121 @@ void main() {
     expect(controller.events, hasLength(1));
     expect(controller.events.single.type, RideEventType.rideCreated);
     expect(controller.events.single.signature, hasLength(64));
+    expect(controller.rideStarted, isFalse);
 
     final restored = await sessionStore.load();
     expect(restored?.rideId, controller.session?.rideId);
   });
+
+  test('leader start is signed, durable, idempotent and restored', () async {
+    await controller.createRide('Oliver');
+
+    await controller.startRide();
+    await controller.startRide();
+
+    final startEvents = controller.events
+        .where((event) => event.type == RideEventType.rideStarted)
+        .toList();
+    expect(startEvents, hasLength(1));
+    expect(
+      startEvents.single.payload['leaderRiderId'],
+      controller.session!.localRiderId,
+    );
+    expect(startEvents.single.signature, hasLength(64));
+    expect(controller.rideStartedAt, DateTime.utc(2026, 7, 16, 12));
+
+    final restored = RideController(
+      eventStore,
+      sessionStore,
+      const _FakeNearbyBridge(),
+      clock: () => DateTime.utc(2026, 7, 16, 13),
+      idFactory: () => 'restored-start-id',
+      random: Random(9),
+      rideCodeDirectory: rideCodes,
+    );
+    await restored.initialize();
+    expect(restored.rideStarted, isTrue);
+    expect(restored.rideStartedAt, controller.rideStartedAt);
+    restored.dispose();
+  });
+
+  test('a non-leader cannot start the ride', () async {
+    await controller.createRide('Oliver');
+    await controller.setRole(RideRole.rider);
+
+    await controller.startRide();
+
+    expect(controller.rideStarted, isFalse);
+    expect(controller.errorMessage, contains('Only the ride leader'));
+    expect(
+      controller.events.where(
+        (event) => event.type == RideEventType.rideStarted,
+      ),
+      isEmpty,
+    );
+  });
+
+  test(
+    'offline leader handover and duplicate starts converge deterministically',
+    () async {
+      await controller.createRide('Oliver');
+      final session = controller.session!;
+      final followerSession = RideSession(
+        rideId: session.rideId,
+        rideCode: session.rideCode,
+        inviteSecret: session.inviteSecret,
+        joinToken: session.joinToken,
+        localRiderId: 'follower',
+        displayName: 'Alex',
+        role: RideRole.rider,
+        joinedAt: DateTime.utc(2026, 7, 16, 12, 1),
+      );
+      await eventStore.append(
+        _signedEvent(
+          session: followerSession,
+          id: 'join-follower',
+          type: RideEventType.riderJoined,
+          createdAt: DateTime.utc(2026, 7, 16, 12, 1),
+          payload: const {'displayName': 'Alex', 'role': 'rider'},
+        ),
+      );
+      await eventStore.append(
+        _signedEvent(
+          session: followerSession,
+          id: 'promote-follower',
+          type: RideEventType.roleChanged,
+          createdAt: DateTime.utc(2026, 7, 16, 12, 2),
+          payload: const {'role': 'lead'},
+        ),
+      );
+      for (final id in ['start-z', 'start-a']) {
+        await eventStore.append(
+          _signedEvent(
+            session: followerSession,
+            id: id,
+            type: RideEventType.rideStarted,
+            createdAt: DateTime.utc(2026, 7, 16, 12, 3),
+            payload: const {
+              'leaderRiderId': 'follower',
+              'leaderDisplayName': 'Alex',
+            },
+          ),
+        );
+      }
+
+      await controller.reloadEvents();
+
+      expect(controller.rideStarted, isTrue);
+      expect(controller.rideStartedAt, DateTime.utc(2026, 7, 16, 12, 3));
+      expect(controller.participants, hasLength(2));
+      expect(
+        controller.participants
+            .singleWhere((participant) => participant.riderId == 'follower')
+            .role,
+        RideRole.lead,
+      );
+    },
+  );
 
   test('simulation ride is explicitly tagged and restartable', () async {
     await controller.createSimulationRide(riderCount: 30);
@@ -62,7 +173,9 @@ void main() {
     expect(controller.session?.isSimulation, isTrue);
     expect(controller.session?.simulationRiderCount, 30);
     expect(controller.session?.displayName, 'Demo Lead');
-    expect(controller.events.single.payload['simulation'], isTrue);
+    expect(controller.events.first.payload['simulation'], isTrue);
+    expect(controller.events.last.type, RideEventType.rideStarted);
+    expect(controller.rideStarted, isTrue);
 
     await controller.restartSimulationRide(riderCount: 12);
 
@@ -199,6 +312,7 @@ void main() {
     'leader can pause and resume the shared ride without stopping GPS',
     () async {
       await controller.createRide('Oliver');
+      await controller.startRide();
 
       await controller.pauseRide();
       expect(controller.ridePaused, isTrue);
@@ -212,6 +326,7 @@ void main() {
 
   test('marker counts each rider once', () async {
     await controller.createRide('Oliver');
+    await controller.startRide();
     await controller.startMarker();
     await controller.recordMarkerPass('rider-a');
     await controller.recordMarkerPass('rider-a');
@@ -228,6 +343,7 @@ void main() {
 
   test('marker uniqueness is scoped to each marker session', () async {
     await controller.createRide('Oliver');
+    await controller.startRide();
     await controller.startMarker();
     await controller.recordMarkerPass('rider-a');
     await controller.endMarker();
@@ -246,6 +362,7 @@ void main() {
 
   test('restoring an active marker preserves the previous lead role', () async {
     await controller.createRide('Oliver');
+    await controller.startRide();
     await controller.startMarker();
 
     final restored = RideController(
@@ -295,6 +412,7 @@ void main() {
     'authenticated TEC evidence is reflected in marker statistics',
     () async {
       await controller.createRide('Oliver');
+      await controller.startRide();
       await controller.startMarker();
       await _appendLocationEvidence(
         eventStore: eventStore,
@@ -317,6 +435,7 @@ void main() {
 
   test('ride-ended event persists the marking summary', () async {
     await controller.createRide('Oliver');
+    await controller.startRide();
     final rideId = controller.session!.rideId;
     await controller.startMarker();
     await _appendLocationEvidence(
@@ -689,6 +808,35 @@ Future<void> _appendLocationEvidence({
       );
   await eventStore.append(event);
   await controller.reloadEvents();
+}
+
+RideEvent _signedEvent({
+  required RideSession session,
+  required String id,
+  required RideEventType type,
+  required DateTime createdAt,
+  required Map<String, Object?> payload,
+}) {
+  final unsigned = RideEvent(
+    id: id,
+    rideId: session.rideId,
+    deviceId: session.localRiderId,
+    type: type,
+    priority: EventPriority.important,
+    createdAt: createdAt,
+    payload: payload,
+    signature: '',
+  );
+  return RideEvent(
+    id: unsigned.id,
+    rideId: unsigned.rideId,
+    deviceId: unsigned.deviceId,
+    type: unsigned.type,
+    priority: unsigned.priority,
+    createdAt: unsigned.createdAt,
+    payload: unsigned.payload,
+    signature: SituationEventFactory.sign(unsigned, session.inviteSecret),
+  );
 }
 
 class _FakeNearbyBridge extends NearbyBridge {

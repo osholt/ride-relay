@@ -61,6 +61,24 @@ def test_ice_info_shared_event_is_accepted_and_relayed(client, synchronize, make
     assert downloaded.json()["events"] == [shared]
 
 
+def test_ride_start_event_is_accepted_and_relayed(client, synchronize, make_event) -> None:
+    ride_id = "ride-start"
+    started = make_event(
+        ride_id,
+        "event-started",
+        event_type="rideStarted",
+        payload={"leaderRiderId": "device-a", "leaderDisplayName": "Lead"},
+    )
+
+    uploaded = synchronize(client, ride_id=ride_id, secret=SECRET, events=[started])
+    assert uploaded.status_code == 200
+    assert uploaded.json()["acceptedEventIds"] == ["event-started"]
+
+    downloaded = synchronize(client, ride_id=ride_id, secret=SECRET, device_id="device-b")
+    assert downloaded.status_code == 200
+    assert downloaded.json()["events"] == [started]
+
+
 def test_wrong_credential_cannot_read_claimed_ride(client, synchronize) -> None:
     ride_id = "ride-private"
     assert synchronize(client, ride_id=ride_id, secret=SECRET).status_code == 200

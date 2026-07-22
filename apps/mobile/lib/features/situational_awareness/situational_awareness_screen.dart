@@ -13,11 +13,13 @@ class SituationalAwarenessScreen extends StatelessWidget {
     required this.controller,
     this.showAppBar = true,
     this.locationController,
+    this.rideStarted = true,
   });
 
   final SituationalAwarenessController controller;
   final bool showAppBar;
   final ForegroundLocationController? locationController;
+  final bool rideStarted;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -38,7 +40,10 @@ class SituationalAwarenessScreen extends StatelessWidget {
                 const SizedBox(height: 12),
               ],
               _RouteStatusCard(controller: controller),
-              if (locationController case final locationController?) ...[
+              if (!rideStarted) ...[
+                const SizedBox(height: 12),
+                const _PreStartLocationCard(),
+              ] else if (locationController case final locationController?) ...[
                 const SizedBox(height: 12),
                 ForegroundLocationCard(controller: locationController),
               ],
@@ -133,6 +138,22 @@ class SituationalAwarenessScreen extends StatelessWidget {
       );
     }
   }
+}
+
+class _PreStartLocationCard extends StatelessWidget {
+  const _PreStartLocationCard();
+
+  @override
+  Widget build(BuildContext context) => const Card(
+    child: ListTile(
+      leading: Icon(Icons.location_off_outlined, color: Color(0xFFFFC857)),
+      title: Text('Location sharing has not started'),
+      subtitle: Text(
+        'You can join and check the roster now. Coordinates, route progress '
+        'and traces begin only when the ride leader starts the ride.',
+      ),
+    ),
+  );
 }
 
 class ForegroundLocationCard extends StatelessWidget {

@@ -67,6 +67,7 @@ abstract final class MarkerStatistics {
         case RideEventType.rideCreated:
         case RideEventType.riderJoined:
         case RideEventType.roleChanged:
+        case RideEventType.rideStarted:
         case RideEventType.statusMessage:
         case RideEventType.riderLocationUpdated:
         case RideEventType.hazardReported:

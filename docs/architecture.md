@@ -65,6 +65,25 @@ offline cluster.
 The event journal is the source of truth. Neither a WebSocket nor a nearby
 session is assumed to remain connected.
 
+## Ride lifecycle
+
+A newly created ride is `open`, not live. Riders may join and appear in the
+event-derived roster, but the client does not persist, publish, replay or draw
+location fixes, route progress, route-deviation state, marker activity or rider
+traces until a signed `rideStarted` event is accepted.
+
+Only a locally active lead can create `rideStarted`, and the UI requires a
+confirmation. Replayers order signed events by `createdAt` and then event ID,
+rebuild each rider's latest role, and choose the first start authored by a lead.
+That makes duplicate taps, offline delivery, restart and a pre-start role
+handover deterministic. Late joiners download the same journal and enter the
+started state without creating another start event. Ride summaries and GPX
+traces use the accepted event time as their lower bound.
+
+Pre-start presence is deliberately roster-only: no coarse coordinate is sent.
+This is still a group-HMAC trust model, so production-grade per-device leader
+authorization remains part of the device-identity/key-rotation release gate.
+
 ## Uncertainty is part of the model
 
 The eventual UI states are `live`, `relayed`, `stale`, and `unknown`. A

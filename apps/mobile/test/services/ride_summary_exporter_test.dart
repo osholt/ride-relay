@@ -4,6 +4,7 @@ import 'package:ride_relay/domain/ride_event.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/domain/rider_location.dart';
+import 'package:ride_relay/services/ride_event_authenticator.dart';
 import 'package:ride_relay/services/ride_summary_exporter.dart';
 
 void main() {
@@ -165,6 +166,81 @@ void main() {
     expect(route.paths.single.points.last.latitude, 53.01);
   });
 
+  test('duration and traveled trace begin at the authoritative start', () {
+    final session = RideSession(
+      rideId: 'ride-1',
+      rideCode: 'ABC123',
+      inviteSecret: 'secret',
+      joinToken: 'test-join-token-0123456789',
+      localRiderId: 'device-a',
+      displayName: 'Oliver',
+      role: RideRole.lead,
+      joinedAt: DateTime.utc(2026, 7, 16, 9, 55),
+    );
+    final events = [
+      _signedEvent(
+        _event(
+          'created',
+          RideEventType.rideCreated,
+          10,
+          payload: const {'displayName': 'Oliver', 'role': 'lead'},
+        ),
+        session.inviteSecret,
+      ),
+      _locationEvent(
+        'early',
+        deviceId: 'device-a',
+        riderId: 'device-a',
+        minute: 11,
+        latitude: 52,
+        longitude: -1,
+      ),
+      _signedEvent(
+        _event(
+          'started',
+          RideEventType.rideStarted,
+          12,
+          payload: const {'leaderRiderId': 'device-a'},
+        ),
+        session.inviteSecret,
+      ),
+      _locationEvent(
+        'after-1',
+        deviceId: 'device-a',
+        riderId: 'device-a',
+        minute: 13,
+        latitude: 53,
+        longitude: -1,
+      ),
+      _locationEvent(
+        'after-2',
+        deviceId: 'device-a',
+        riderId: 'device-a',
+        minute: 14,
+        latitude: 53.01,
+        longitude: -1,
+      ),
+    ];
+    const exporter = RideSummaryExporter();
+
+    final summary = exporter.summarize(
+      session,
+      events,
+      generatedAt: DateTime.utc(2026, 7, 16, 10, 22),
+    );
+    final route = exporter.traveledRoute(
+      session,
+      events,
+      generatedAt: DateTime.utc(2026, 7, 16, 10, 22),
+    );
+
+    expect(summary.startedAt, DateTime.utc(2026, 7, 16, 10, 12));
+    expect(summary.rideDuration, const Duration(minutes: 10));
+    expect(summary.totalDistanceMeters, closeTo(1111.95, 1));
+    expect(route!.paths.single.points, hasLength(2));
+    expect(route.paths.single.points.first.latitude, 53);
+  });
+
   test('traveledRoute returns null without at least two position fixes', () {
     final session = RideSession(
       rideId: 'ride-1',
@@ -292,4 +368,15 @@ RideEvent _event(
   createdAt: DateTime.utc(2026, 7, 16, 10, minute),
   payload: payload,
   signature: 'test',
+);
+
+RideEvent _signedEvent(RideEvent event, String secret) => RideEvent(
+  id: event.id,
+  rideId: event.rideId,
+  deviceId: event.deviceId,
+  type: event.type,
+  priority: event.priority,
+  createdAt: event.createdAt,
+  payload: event.payload,
+  signature: RideEventAuthenticator.sign(event, secret),
 );

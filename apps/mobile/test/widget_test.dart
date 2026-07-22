@@ -181,6 +181,7 @@ void main() {
   testWidgets('active ride shows coordination controls', (tester) async {
     final controller = await _controller();
     await controller.createRide('Oliver');
+    await controller.startRide();
     await tester.pumpWidget(_app(controller));
     await tester.pumpAndSettle();
 
@@ -213,6 +214,41 @@ void main() {
     expect(find.text('ACTIVE HAZARDS'), findsOneWidget);
 
     controller.dispose();
+  });
+
+  testWidgets('leader confirms start while pre-start roster stays private', (
+    tester,
+  ) async {
+    final controller = await _controller();
+    await controller.createRide('Oliver');
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_app(controller));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Waiting to start'), findsOneWidget);
+    expect(
+      find.textContaining('No locations or traces are shared yet'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('pre-start-roster')), findsOneWidget);
+    expect(find.text('Oliver (you)'), findsOneWidget);
+    expect(controller.rideStarted, isFalse);
+
+    await tester.tap(find.byKey(const Key('start-ride-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('Start this ride?'), findsOneWidget);
+    expect(
+      find.textContaining('Live location sharing, route progress'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('confirm-start-ride-button')));
+    await tester.pumpAndSettle();
+
+    expect(controller.rideStarted, isTrue);
+    expect(find.text('Waiting to start'), findsNothing);
+    expect(find.text('Navigation map'), findsOneWidget);
   });
 
   testWidgets(
@@ -266,6 +302,7 @@ void main() {
   testWidgets('end ride confirmation includes marking summary', (tester) async {
     final controller = await _controller();
     await controller.createRide('Oliver');
+    await controller.startRide();
     await controller.startMarker();
     await controller.recordMarkerPass('rider-a');
     await tester.pumpWidget(_app(controller));

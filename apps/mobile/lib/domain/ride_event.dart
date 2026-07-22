@@ -4,6 +4,7 @@ enum RideEventType {
   rideCreated,
   riderJoined,
   roleChanged,
+  rideStarted,
   markerStarted,
   markerPass,
   markerEnded,
