@@ -1,0 +1,87 @@
+{
+  "type": "FeatureCollection",
+  "properties": {
+    "catalogueVersion": "wales-poc-2026-07-22",
+    "boundedRegion": "Wales proof of concept",
+    "attribution": "© OpenStreetMap contributors, ODbL",
+    "warning": "Discovery highlights are descriptive and are not safety endorsements. Check current access, closures, weather and road conditions."
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "osm-node-348565976",
+        "category": "mountain_pass",
+        "name": "Gospel Pass",
+        "score": null,
+        "confidence": "high",
+        "sourceName": "OpenStreetMap",
+        "sourceFeatureId": "node/348565976",
+        "sourceUrl": "https://www.openstreetmap.org/node/348565976",
+        "sourceRelease": "2026-07-22 validation query",
+        "lastVerified": "2026-07-22",
+        "warning": "Not a safety endorsement; check current access, weather and road conditions."
+      },
+      "geometry": { "type": "Point", "coordinates": [-3.1154875, 52.0099962] }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "osm-node-1350736035",
+        "category": "mountain_pass",
+        "name": "Bwlch y Groes",
+        "score": null,
+        "confidence": "high",
+        "sourceName": "OpenStreetMap",
+        "sourceFeatureId": "node/1350736035",
+        "sourceUrl": "https://www.openstreetmap.org/node/1350736035",
+        "sourceRelease": "2026-07-22 validation query",
+        "lastVerified": "2026-07-22",
+        "warning": "Not a safety endorsement; check current access, weather and road conditions."
+      },
+      "geometry": { "type": "Point", "coordinates": [-3.6131471, 52.7959872] }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "poc-a4069-black-mountain",
+        "category": "twisty_highlight",
+        "name": "A4069 Black Mountain section",
+        "score": 82,
+        "scoreExplanation": "High bend density over a continuous rural section; proof-of-concept score, manually reviewed.",
+        "confidence": "medium",
+        "sourceName": "OpenStreetMap",
+        "sourceFeatureId": "derived/a4069-2026-07-22",
+        "sourceUrl": "https://www.openstreetmap.org/copyright",
+        "sourceRelease": "2026-07-22 road geometry",
+        "lastVerified": "2026-07-22",
+        "warning": "Descriptive bend highlight only; not a speed target or safety endorsement."
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[-3.797004,51.994999],[-3.808886,51.980709],[-3.840317,51.966018],[-3.872373,51.940276],[-3.879863,51.927915],[-3.870412,51.916801],[-3.839605,51.896452],[-3.837576,51.885645],[-3.844055,51.874314],[-3.833041,51.861241],[-3.844926,51.860431],[-3.842734,51.854514],[-3.85112,51.845673],[-3.861235,51.836978],[-3.85692,51.827574],[-3.865444,51.814103],[-3.877321,51.802624],[-3.873944,51.790167]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "poc-gospel-pass-road",
+        "category": "good_biking_road",
+        "name": "Gospel Pass road",
+        "score": 76,
+        "scoreExplanation": "Continuous rural road with bends and a mapped pass; proof-of-concept score, manually reviewed.",
+        "confidence": "medium",
+        "sourceName": "OpenStreetMap",
+        "sourceFeatureId": "derived/gospel-pass-2026-07-22",
+        "sourceUrl": "https://www.openstreetmap.org/node/348565976",
+        "sourceRelease": "2026-07-22 road geometry",
+        "lastVerified": "2026-07-22",
+        "warning": "Check width, livestock, weather and access before riding. Not a safety endorsement."
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[-3.126008,52.072995],[-3.123717,52.068424],[-3.115299,52.062186],[-3.10365,52.051778],[-3.100115,52.047041],[-3.107776,52.04024],[-3.110379,52.026946],[-3.114785,52.017359],[-3.115044,52.009495],[-3.102673,51.99929],[-3.089558,51.987076],[-3.081469,51.97276],[-3.064678,51.964778],[-3.05208,51.950043],[-3.036055,51.942813]]
+      }
+    }
+  ]
+}

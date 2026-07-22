@@ -6,8 +6,9 @@ import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Request, Response
+from fastapi import Depends, FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_client import (
@@ -29,10 +30,20 @@ from .database import (
     initialize_schema,
     session_dependency,
 )
+from .discovery import (
+    create_suggestion,
+    list_suggestions,
+    moderate_suggestion,
+    public_feature_collection,
+    purge_expired_private_suggestions,
+    suggestion_json,
+)
 from .rate_limit import SlidingWindowRateLimiter
 from .schemas import (
     CreatePlanRequest,
     CreatePlanResponse,
+    DiscoveryModerationRequest,
+    DiscoverySuggestionRequest,
     GetPlanResponse,
     JoinCodeResponse,
     RegisterJoinCodeRequest,
@@ -68,6 +79,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         maximum_requests=settings.join_code_global_rate_limit_requests,
         window_seconds=settings.join_code_lookup_rate_limit_window_seconds,
         maximum_keys=1,
+    )
+    discovery_suggestion_limiter = SlidingWindowRateLimiter(
+        maximum_requests=settings.discovery_suggestion_rate_limit_requests,
+        window_seconds=settings.discovery_suggestion_rate_limit_window_seconds,
     )
     plan_create_limiter = SlidingWindowRateLimiter(
         maximum_requests=settings.plan_create_rate_limit_requests,
@@ -118,6 +133,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.discovery_allowed_origins,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["authorization", "content-type"],
+    )
     app.state.settings = settings
     app.state.engine = engine
     app.state.session_factory = session_factory
@@ -128,7 +149,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.middleware("http")
     async def security_headers(request: Request, call_next: Callable):
         response = await call_next(request)
-        response.headers["cache-control"] = "no-store"
+        response.headers["cache-control"] = (
+            "public, max-age=300, stale-while-revalidate=900"
+            if request.method == "GET" and request.url.path == "/api/v1/discovery/features"
+            else "no-store"
+        )
         response.headers["x-content-type-options"] = "nosniff"
         response.headers["x-frame-options"] = "DENY"
         response.headers["referrer-policy"] = "no-referrer"
@@ -158,6 +183,107 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/metrics", include_in_schema=False)
     def metrics() -> Response:
         return Response(content=generate_latest(registry), media_type=CONTENT_TYPE_LATEST)
+
+    def require_discovery_admin(request: Request) -> None:
+        configured = settings.discovery_admin_token
+        if configured is None:
+            raise RelayServiceError(503, "Discovery moderation is not configured")
+        authorization = request.headers.get("authorization", "")
+        expected = configured.get_secret_value()
+        supplied = authorization[7:] if authorization.startswith("Bearer ") else ""
+        if not supplied or not hmac.compare_digest(supplied, expected):
+            raise RelayServiceError(401, "Discovery administrator credential required")
+
+    @app.get("/api/v1/discovery/features", include_in_schema=False)
+    def discovery_features(
+        west: float = Query(ge=-180, le=180),
+        south: float = Query(ge=-90, le=90),
+        east: float = Query(ge=-180, le=180),
+        north: float = Query(ge=-90, le=90),
+        categories: str = Query(max_length=200),
+        session: Session = Depends(database_session),
+    ) -> JSONResponse:
+        if west >= east or south >= north or east - west > 10 or north - south > 10:
+            raise RelayServiceError(400, "A bounded discovery viewport is required")
+        allowed = {
+            "twisty_highlight",
+            "mountain_pass",
+            "good_biking_road",
+            "biker_stop",
+        }
+        selected = {item for item in categories.split(",") if item in allowed}
+        if not selected:
+            raise RelayServiceError(400, "At least one discovery category is required")
+        return JSONResponse(
+            content=public_feature_collection(
+                session,
+                west=west,
+                south=south,
+                east=east,
+                north=north,
+                categories=selected,
+            ),
+            media_type="application/geo+json",
+        )
+
+    @app.post("/api/v1/discovery/suggestions", include_in_schema=False)
+    def submit_discovery_suggestion(
+        payload: DiscoverySuggestionRequest,
+        request: Request,
+        session: Session = Depends(database_session),
+    ) -> JSONResponse:
+        client_ip = request.client.host if request.client is not None else "unknown"
+        retry_after = discovery_suggestion_limiter.check(f"suggestion:{client_ip}")
+        if retry_after is not None:
+            return JSONResponse(
+                status_code=429,
+                headers={"retry-after": str(min(retry_after, 3600))},
+                content={"error": "Suggestion rate limit exceeded"},
+            )
+        suggestion = create_suggestion(session, payload)
+        return JSONResponse(
+            status_code=202,
+            content=suggestion_json(suggestion, include_private=False),
+        )
+
+    @app.get("/api/v1/admin/discovery/suggestions", include_in_schema=False)
+    def discovery_admin_queue(
+        request: Request,
+        status: str = Query(default="pending", pattern="^(pending|changes_requested)$"),
+        session: Session = Depends(database_session),
+    ) -> JSONResponse:
+        require_discovery_admin(request)
+        purge_expired_private_suggestions(
+            session,
+            retention_days=settings.discovery_rejected_retention_days,
+        )
+        suggestions = list_suggestions(session, status=status)
+        return JSONResponse(
+            content={
+                "suggestions": [
+                    suggestion_json(suggestion, include_private=True) for suggestion in suggestions
+                ]
+            }
+        )
+
+    @app.post(
+        "/api/v1/admin/discovery/suggestions/{suggestion_id}:moderate",
+        include_in_schema=False,
+    )
+    def discovery_admin_moderate(
+        suggestion_id: str,
+        payload: DiscoveryModerationRequest,
+        request: Request,
+        session: Session = Depends(database_session),
+    ) -> JSONResponse:
+        require_discovery_admin(request)
+        suggestion = moderate_suggestion(
+            session,
+            suggestion_id,
+            payload,
+            reviewer=settings.discovery_admin_name,
+        )
+        return JSONResponse(content=suggestion_json(suggestion, include_private=True))
 
     def _join_code_rate_limit_response(retry_after: int) -> Response:
         join_code_requests.labels(outcome="rate_limited").inc()
