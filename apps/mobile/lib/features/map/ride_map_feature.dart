@@ -48,6 +48,18 @@ bool shouldUseTiledGroupMiniMap({
   required TargetPlatform platform,
 }) => mapLibreEnabled && platform != TargetPlatform.android;
 
+@visibleForTesting
+Color groupMiniMapBackgroundColor(Brightness brightness) =>
+    brightness == Brightness.dark
+    ? const Color(0xFF151E28)
+    : const Color(0xFFE9EEF3);
+
+@visibleForTesting
+Color groupMiniMapGridColor(Brightness brightness) =>
+    brightness == Brightness.dark
+    ? const Color(0xFF263443)
+    : const Color(0xFFB8C4D0);
+
 /// Self-contained production entry point for the map/GPX feature.
 ///
 /// Route geometry is local and always renders without a network. Basemap tiles
@@ -3650,6 +3662,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
                             routePaths: visibleRoutePaths,
                             currentPosition: widget.currentPosition,
                             riders: widget.riders,
+                            brightness: Theme.of(context).brightness,
                           ),
                         ),
                 ),
@@ -4097,11 +4110,13 @@ class _GroupMiniMapPainter extends CustomPainter {
     required this.routePaths,
     required this.currentPosition,
     required this.riders,
+    required this.brightness,
   });
 
   final List<List<GeoPoint>> routePaths;
   final GeoPoint? currentPosition;
   final List<MapOverlayMarker> riders;
+  final Brightness brightness;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -4137,10 +4152,10 @@ class _GroupMiniMapPainter extends CustomPainter {
 
     canvas.drawRect(
       Offset.zero & size,
-      Paint()..color = const Color(0xFF151E28),
+      Paint()..color = groupMiniMapBackgroundColor(brightness),
     );
     final gridPaint = Paint()
-      ..color = const Color(0xFF263443)
+      ..color = groupMiniMapGridColor(brightness)
       ..strokeWidth = 1;
     canvas.drawLine(
       Offset(0, size.height * 0.5),
