@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Plan a road-following group ride and download it as a GPX file for Tail End Charlie."
+    />
+    <meta name="theme-color" content="#171124" />
+    <meta property="og:title" content="Ride planner | Tail End Charlie" />
+    <meta
+      property="og:description"
+      content="Choose your stops, build a road-following route, and download a GPX file."
+    />
+    <meta property="og:image" content="/assets/tail-end-charlie-icon.png" />
+    <meta property="og:type" content="website" />
+    <link rel="icon" href="/assets/tail-end-charlie-icon.png" />
+    <link rel="apple-touch-icon" href="/assets/tail-end-charlie-icon.png" />
+    <link rel="stylesheet" href="/styles.css" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css"
+      integrity="sha384-uTttxo/aOKbdE5RlD/SPzSDoDmNvGlUYPjONi2MN/b7c9HPSvW07OIuyP7uL6jxK"
+      crossorigin="anonymous"
+    />
+    <link rel="stylesheet" href="/planner.css" />
+    <title>Ride planner | Tail End Charlie</title>
+  </head>
+  <body class="planner-page">
+    <header class="planner-header">
+      <a class="brand" href="/" aria-label="Tail End Charlie home">
+        <img
+          src="/assets/tail-end-charlie-icon.png"
+          alt=""
+          width="42"
+          height="42"
+        />
+        <span>Tail End Charlie</span>
+      </a>
+      <div class="planner-header-copy">
+        <span>Ride planner</span>
+        <small>Build a route. Download the GPX. Ride together.</small>
+      </div>
+      <a class="planner-home-link" href="/">Back to website</a>
+    </header>
+
+    <main class="planner-layout">
+      <aside class="planner-panel" aria-label="Ride details">
+        <div class="planner-panel-intro">
+          <p class="eyebrow"><span></span> New route</p>
+          <h1>Plan your ride.</h1>
+          <p>
+            Search for a place or tap the map to add stops. Drag a numbered
+            marker to move it; the route will follow the roads between them.
+          </p>
+        </div>
+
+        <div class="field-group">
+          <label for="ride-name">Ride name</label>
+          <input
+            id="ride-name"
+            name="ride-name"
+            type="text"
+            maxlength="100"
+            value="Sunday group ride"
+            autocomplete="off"
+          />
+        </div>
+
+        <form class="place-search" id="place-search" role="search">
+          <label for="place-query">Find a point of interest</label>
+          <div class="search-row">
+            <input
+              id="place-query"
+              name="q"
+              type="search"
+              maxlength="160"
+              placeholder="Cafe, town or postcode"
+              autocomplete="off"
+            />
+            <button class="icon-button" type="submit">Search</button>
+          </div>
+          <p class="field-help">
+            Search runs only when you press Search. Do not enter personal or
+            confidential information.
+          </p>
+          <div
+            class="search-results"
+            id="search-results"
+            aria-live="polite"
+          ></div>
+        </form>
+
+        <section class="route-stops" aria-labelledby="route-stops-title">
+          <div class="panel-section-heading">
+            <div>
+              <span class="section-kicker">Route points</span>
+              <h2 id="route-stops-title">Your stops</h2>
+            </div>
+            <button class="text-button" id="clear-route" type="button">
+              Clear
+            </button>
+          </div>
+          <ol class="stop-list" id="stop-list"></ol>
+          <div class="empty-stops" id="empty-stops">
+            <span aria-hidden="true">＋</span>
+            <strong>Add your first stop</strong>
+            <p>Tap anywhere on the map or find a place above.</p>
+          </div>
+        </section>
+
+        <section class="route-summary" aria-label="Route summary">
+          <div>
+            <span>Distance</span>
+            <strong id="route-distance">—</strong>
+          </div>
+          <div>
+            <span>Estimated time</span>
+            <strong id="route-duration">—</strong>
+          </div>
+        </section>
+
+        <p class="route-status" id="route-status" aria-live="polite">
+          Add at least two stops to generate a route.
+        </p>
+
+        <div class="planner-actions">
+          <button class="button button-primary" id="download-gpx" disabled>
+            Download GPX
+          </button>
+          <span>Imports directly into the Tail End Charlie app.</span>
+        </div>
+      </aside>
+
+      <section class="planner-map-shell" id="map-shell" aria-label="Route map">
+        <div class="map" id="map"></div>
+        <div class="map-instructions" id="map-instructions">
+          Tap the map to add a route point
+        </div>
+        <button
+          class="map-expand-button"
+          id="map-expand"
+          type="button"
+          aria-pressed="false"
+          aria-label="Open map full screen"
+        >
+          <span aria-hidden="true">⛶</span>
+          <span class="map-expand-label">Full screen</span>
+        </button>
+        <div class="map-legend">
+          <span><i class="legend-stop"></i> Stops</span>
+          <span><i class="legend-route"></i> Road route</span>
+        </div>
+      </section>
+    </main>
+
+    <noscript>
+      <p class="noscript-message">
+        The ride planner needs JavaScript to show the map and create GPX files.
+      </p>
+    </noscript>
+
+    <script
+      src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"
+      integrity="sha384-5+cfbwT0iiub6VsQAdn6yz16nr6sDiQoHx6tm4O8OVYXHYOxcffFmCJBL0dgdvGp"
+      crossorigin="anonymous"
+    ></script>
+    <script type="module" src="/planner.js"></script>
+  </body>
+</html>

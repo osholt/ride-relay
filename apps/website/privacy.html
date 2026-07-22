@@ -45,7 +45,7 @@
     <main class="wrap legal">
       <h1>Privacy Policy</h1>
       <p class="legal-meta">
-        Effective 21 July 2026 &middot; Tail End Charlie is operated by
+        Effective 22 July 2026 &middot; Tail End Charlie is operated by
         <strong>Holt Racing Limited</strong> ("we", "us")
       </p>
 
@@ -58,8 +58,9 @@
           advertising, no trackers, and does not sell data. Your emergency
           contact details stay on your phone unless you choose to share them,
           or opt in to auto-sharing with the ride leader during an
-          emergency-stop alert &mdash; both described below. You can read the
-          full detail below, or jump straight to
+          emergency-stop alert &mdash; both described below. The website ride
+          planner keeps the ride name and generated GPX file in your browser.
+          You can read the full detail below, or jump straight to
           <a href="#your-rights">your rights</a> or
           <a href="#deleting-your-information">how to delete your data</a>.
         </p>
@@ -146,6 +147,20 @@
         <li>Imported or recorded GPX route files you haven't shared.</li>
       </ul>
 
+      <h3>Website ride planner</h3>
+      <p>
+        Your ride name and generated GPX file stay in your browser and are not
+        sent to our relay server. Place-search results are cached in your
+        browser for up to seven days to avoid repeating the same search. When
+        you choose to search for a place, the search text is sent to the
+        public Nominatim service. When you add two or more route points, their
+        coordinates are sent to the public OSRM routing service so it can
+        calculate a road-following route. Loading the map also connects your
+        browser to OpenFreeMap to retrieve map styles and tiles. As with
+        ordinary web requests, these providers receive your IP address and
+        standard connection information.
+      </p>
+
       <h3>Device identifier</h3>
       <p>
         The app generates a random identifier on your device to distinguish
@@ -207,11 +222,13 @@
 
       <h2>Who we share information with</h2>
       <p>
-        <strong>Destination search and routing.</strong> By default, the app
-        sends destination search text and route requests to the
-        OpenStreetMap Foundation's public Nominatim and OSRM services to find
-        places and calculate routes. These are independent third-party
-        services with their own
+        <strong>Maps, destination search and routing.</strong> By default, the
+        app and website ride planner send user-requested destination searches
+        to the OpenStreetMap Foundation's public Nominatim service and route
+        coordinates to the public Project OSRM service. The website also
+        loads map styles and tiles from OpenFreeMap. These are independent
+        third-party services. Nominatim is covered by the OpenStreetMap
+        Foundation's
         <a href="https://osmfoundation.org/wiki/Privacy_Policy"
           >privacy policy</a
         >.
@@ -271,7 +288,8 @@
         A cleanup process runs on the server and permanently deletes anything
         past its expiry &mdash; retention limits are enforced automatically,
         not just promised. Information kept only on your device (see above)
-        is kept until you delete it or uninstall the app.
+        is kept until you delete it, uninstall the app, clear the website's
+        browser storage, or close the planner page, as applicable.
       </p>
 
       <h2>How we protect your information</h2>
@@ -335,9 +353,10 @@
       <h2>International transfers</h2>
       <p>
         Our relay server is operated from the United Kingdom. Where the app
-        contacts third-party services described above (destination search
-        and routing), those requests may be processed on infrastructure
-        outside the UK, governed by that service's own privacy policy.
+        or website contacts third-party services described above (maps,
+        destination search and routing), those requests may be processed on
+        infrastructure outside the UK, governed by that service's own
+        privacy terms.
       </p>
 
       <h2>Changes to this policy</h2>
