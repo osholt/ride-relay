@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:share_plus/share_plus.dart';
-import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/foreground_location_controller.dart';
@@ -44,6 +43,7 @@ import '../../services/gpx_import_source.dart';
 import '../../services/leader_ride_status.dart';
 import '../../services/route_decision_point_extractor.dart';
 import '../../services/ride_completion_detector.dart';
+import '../../services/ride_screen_awake.dart';
 import '../map/motorcycle_icon.dart';
 import '../map/ride_map.dart';
 import '../settings/emergency_info_sheet.dart';
@@ -66,6 +66,8 @@ class ActiveRideShell extends StatefulWidget {
     required this.enableNativeServices,
     required this.riderProfile,
     required this.sharedRoutes,
+    this.screenWakeLock = const WakelockPlusScreenWakeLock(),
+    this.screenWakeReassertInterval = const Duration(seconds: 15),
   });
 
   final RideController rideController;
@@ -75,6 +77,8 @@ class ActiveRideShell extends StatefulWidget {
   final bool enableNativeServices;
   final RiderProfileController riderProfile;
   final SharedRouteController sharedRoutes;
+  final ScreenWakeLock screenWakeLock;
+  final Duration screenWakeReassertInterval;
 
   @override
   State<ActiveRideShell> createState() => _ActiveRideShellState();
@@ -257,6 +261,8 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   final _warnings = <String>{};
   final _rideCompletionDetector = RideCompletionDetector();
 
+  late final RideScreenAwakeCoordinator _screenAwakeCoordinator;
+
   SituationalAwarenessController? _awarenessController;
   CarPlayBridge? _carPlayBridge;
   ForegroundLocationController? _locationController;
@@ -297,6 +303,13 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   @override
   void initState() {
     super.initState();
+    _screenAwakeCoordinator = RideScreenAwakeCoordinator(
+      wakeLock: widget.screenWakeLock,
+      reassertInterval: widget.screenWakeReassertInterval,
+      onError: (error, _) {
+        if (kDebugMode) debugPrint('Could not enforce ride wake lock: $error');
+      },
+    )..start();
     widget.rideController.addListener(_onRideControllerChanged);
     widget.sharedRoutes.addListener(_onSharedRoutesChanged);
     if (widget.sharedRoutes.pending case final file?) {
@@ -306,27 +319,9 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       _clearSharedRoutePending();
     }
     unawaited(_initialize());
-    unawaited(_setScreenAwake(true));
     _carPlayBridge = CarPlayBridge(
       onEmergencyTriggered: _sendEmergencyMapAlert,
     );
-  }
-
-  /// The phone is normally mounted on the handlebars for the whole ride,
-  /// often with gloves on and a helmet visor down - if the screen locks, it
-  /// can't be unlocked safely while riding. Kept on for this widget's whole
-  /// lifetime (covering the ended-ride summary too) rather than tied to
-  /// navigation-mode/route-state: gaps in that narrower condition (no route
-  /// loaded, not yet detected as moving) were exactly what let the screen
-  /// sleep on a real ride.
-  Future<void> _setScreenAwake(bool enabled) async {
-    try {
-      await WakelockPlus.toggle(enable: enabled);
-    } on Object catch (error) {
-      // The ride remains usable in widget tests or on platforms without the
-      // plugin.
-      if (kDebugMode) debugPrint('Could not change ride wake lock: $error');
-    }
   }
 
   /// A GPX file can arrive (via the platform's "Open in..." delivery) while
@@ -1775,6 +1770,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
 
   @override
   void dispose() {
+    unawaited(_screenAwakeCoordinator.stop());
     widget.rideController.removeListener(_onRideControllerChanged);
     widget.sharedRoutes.removeListener(_onSharedRoutesChanged);
     _simulationController?.removeListener(_onSimulationVisualChanged);
@@ -1796,7 +1792,6 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     _leaderStatus.dispose();
     _junctionMarkerOverlay.dispose();
     unawaited(_carPlayBridge?.dispose());
-    unawaited(_setScreenAwake(false));
     super.dispose();
   }
 }

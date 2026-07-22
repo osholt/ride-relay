@@ -21,6 +21,15 @@ not bulk-download from the public OpenStreetMap tile servers.
 
 ## Riding display
 
+While an active-ride screen is foregrounded, the app requests the platform
+screen wake lock for the whole ride surface, not only while GPS says the bike
+is moving or while the Map tab is selected. It reasserts that request when the
+app resumes and every 15 seconds because iOS or Android may release a one-shot
+request after window or lifecycle changes. The request is removed when the
+ride surface is exited. This prevents automatic display sleep only; it does
+not override a rider manually locking the phone, keep the app running after a
+force-quit, or grant background CPU execution.
+
 The map uses foreground GPS speed, heading, and remaining route geometry to
 enter a heading-up follow view while moving. Landscape uses a wider zoom and a
 route-aware look-ahead point so bends and substantially more road ahead remain
