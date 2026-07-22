@@ -663,6 +663,14 @@
   background: var(--teal);
 }
 
+.legend-poi {
+  width: 9px;
+  height: 9px;
+  border: 2px solid #171823;
+  border-radius: 50%;
+  background: var(--peach);
+}
+
 .legend-route {
   width: 15px;
   height: 3px;
@@ -717,6 +725,88 @@
 
 .route-marker:active {
   cursor: grabbing;
+}
+
+.biker-place-popup .maplibregl-popup-content {
+  border: 1px solid rgba(253, 245, 240, 0.2);
+  border-radius: 12px;
+  padding: 14px;
+  color: var(--ink);
+  background: #171823;
+  box-shadow: 0 14px 36px rgba(4, 5, 10, 0.42);
+}
+
+.biker-place-popup .maplibregl-popup-close-button {
+  right: 5px;
+  color: var(--muted);
+  font-size: 1.2rem;
+}
+
+.biker-place-popup .maplibregl-popup-close-button:hover {
+  color: var(--ink);
+  background: transparent;
+}
+
+.biker-place-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+.biker-place-popup.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
+.biker-place-popup.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
+  border-top-color: #171823;
+}
+
+.biker-place-popup.maplibregl-popup-anchor-top .maplibregl-popup-tip,
+.biker-place-popup.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
+.biker-place-popup.maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
+  border-bottom-color: #171823;
+}
+
+.biker-place-popup.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+  border-right-color: #171823;
+}
+
+.biker-place-popup.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+  border-left-color: #171823;
+}
+
+.biker-place-popup-content {
+  display: grid;
+  gap: 5px;
+  padding-right: 12px;
+}
+
+.biker-place-popup-content > span {
+  color: var(--peach);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.biker-place-popup-content > strong {
+  font-size: 0.9rem;
+  line-height: 1.25;
+}
+
+.biker-place-popup-content > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.biker-place-popup-content > button {
+  margin-top: 5px;
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #160c25;
+  background: var(--teal);
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.biker-place-popup-content > button:hover {
+  background: #82f0d8;
 }
 
 .maplibregl-canvas.is-reshaping-route {

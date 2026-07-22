@@ -8,6 +8,7 @@ import {
 } from "./planner-core.mjs";
 import {
   BIKER_PLACES,
+  bikerPlacesGeoJson,
   normalizePlaceQuery,
   searchBikerPlaces,
 } from "./biker-places.mjs";
@@ -56,6 +57,7 @@ let shapeSequence = 0;
 let listDrag = null;
 let routeDrag = null;
 let suppressNextMapClick = false;
+let bikerPlacePopup = null;
 
 const map = new maplibregl.Map({
   container: "map",
@@ -121,16 +123,82 @@ map.on("load", () => {
       "line-opacity": 0.01,
     },
   });
+  map.addSource("biker-places", {
+    type: "geojson",
+    data: bikerPlacesGeoJson(),
+    cluster: true,
+    clusterMaxZoom: 9,
+    clusterRadius: 42,
+  });
+  map.addLayer({
+    id: "biker-place-clusters",
+    type: "circle",
+    source: "biker-places",
+    filter: ["has", "point_count"],
+    paint: {
+      "circle-color": "#ffad81",
+      "circle-radius": ["step", ["get", "point_count"], 15, 6, 19, 12, 23],
+      "circle-stroke-color": "#171823",
+      "circle-stroke-width": 3,
+    },
+  });
+  map.addLayer({
+    id: "biker-place-cluster-count",
+    type: "symbol",
+    source: "biker-places",
+    filter: ["has", "point_count"],
+    layout: {
+      "text-field": ["get", "point_count_abbreviated"],
+      "text-size": 11,
+    },
+    paint: { "text-color": "#190c26" },
+  });
+  map.addLayer({
+    id: "biker-place-dots",
+    type: "circle",
+    source: "biker-places",
+    filter: ["!", ["has", "point_count"]],
+    paint: {
+      "circle-color": "#ffad81",
+      "circle-radius": 7,
+      "circle-stroke-color": "#171823",
+      "circle-stroke-width": 3,
+    },
+  });
+  for (const layerId of ["biker-place-clusters", "biker-place-dots"]) {
+    map.on("mouseenter", layerId, () => {
+      map.getCanvas().style.cursor = "pointer";
+    });
+    map.on("mouseleave", layerId, () => {
+      map.getCanvas().style.cursor = "";
+    });
+  }
   updateMapLines();
   installRouteDragging();
 });
 
-map.on("click", (event) => {
+map.on("click", async (event) => {
   if (suppressNextMapClick) {
     suppressNextMapClick = false;
     return;
   }
-  if (event.originalEvent.target.closest(".maplibregl-marker, .maplibregl-ctrl")) {
+  if (event.originalEvent.target?.closest?.(".maplibregl-marker, .maplibregl-ctrl")) {
+    return;
+  }
+  const cluster = map.getLayer("biker-place-clusters")
+    ? map.queryRenderedFeatures(event.point, { layers: ["biker-place-clusters"] })[0]
+    : null;
+  if (cluster) {
+    const source = map.getSource("biker-places");
+    const zoom = await source.getClusterExpansionZoom(cluster.properties.cluster_id);
+    map.easeTo({ center: cluster.geometry.coordinates, zoom });
+    return;
+  }
+  const bikerPlace = map.getLayer("biker-place-dots")
+    ? map.queryRenderedFeatures(event.point, { layers: ["biker-place-dots"] })[0]
+    : null;
+  if (bikerPlace) {
+    showBikerPlacePopup(bikerPlace);
     return;
   }
   if (routeCoordinates.length > 1 && closestRouteLeg(event.lngLat, 20) >= 0) {
@@ -152,7 +220,8 @@ map.on("error", (event) => {
 
 elements.placeSearch.addEventListener("submit", searchPlaces);
 elements.browseBikerStops.addEventListener("click", () => {
-  renderSearchResults(BIKER_PLACES.slice(0, 12).map((place) => ({ ...place, catalog: true })));
+  renderSearchResults(BIKER_PLACES.map((place) => ({ ...place, catalog: true })));
+  fitBikerPlaces();
 });
 elements.stopList.addEventListener("input", editStop);
 elements.stopList.addEventListener("change", commitCoordinateEdit);
@@ -614,7 +683,7 @@ async function searchPlaces(event) {
   lastSearchAt = Date.now();
   renderSearchMessage("Searching…");
   const url = new URL(SEARCH_URL);
-  url.searchParams.set("q", normalisedQuery);
+  url.searchParams.set("q", query);
   url.searchParams.set("format", "jsonv2");
   url.searchParams.set("limit", "5");
   url.searchParams.set("addressdetails", "0");
@@ -733,6 +802,46 @@ function renderSearchMessage(message) {
   paragraph.className = "search-message";
   paragraph.textContent = message;
   elements.searchResults.append(paragraph);
+}
+
+function showBikerPlacePopup(feature) {
+  const place = BIKER_PLACES[Number(feature.properties.index)];
+  if (!place) return;
+  bikerPlacePopup?.remove();
+  const content = document.createElement("div");
+  content.className = "biker-place-popup-content";
+  const label = document.createElement("span");
+  label.textContent = "Biker stop";
+  const title = document.createElement("strong");
+  title.textContent = place.name;
+  const address = document.createElement("p");
+  address.textContent = place.address;
+  const addButton = document.createElement("button");
+  addButton.type = "button";
+  addButton.textContent = "Add to route";
+  addButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    addStop(place);
+    bikerPlacePopup?.remove();
+  });
+  content.append(label, title, address, addButton);
+  bikerPlacePopup = new maplibregl.Popup({
+    className: "biker-place-popup",
+    offset: 12,
+    maxWidth: "280px",
+  })
+    .setLngLat(feature.geometry.coordinates)
+    .setDOMContent(content)
+    .addTo(map);
+}
+
+function fitBikerPlaces() {
+  if (!map.getSource("biker-places")) return;
+  const bounds = BIKER_PLACES.reduce(
+    (current, place) => current.extend([place.longitude, place.latitude]),
+    new maplibregl.LngLatBounds(),
+  );
+  map.fitBounds(bounds, { padding: 60, maxZoom: 8, duration: 700 });
 }
 
 function getCachedSearch(query) {
