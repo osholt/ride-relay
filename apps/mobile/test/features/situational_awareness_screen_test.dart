@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ride_relay/controllers/foreground_location_controller.dart';
 import 'package:ride_relay/controllers/situational_awareness_controller.dart';
 import 'package:ride_relay/data/in_memory_event_store.dart';
 import 'package:ride_relay/domain/geo_point.dart';
@@ -7,6 +10,7 @@ import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/features/situational_awareness/situational_awareness_screen.dart';
+import 'package:ride_relay/services/device_location_source.dart';
 import 'package:ride_relay/services/external_hazard_provider.dart';
 import 'package:ride_relay/services/route_deviation_detector.dart';
 
@@ -75,6 +79,34 @@ void main() {
     await tester.pump();
     expect(find.text('Seen'), findsOneWidget);
   });
+
+  testWidgets('pre-start offers current position without promising a track', (
+    tester,
+  ) async {
+    final platform = _FakeLocationPlatform();
+    final location = ForegroundLocationController(
+      DeviceLocationSource(platform),
+      (_) async {},
+    );
+    await location.initialize();
+    addTearDown(location.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: SituationalAwarenessScreen(
+          controller: controller,
+          rideStarted: false,
+          locationController: location,
+        ),
+      ),
+    );
+
+    expect(find.text('Current position only before departure'), findsOneWidget);
+    expect(find.text('Your assembly position'), findsOneWidget);
+    expect(find.textContaining('Tracks, route progress'), findsOneWidget);
+    expect(find.byKey(const Key('location-sharing-button')), findsOneWidget);
+  });
 }
 
 Widget _app(SituationalAwarenessController controller) => MaterialApp(
@@ -87,3 +119,21 @@ LocationSample _sample(double latitude) => LocationSample(
   recordedAt: DateTime.utc(2026, 7, 16, 12),
   accuracyMeters: 5,
 );
+
+class _FakeLocationPlatform implements DeviceLocationPlatform {
+  final _positions = StreamController<LocationSample>.broadcast();
+
+  @override
+  Future<DeviceLocationPermission> checkPermission() async =>
+      DeviceLocationPermission.whileInUse;
+
+  @override
+  Future<bool> isServiceEnabled() async => true;
+
+  @override
+  Stream<LocationSample> positionStream() => _positions.stream;
+
+  @override
+  Future<DeviceLocationPermission> requestPermission() async =>
+      DeviceLocationPermission.whileInUse;
+}

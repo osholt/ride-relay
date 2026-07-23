@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../domain/ride_event.dart';
+import '../domain/rider_location.dart';
 import '../domain/ride_session.dart';
 
 class InternetRelayConfiguration {
@@ -56,9 +57,15 @@ class InternetRelayConfiguration {
 abstract final class RelayProtocolCapabilities {
   static const rideStart = 'ride-start-v1';
   static const membership = 'membership-v1';
+  static const preStartPresence = 'pre-start-presence-v1';
   static const routeRevisions = 'route-revisions-v1';
 
-  static const current = {rideStart, membership, routeRevisions};
+  static const current = {
+    rideStart,
+    membership,
+    preStartPresence,
+    routeRevisions,
+  };
 }
 
 class RelayClientDescriptor {
@@ -184,6 +191,25 @@ abstract interface class InternetRelayApi {
   });
 
   void close();
+}
+
+abstract interface class PreStartPresenceApi {
+  InternetRelayConfiguration get configuration;
+
+  Future<PreStartPresenceResult> synchronizePreStartPresence({
+    required RideSession session,
+    required RiderLocation? position,
+    required bool clear,
+  });
+
+  void close();
+}
+
+class PreStartPresenceResult {
+  const PreStartPresenceResult({required this.locations, required this.ttl});
+
+  final List<RiderLocation> locations;
+  final Duration ttl;
 }
 
 /// The short-lived server directory that turns a six-digit ride code into the
@@ -776,6 +802,207 @@ class HttpInternetRelayClient
         'Event ${event.id} is invalid for this ride.',
       );
     }
+  }
+
+  @override
+  void close() => _client.close();
+}
+
+class HttpPreStartPresenceClient implements PreStartPresenceApi {
+  factory HttpPreStartPresenceClient({
+    required InternetRelayConfiguration configuration,
+    required http.Client client,
+    RelayClientDescriptor? clientDescriptor,
+    DateTime Function()? clock,
+  }) => HttpPreStartPresenceClient._(
+    configuration,
+    client,
+    clientDescriptor ?? RelayClientDescriptor.current(),
+    clock ?? DateTime.now,
+  );
+
+  HttpPreStartPresenceClient._(
+    this.configuration,
+    this._client,
+    this._clientDescriptor,
+    this._clock,
+  );
+
+  @override
+  final InternetRelayConfiguration configuration;
+  final http.Client _client;
+  final RelayClientDescriptor _clientDescriptor;
+  final DateTime Function() _clock;
+  RelayCompatibilityResult? _cachedCompatibility;
+
+  @override
+  Future<PreStartPresenceResult> synchronizePreStartPresence({
+    required RideSession session,
+    required RiderLocation? position,
+    required bool clear,
+  }) async {
+    final compatibility = await _fetchCompatibility(
+      configuration: configuration,
+      client: _client,
+      descriptor: _clientDescriptor,
+      clock: _clock,
+      cached: _cachedCompatibility,
+    );
+    _cachedCompatibility = compatibility;
+    if (!compatibility.supports(RelayProtocolCapabilities.preStartPresence)) {
+      throw const InternetRelayException(
+        'This ride service does not support pre-start positions yet.',
+        code: 'feature_unsupported',
+      );
+    }
+    if (clear && position != null) {
+      throw const InternetRelayException(
+        'A pre-start position cannot be published and cleared together.',
+      );
+    }
+    if (session.rideId.isEmpty ||
+        session.rideId.length > 128 ||
+        session.localRiderId.isEmpty ||
+        session.localRiderId.length > 128 ||
+        session.inviteSecret.length < 16) {
+      throw const InternetRelayException(
+        'Ride identity is invalid for pre-start positions.',
+      );
+    }
+    if (position != null && position.riderId != session.localRiderId) {
+      throw const InternetRelayException(
+        'A rider can only publish their own pre-start position.',
+      );
+    }
+    final bodyBytes = utf8.encode(
+      jsonEncode({
+        'protocolVersion': 1,
+        'deviceId': session.localRiderId,
+        'position': position == null
+            ? null
+            : {
+                'displayName': position.displayName,
+                'role': position.role.name,
+                'motorcycleStyle': position.motorcycleStyle.name,
+                'riderColor': position.riderColor.name,
+                'sample': position.sample.toJson(),
+              },
+        'clear': clear,
+      }),
+    );
+    if (bodyBytes.length > configuration.maximumRequestBytes) {
+      throw const InternetRelayException(
+        'Pre-start position request exceeds the size limit.',
+      );
+    }
+    final request = http.Request('POST', _presenceUri(session.rideId))
+      ..followRedirects = false
+      ..headers.addAll({
+        'accept': 'application/json',
+        'authorization': 'Bearer ${_rideBearerToken(session)}',
+        'content-type': 'application/json',
+        'x-ride-relay-device': session.localRiderId,
+        ..._clientDescriptor.headers,
+      })
+      ..bodyBytes = bodyBytes;
+
+    late http.StreamedResponse response;
+    try {
+      response = await _client
+          .send(request)
+          .timeout(configuration.headerTimeout);
+    } on TimeoutException {
+      throw const InternetRelayException(
+        'Pre-start position service timed out.',
+        retryable: true,
+      );
+    } on http.ClientException {
+      throw const InternetRelayException(
+        'Pre-start positions are temporarily unavailable.',
+        retryable: true,
+      );
+    }
+    final bytes = BytesBuilder(copy: false);
+    await for (final chunk in response.stream.timeout(
+      configuration.bodyTimeout,
+    )) {
+      if (bytes.length + chunk.length > configuration.maximumResponseBytes) {
+        throw const InternetRelayException(
+          'Pre-start position response exceeds the size limit.',
+        );
+      }
+      bytes.add(chunk);
+    }
+    final responseBytes = bytes.takeBytes();
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      String? message;
+      try {
+        final value = jsonDecode(utf8.decode(responseBytes));
+        if (value is Map) {
+          message = (value['error'] ?? value['message']) as String?;
+        }
+      } on Object {
+        // Use the bounded fallback below.
+      }
+      throw InternetRelayException(
+        message ?? 'Pre-start position service rejected the request.',
+        retryable:
+            response.statusCode == 404 ||
+            response.statusCode == 429 ||
+            response.statusCode >= 500,
+        unauthorized: response.statusCode == 401 || response.statusCode == 403,
+        statusCode: response.statusCode,
+      );
+    }
+    try {
+      final decoded = jsonDecode(utf8.decode(responseBytes));
+      if (decoded is! Map ||
+          decoded['protocolVersion'] != 1 ||
+          decoded['ttlSeconds'] is! int ||
+          decoded['positions'] is! List) {
+        throw const FormatException('Invalid presence response envelope.');
+      }
+      final ttlSeconds = (decoded['ttlSeconds'] as int).clamp(15, 300);
+      final values = decoded['positions'] as List;
+      if (values.length > 1000) {
+        throw const FormatException('Too many pre-start positions.');
+      }
+      final locations = values
+          .map((value) {
+            if (value is! Map) {
+              throw const FormatException('Invalid pre-start position.');
+            }
+            final raw = Map<String, Object?>.from(value);
+            final expiresAt = DateTime.parse(raw['expiresAt']! as String);
+            if (!expiresAt.isAfter(_clock())) {
+              throw const FormatException(
+                'Expired pre-start position returned.',
+              );
+            }
+            return RiderLocation.fromJson(raw);
+          })
+          .toList(growable: false);
+      return PreStartPresenceResult(
+        locations: List.unmodifiable(locations),
+        ttl: Duration(seconds: ttlSeconds),
+      );
+    } on InternetRelayException {
+      rethrow;
+    } on Object catch (error) {
+      throw InternetRelayException(
+        'Invalid pre-start position response: $error',
+      );
+    }
+  }
+
+  Uri _presenceUri(String rideId) {
+    final base = configuration.baseUri!;
+    final baseText = base.toString().endsWith('/')
+        ? base.toString().substring(0, base.toString().length - 1)
+        : base.toString();
+    return Uri.parse(
+      '$baseText/v1/rides/${Uri.encodeComponent(rideId)}/presence:sync',
+    );
   }
 
   @override

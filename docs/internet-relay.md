@@ -36,7 +36,7 @@ X-TailEndCharlie-Protocol: 1
 X-TailEndCharlie-Platform: iOS|android|...
 X-TailEndCharlie-App-Version: <version>
 X-TailEndCharlie-App-Build: <build>
-X-TailEndCharlie-Capabilities: ride-start-v1,membership-v1,route-revisions-v1
+X-TailEndCharlie-Capabilities: ride-start-v1,membership-v1,route-revisions-v1,pre-start-presence-v1
 ```
 
 The server advertises its minimum/maximum protocol, supported and required
@@ -66,6 +66,35 @@ retire the old hostname until supported clients have received the new endpoint.
 Nearby and internet acknowledgements remain separate. A server-acknowledged
 event is still eligible for nearby carriage, which lets a connected phone move
 events back into a group without coverage.
+
+### Pre-start assembly presence
+
+When a rider explicitly enables foreground location before the leader starts
+the ride, a capability-gated client can exchange only that rider's latest
+position:
+
+```text
+POST {base}/v1/rides/{ride-id}/presence:sync
+Authorization: Bearer rr1_<derived-ride-token>
+X-Ride-Relay-Device: <device-id>
+X-TailEndCharlie-Capabilities: pre-start-presence-v1
+```
+
+This endpoint does not use the event journal. It replaces one in-memory
+position per rider, expires positions after 45 seconds by default, and clears
+the ride's cache when a `rideStarted` or `rideEnded` event is observed. These
+positions therefore do not create rider tracks, route progress, ride
+statistics, off-course alerts, summaries, or GPX data.
+
+The initial implementation is internet-relay-only and process-local. Run one
+relay worker until the cache is moved to a shared short-lived store; otherwise
+different workers can return different assembly snapshots. Nearby exchange is
+a separate follow-up for groups without mobile data.
+
+External monitoring can reuse this latest-position model, but must not reuse
+the group invite as a public tracking credential. It needs a separate,
+revocable, least-privilege observer token, explicit sharing controls, and the
+same short retention before it is exposed outside the ride group.
 
 ## API contract
 

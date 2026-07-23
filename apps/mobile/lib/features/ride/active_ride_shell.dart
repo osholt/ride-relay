@@ -11,6 +11,7 @@ import '../../controllers/internet_relay_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/marker_assistance_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
+import '../../controllers/pre_start_presence_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/ride_simulation_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
@@ -25,6 +26,7 @@ import '../../domain/imported_route.dart' as route_domain;
 import '../../domain/quick_message.dart';
 import '../../domain/ride_event.dart';
 import '../../domain/ride_role.dart';
+import '../../domain/rider_location.dart';
 import '../../domain/rider_color.dart';
 import '../../domain/route_alert.dart';
 import '../../domain/route_store.dart';
@@ -305,7 +307,7 @@ class _PreStartRidePanel extends StatelessWidget {
                         style: TextStyle(fontWeight: FontWeight.w800),
                       ),
                       Text(
-                        'Ride $rideCode · No locations or traces are shared yet',
+                        'Ride $rideCode · Current positions only · no tracks recorded',
                         style: const TextStyle(
                           color: Color(0xFFA9B4C2),
                           fontSize: 12,
@@ -382,6 +384,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   MarkerAssistanceController? _markerAssistanceController;
   NearbyRelayController? _relayController;
   InternetRelayController? _internetRelayController;
+  PreStartPresenceController? _preStartPresenceController;
   SharedPreferencesInternetCursorStore? _internetCursorStore;
   RideSimulationController? _simulationController;
   InMemoryRouteStore? _simulationRouteStore;
@@ -547,7 +550,24 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         DeviceLocationSource(),
         (sample) async {
           final startedAt = widget.rideController.rideStartedAt;
-          if (startedAt == null || sample.recordedAt.isBefore(startedAt)) {
+          if (startedAt == null) {
+            final currentSession = widget.rideController.session;
+            if (currentSession != null) {
+              _preStartPresenceController?.updateLocalPosition(
+                RiderLocation(
+                  riderId: currentSession.localRiderId,
+                  displayName: currentSession.displayName,
+                  role: currentSession.role,
+                  sample: sample,
+                  receivedAt: DateTime.now(),
+                  motorcycleStyle: currentSession.motorcycleStyle,
+                  riderColor: currentSession.riderColor,
+                ),
+              );
+            }
+            return;
+          }
+          if (sample.recordedAt.isBefore(startedAt)) {
             return;
           }
           final awareness = _awarenessController;
@@ -584,6 +604,17 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
                   _onReceivedEvent(event, RideTransportEvidence.internetRelay),
             );
         await internetRelayController.start(session);
+        final preStartPresenceController = PreStartPresenceController(
+          HttpPreStartPresenceClient(
+            configuration: InternetRelayConfiguration.fromEnvironment(),
+            client: http.Client(),
+          ),
+        );
+        _preStartPresenceController = preStartPresenceController;
+        preStartPresenceController.addListener(_onPreStartPresenceChanged);
+        if (!widget.rideController.rideStarted) {
+          await preStartPresenceController.start(session);
+        }
       }
       if (session != null && session.inviteSecret.length >= 16) {
         final relayController = NearbyRelayController(
@@ -997,7 +1028,10 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       for (final participant in widget.rideController.participants)
         participant.riderId: participant,
     };
-    final visibleRiderLocations = awareness.riderLocations
+    final locationSource = !_isSimulation && !widget.rideController.rideStarted
+        ? _preStartPresenceController?.locations ?? const <RiderLocation>[]
+        : awareness.riderLocations;
+    final visibleRiderLocations = locationSource
         .where(
           (location) =>
               participants[location.riderId]?.isEligibleForLivePosition ??
@@ -1150,7 +1184,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
           ) ??
           Future<void>.value(),
     );
-    if (updateDerivedState) {
+    if (updateDerivedState && widget.rideController.rideStarted) {
       final session = widget.rideController.session;
       _leaderStatus.value = session == null
           ? null
@@ -1164,6 +1198,8 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
                   .toList(growable: false),
               route: awareness.route,
             );
+    } else if (!widget.rideController.rideStarted) {
+      _leaderStatus.value = null;
     }
   }
 
@@ -1368,6 +1404,9 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       _awarenessController?.updateLocalSession(session);
       _updateMapOverlays();
       unawaited(_synchroniseRideControllers());
+      if (widget.rideController.rideStarted) {
+        unawaited(_preStartPresenceController?.stop());
+      }
     }
     if (widget.rideController.rideEnded && !_rideEndHandled) {
       unawaited(_handleRideEnded());
@@ -1417,7 +1456,13 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     _stalenessTimer?.cancel();
     _simulationAwarenessTimer?.cancel();
     _stalenessTimer = null;
+    await _preStartPresenceController?.stop();
     await _locationController?.stop();
+  }
+
+  void _onPreStartPresenceChanged() {
+    if (!mounted || widget.rideController.rideStarted) return;
+    _updateMapOverlays();
   }
 
   void _schedulePublish() {
@@ -2081,7 +2126,14 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       locationController: widget.enableNativeServices && !_isSimulation
           ? _locationController
           : null,
+      onLocationStopped: _clearPreStartPresence,
     );
+  }
+
+  Future<void> _clearPreStartPresence() async {
+    if (!widget.rideController.rideStarted) {
+      await _preStartPresenceController?.clearLocalPosition();
+    }
   }
 
   Future<void> _removeEndedRide() async {
@@ -2092,6 +2144,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
 
   Future<void> _leaveRide() async {
     _simulationController?.pause();
+    await _preStartPresenceController?.stop();
     final rideId = widget.rideController.session?.rideId;
     if (rideId != null) await _internetCursorStore?.clear(rideId);
     await widget.rideController.leaveRide(
@@ -2109,6 +2162,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     widget.sharedRoutes.removeListener(_onSharedRoutesChanged);
     _simulationController?.removeListener(_onSimulationVisualChanged);
     _simulationController?.dispose();
+    _preStartPresenceController?.removeListener(_onPreStartPresenceChanged);
     _awarenessController?.removeListener(_onAwarenessChanged);
     _markerAssistanceController?.dispose();
     _awarenessController?.dispose();
@@ -2119,6 +2173,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     _locationController?.dispose();
     unawaited(_relayController?.close());
     unawaited(_internetRelayController?.close());
+    unawaited(_preStartPresenceController?.close());
     _mapPosition.dispose();
     _mapNavigationPosition.dispose();
     _mapOverlays.dispose();

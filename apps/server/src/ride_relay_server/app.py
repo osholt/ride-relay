@@ -47,6 +47,8 @@ from .schemas import (
     DiscoverySuggestionRequest,
     GetPlanResponse,
     JoinCodeResponse,
+    PresenceSyncRequest,
+    PresenceSyncResponse,
     RegisterJoinCodeRequest,
     SyncRequest,
 )
@@ -143,6 +145,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.engine = engine
     app.state.session_factory = session_factory
+    app.state.service = service
 
     def database_session():
         yield from session_dependency(session_factory)
@@ -561,6 +564,74 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if len(encoded) > settings.maximum_response_bytes:
             raise RelayServiceError(500, "Relay response exceeded its safety limit")
         sync_requests.labels(outcome="success").inc()
+        return Response(content=encoded, media_type="application/json")
+
+    @app.post(
+        "/api/v1/rides/{ride_id}/presence:sync",
+        include_in_schema=False,
+        response_model=None,
+    )
+    async def synchronize_pre_start_presence(
+        ride_id: str,
+        request: Request,
+        session: Session = Depends(database_session),
+    ) -> Response:
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                if int(content_length) > settings.maximum_request_bytes:
+                    raise RelayServiceError(413, "Presence request exceeds size limit")
+            except ValueError as error:
+                raise RelayServiceError(400, "Invalid content length") from error
+        chunks = bytearray()
+        async for chunk in request.stream():
+            if len(chunks) + len(chunk) > settings.maximum_request_bytes:
+                raise RelayServiceError(413, "Presence request exceeds size limit")
+            chunks.extend(chunk)
+        body = bytes(chunks)
+        if "application/json" not in request.headers.get("content-type", "").lower():
+            raise RelayServiceError(400, "Content type must be application/json")
+
+        authorization = request.headers.get("authorization", "")
+        if not authorization.startswith("Bearer "):
+            raise RelayServiceError(401, "Ride credential required")
+        bearer_token = authorization[7:]
+        client_ip = request.client.host if request.client is not None else "unknown"
+        retry_after = limiter.check(f"ip:{client_ip}")
+        if retry_after is None:
+            retry_after = limiter.check(f"token:{token_hash(bearer_token).hex()}")
+        if retry_after is not None:
+            return JSONResponse(
+                status_code=429,
+                headers={"retry-after": str(min(retry_after, 300))},
+                content={"error": "Rate limit exceeded"},
+            )
+
+        try:
+            payload = PresenceSyncRequest.model_validate_json(body)
+        except (ValidationError, json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise RelayServiceError(400, "Malformed presence request") from error
+        request_protocol = client_protocol(request, payload.protocolVersion)
+        if compatibility_error := client_compatibility_error(request, request_protocol):
+            return compatibility_error
+        capabilities = {
+            value.strip()
+            for value in request.headers.get("x-tailendcharlie-capabilities", "").split(",")
+            if value.strip()
+        }
+        if "pre-start-presence-v1" not in capabilities:
+            raise RelayServiceError(400, "Pre-start presence capability is required")
+        result = service.synchronize_pre_start_presence(
+            session,
+            ride_id=ride_id,
+            bearer_token=bearer_token,
+            device_header=request.headers.get("x-ride-relay-device", ""),
+            request=payload,
+        )
+        response = PresenceSyncResponse.model_validate(result).model_dump(mode="json")
+        encoded = json.dumps(response, separators=(",", ":"), allow_nan=False).encode()
+        if len(encoded) > settings.maximum_response_bytes:
+            raise RelayServiceError(500, "Presence response exceeded its safety limit")
         return Response(content=encoded, media_type="application/json")
 
     return app

@@ -235,10 +235,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Waiting to start'), findsOneWidget);
-    expect(
-      find.textContaining('No locations or traces are shared yet'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('Current positions only'), findsOneWidget);
     expect(find.byKey(const Key('pre-start-roster')), findsOneWidget);
     expect(find.text('Oliver (you)'), findsOneWidget);
     expect(controller.rideStarted, isFalse);

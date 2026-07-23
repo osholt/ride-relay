@@ -69,6 +69,7 @@ class Settings(BaseSettings):
         default_factory=lambda: [
             "ride-start-v1",
             "membership-v1",
+            "pre-start-presence-v1",
             "route-revisions-v1",
         ]
     )
@@ -88,6 +89,8 @@ class Settings(BaseSettings):
     plan_create_rate_limit_window_seconds: int = Field(default=3600, ge=1, le=86400)
     plan_lookup_rate_limit_requests: int = Field(default=30, ge=1, le=1000)
     plan_lookup_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
+    pre_start_presence_ttl_seconds: int = Field(default=45, ge=15, le=300)
+    maximum_pre_start_presence_riders: int = Field(default=200, ge=2, le=1000)
 
     @field_validator("data_encryption_key", "cursor_signing_key")
     @classmethod

@@ -14,12 +14,14 @@ class SituationalAwarenessScreen extends StatelessWidget {
     this.showAppBar = true,
     this.locationController,
     this.rideStarted = true,
+    this.onLocationStopped,
   });
 
   final SituationalAwarenessController controller;
   final bool showAppBar;
   final ForegroundLocationController? locationController;
   final bool rideStarted;
+  final Future<void> Function()? onLocationStopped;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -43,9 +45,20 @@ class SituationalAwarenessScreen extends StatelessWidget {
               if (!rideStarted) ...[
                 const SizedBox(height: 12),
                 const _PreStartLocationCard(),
+                if (locationController case final locationController?) ...[
+                  const SizedBox(height: 12),
+                  ForegroundLocationCard(
+                    controller: locationController,
+                    preStart: true,
+                    onStopped: onLocationStopped,
+                  ),
+                ],
               ] else if (locationController case final locationController?) ...[
                 const SizedBox(height: 12),
-                ForegroundLocationCard(controller: locationController),
+                ForegroundLocationCard(
+                  controller: locationController,
+                  onStopped: onLocationStopped,
+                ),
               ],
               const SizedBox(height: 20),
               _SectionHeader(
@@ -147,19 +160,27 @@ class _PreStartLocationCard extends StatelessWidget {
   Widget build(BuildContext context) => const Card(
     child: ListTile(
       leading: Icon(Icons.location_off_outlined, color: Color(0xFFFFC857)),
-      title: Text('Location sharing has not started'),
+      title: Text('Current position only before departure'),
       subtitle: Text(
-        'You can join and check the roster now. Coordinates, route progress '
-        'and traces begin only when the ride leader starts the ride.',
+        'If you enable location, the group can see only your latest fresh '
+        'position. Tracks, route progress and ride statistics begin when the '
+        'leader starts the ride.',
       ),
     ),
   );
 }
 
 class ForegroundLocationCard extends StatelessWidget {
-  const ForegroundLocationCard({super.key, required this.controller});
+  const ForegroundLocationCard({
+    super.key,
+    required this.controller,
+    this.preStart = false,
+    this.onStopped,
+  });
 
   final ForegroundLocationController controller;
+  final bool preStart;
+  final Future<void> Function()? onStopped;
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
@@ -184,8 +205,10 @@ class ForegroundLocationCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Your foreground location',
+                    Text(
+                      preStart
+                          ? 'Your assembly position'
+                          : 'Your foreground location',
                       style: TextStyle(fontWeight: FontWeight.w700),
                     ),
                     const SizedBox(height: 3),
@@ -203,7 +226,10 @@ class ForegroundLocationCard extends StatelessWidget {
                     status.state == DeviceLocationState.permissionDeniedForever
                     ? null
                     : controller.sharing
-                    ? controller.stop
+                    ? () async {
+                        await controller.stop();
+                        await onStopped?.call();
+                      }
                     : controller.requestAndStart,
                 child: Text(controller.sharing ? 'Stop' : _actionLabel(status)),
               ),

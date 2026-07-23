@@ -24,6 +24,62 @@ class SyncResponse(BaseModel):
     events: list[dict[str, Any]]
 
 
+class PresencePoint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+
+
+class PresenceLocationSample(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    position: PresencePoint
+    recordedAt: datetime
+    accuracyMeters: float = Field(ge=0, le=500)
+    speedMetersPerSecond: float | None = Field(default=None, ge=0, le=100)
+    headingDegrees: float | None = Field(default=None, ge=0, lt=360)
+
+
+class PresencePositionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    displayName: str = Field(min_length=1, max_length=80)
+    role: Literal["lead", "rider", "tailEndCharlie", "marker"]
+    motorcycleStyle: str = Field(min_length=1, max_length=40)
+    riderColor: str = Field(min_length=1, max_length=40)
+    sample: PresenceLocationSample
+
+
+class PresenceSyncRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    protocolVersion: Literal[1]
+    deviceId: str = Field(min_length=1, max_length=128)
+    position: PresencePositionRequest | None = None
+    clear: bool = False
+
+    @model_validator(mode="after")
+    def clear_cannot_publish(self) -> PresenceSyncRequest:
+        if self.clear and self.position is not None:
+            raise ValueError("A presence request cannot publish and clear together")
+        return self
+
+
+class PresencePositionResponse(PresencePositionRequest):
+    riderId: str
+    receivedAt: datetime
+    expiresAt: datetime
+
+
+class PresenceSyncResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    protocolVersion: Literal[1] = 1
+    ttlSeconds: int
+    positions: list[PresencePositionResponse]
+
+
 class RegisterJoinCodeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
