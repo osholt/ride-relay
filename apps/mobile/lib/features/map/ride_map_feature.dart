@@ -41,6 +41,7 @@ import '../../services/trail_direction_arrows.dart';
 import 'destination_route_sheet.dart';
 import 'motorcycle_icon.dart';
 import 'navigation_export_sheet.dart';
+import 'route_review_screen.dart';
 
 @visibleForTesting
 bool shouldUseTiledGroupMiniMap({
@@ -2232,7 +2233,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     try {
       final route = await widget.routeImporter.importFromPicker();
       if (route == null) return;
-      await _activateRoute(route);
+      await _reviewAndActivateRoute(route);
     } on FormatException catch (error) {
       _showMessage(error.message);
     } catch (error) {
@@ -2261,7 +2262,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
           bytes: Uint8List.fromList(utf8.encode(plan.gpx)),
         ),
       );
-      await _activateRoute(route);
+      await _reviewAndActivateRoute(route);
     } on PlanDirectoryException catch (error) {
       _showMessage(error.message);
     } on FormatException catch (error) {
@@ -2306,47 +2307,72 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   Future<void> _planDestination() async {
     if (_routing) return;
-    final request = await DestinationRouteSheet.show(context);
-    if (request == null || !mounted) return;
-    setState(() => _routing = true);
-    try {
-      final hasStartQuery = (request.startQuery ?? '').trim().isNotEmpty;
-      GeoPoint? origin;
-      if (!hasStartQuery) {
-        origin = _effectivePosition;
-        origin ??= await widget.acquireCurrentPosition?.call();
-        origin ??= _effectivePosition;
-        if (origin == null) {
-          throw const FormatException(
-            'A current location is required. Allow location access, or give '
-            'a start location instead, and try again.',
-          );
-        }
-      }
-      final planned = await _destinationRoutePlanner.plan(
-        origin: origin,
-        originQuery: request.startQuery,
-        query: request.query,
-        distanceUnit: widget.distanceUnit,
+    DestinationPlanRequest? request;
+    ImportedRoute? previousCandidate;
+    while (mounted) {
+      if (!mounted) return;
+      request = await DestinationRouteSheet.show(
+        context,
+        initialRequest: request,
       );
-      final route = await _activateRoute(planned);
-      if (mounted) {
-        final target = request.handoffTarget;
-        if (target != null) await _exportRoute(target, route);
+      if (request == null || !mounted) return;
+      setState(() => _routing = true);
+      try {
+        final hasStartQuery = (request.startQuery ?? '').trim().isNotEmpty;
+        GeoPoint? origin;
+        if (!hasStartQuery) {
+          origin = _effectivePosition;
+          origin ??= await widget.acquireCurrentPosition?.call();
+          origin ??= _effectivePosition;
+          if (origin == null) {
+            throw const FormatException(
+              'A current location is required. Allow location access, or give '
+              'a start location instead, and try again.',
+            );
+          }
+        }
+        final planned = await _destinationRoutePlanner.planForReview(
+          origin: origin,
+          originQuery: request.startQuery,
+          stopQueries: request.stopQueries,
+          query: request.query,
+          distanceUnit: widget.distanceUnit,
+        );
+        final review = await _reviewRoute(
+          planned.route,
+          distanceMeters: planned.distanceMeters,
+          duration: planned.duration,
+          warnings: planned.warnings,
+          canEditStops: true,
+          previousRoute: previousCandidate,
+        );
+        if (review.action == RouteReviewAction.edit) {
+          previousCandidate = review.route;
+          continue;
+        }
+        if (review.action != RouteReviewAction.confirm) return;
+        final route = await _commitRoute(review.route);
+        if (mounted) {
+          final target = request.handoffTarget;
+          if (target != null) await _exportRoute(target, route);
+        }
+        return;
+      } on FormatException catch (error) {
+        _showMessage(error.message);
+        return;
+      } on Object catch (error) {
+        _showMessage('Could not plan destination: $error');
+        return;
+      } finally {
+        if (mounted) setState(() => _routing = false);
       }
-    } on FormatException catch (error) {
-      _showMessage(error.message);
-    } on Object catch (error) {
-      _showMessage('Could not plan destination: $error');
-    } finally {
-      if (mounted) setState(() => _routing = false);
     }
   }
 
   Future<void> _loadDemoRoute() async {
     try {
       final loader = widget.demoRouteLoader ?? _loadBundledDemoRoute;
-      await _activateRoute(await loader());
+      await _reviewAndActivateRoute(await loader());
     } catch (error) {
       _showMessage('Could not load demo route: $error');
     }
@@ -2391,13 +2417,36 @@ class _RideMapScreenState extends State<RideMapScreen> {
         ),
       );
       if (selected == null || !mounted) return;
-      await _activateRoute(selected);
+      await _reviewAndActivateRoute(selected);
     } catch (error) {
       _showMessage('Could not load recorded routes: $error');
     }
   }
 
-  Future<ImportedRoute> _activateRoute(ImportedRoute route) async {
+  Future<ImportedRoute?> _reviewAndActivateRoute(
+    ImportedRoute route, {
+    double? distanceMeters,
+    Duration? duration,
+    List<String> warnings = const [],
+  }) async {
+    final review = await _reviewRoute(
+      route,
+      distanceMeters: distanceMeters,
+      duration: duration,
+      warnings: warnings,
+    );
+    if (review.action != RouteReviewAction.confirm) return null;
+    return _commitRoute(review.route);
+  }
+
+  Future<({RouteReviewAction action, ImportedRoute route})> _reviewRoute(
+    ImportedRoute route, {
+    double? distanceMeters,
+    Duration? duration,
+    List<String> warnings = const [],
+    bool canEditStops = false,
+    ImportedRoute? previousRoute,
+  }) async {
     if (!widget.canEditRoute) {
       throw const FormatException(
         'Only the ride leader can replace the group route.',
@@ -2405,6 +2454,33 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
     final enrichment = await _routeGeometryEnricher.enrich(route);
     final activeRoute = enrichment.route;
+    if (!mounted) {
+      return (action: RouteReviewAction.cancel, route: activeRoute);
+    }
+    final reviewWarnings = [
+      ...warnings,
+      ?enrichment.warning,
+      if (enrichment.attempted &&
+          !enrichment.changed &&
+          enrichment.warning != null)
+        'Online road recalculation was unavailable. The original geometry is '
+            'shown and remains usable offline.',
+    ];
+    final action = await RouteReviewScreen.show(
+      context,
+      route: activeRoute,
+      distanceUnit: widget.distanceUnit,
+      basemapConfiguration: _basemap,
+      distanceMeters: distanceMeters,
+      duration: duration,
+      warnings: reviewWarnings,
+      previousRoute: previousRoute ?? _route,
+      canEditStops: canEditStops,
+    );
+    return (action: action, route: activeRoute);
+  }
+
+  Future<ImportedRoute> _commitRoute(ImportedRoute activeRoute) async {
     await widget.routeStore.saveActiveRoute(activeRoute);
     if (!mounted) return activeRoute;
     _routeProgressTracker.reset();
@@ -2424,14 +2500,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _fitRoute();
     if (_navigationMode) unawaited(_followNavigationCamera());
     widget.onRouteChanged?.call(activeRoute);
-    final routeMessage = enrichment.changed
-        ? '${activeRoute.name}: matched to roads and stored offline '
-              '(${activeRoute.pathPointCount} points).'
-        : '${activeRoute.name}: ${activeRoute.pathPointCount} route points stored offline.';
     _showMessage(
-      enrichment.warning == null
-          ? routeMessage
-          : '$routeMessage ${enrichment.warning}',
+      '${activeRoute.name}: confirmed and stored offline '
+      '(${activeRoute.pathPointCount} points).',
     );
     return activeRoute;
   }
@@ -2768,7 +2839,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
           ),
         ],
       );
-      await _activateRoute(route);
+      await _reviewAndActivateRoute(route);
     } on Object catch (error) {
       _showMessage('Could not route via ${feature.name}: $error');
     } finally {
@@ -3042,7 +3113,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   Future<void> _importSharedGpx(PickedGpxFile file) async {
     try {
       final route = widget.routeImporter.importFromFile(file);
-      await _activateRoute(route);
+      await _reviewAndActivateRoute(route);
     } on FormatException catch (error) {
       _showMessage(error.message);
     } on Object catch (error) {
@@ -3059,61 +3130,63 @@ class _RideMapScreenState extends State<RideMapScreen> {
       context: context,
       showDragHandle: true,
       builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.add_road),
-              title: const Text('Plan a destination'),
-              onTap: () {
-                Navigator.of(sheetContext).pop();
-                _planDestination();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.upload_file),
-              title: Text(
-                _route == null ? 'Import GPX route' : 'Replace GPX route',
-              ),
-              onTap: () {
-                Navigator.of(sheetContext).pop();
-                _importGpx();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.qr_code),
-              title: const Text('Load a planned route'),
-              onTap: () {
-                Navigator.of(sheetContext).pop();
-                _loadPlannedRoute();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.route_outlined),
-              title: const Text('Load demo route'),
-              onTap: () {
-                Navigator.of(sheetContext).pop();
-                _loadDemoRoute();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.fiber_manual_record_outlined),
-              title: const Text('Use a recorded route'),
-              onTap: () {
-                Navigator.of(sheetContext).pop();
-                _useRecordedRoute();
-              },
-            ),
-            if (_route != null)
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
               ListTile(
-                leading: const Icon(Icons.delete_outline),
-                title: const Text('Remove route'),
+                leading: const Icon(Icons.add_road),
+                title: const Text('Plan a destination'),
                 onTap: () {
                   Navigator.of(sheetContext).pop();
-                  _handleMenuAction(_MapAction.removeRoute);
+                  _planDestination();
                 },
               ),
-          ],
+              ListTile(
+                leading: const Icon(Icons.upload_file),
+                title: Text(
+                  _route == null ? 'Import GPX route' : 'Replace GPX route',
+                ),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  _importGpx();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.qr_code),
+                title: const Text('Load a planned route'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  _loadPlannedRoute();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.route_outlined),
+                title: const Text('Load demo route'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  _loadDemoRoute();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.fiber_manual_record_outlined),
+                title: const Text('Use a recorded route'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  _useRecordedRoute();
+                },
+              ),
+              if (_route != null)
+                ListTile(
+                  leading: const Icon(Icons.delete_outline),
+                  title: const Text('Remove route'),
+                  onTap: () {
+                    Navigator.of(sheetContext).pop();
+                    _handleMenuAction(_MapAction.removeRoute);
+                  },
+                ),
+            ],
+          ),
         ),
       ),
     );

@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Query, Request, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -20,7 +20,7 @@ from prometheus_client import (
 )
 from pydantic import ValidationError
 from sqlalchemy import text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from .config import Settings, get_settings
 from .crypto import CursorCodec, DataCipher, base64url, sha256, token_hash
@@ -38,6 +38,7 @@ from .discovery import (
     purge_expired_private_suggestions,
     suggestion_json,
 )
+from .push import PushDispatcher, register_push, registration_json, revoke_push
 from .rate_limit import SlidingWindowRateLimiter
 from .schemas import (
     CompatibilityResponse,
@@ -49,6 +50,8 @@ from .schemas import (
     JoinCodeResponse,
     PresenceSyncRequest,
     PresenceSyncResponse,
+    PushRegistrationRequest,
+    PushRegistrationResponse,
     RegisterJoinCodeRequest,
     SyncRequest,
 )
@@ -119,12 +122,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ("outcome",),
         registry=registry,
     )
+    push_deliveries = Counter(
+        "ride_relay_push_deliveries_total",
+        "Best-effort push delivery outcomes without recipient or payload labels",
+        ("outcome",),
+        registry=registry,
+    )
+    push_dispatcher = PushDispatcher.from_settings(settings, cipher)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         if settings.auto_create_schema:
             initialize_schema(engine)
         yield
+        push_dispatcher.close()
         engine.dispose()
 
     app = FastAPI(
@@ -146,6 +157,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.engine = engine
     app.state.session_factory = session_factory
     app.state.service = service
+    app.state.push_dispatcher = push_dispatcher
 
     def database_session():
         yield from session_dependency(session_factory)
@@ -489,6 +501,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def synchronize(
         ride_id: str,
         request: Request,
+        background_tasks: BackgroundTasks,
         session: Session = Depends(database_session),
     ) -> Response:
         started = time.monotonic()
@@ -564,7 +577,58 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if len(encoded) > settings.maximum_response_bytes:
             raise RelayServiceError(500, "Relay response exceeded its safety limit")
         sync_requests.labels(outcome="success").inc()
+        if parsed.events:
+            background_tasks.add_task(
+                _dispatch_push_events,
+                session_factory,
+                push_dispatcher,
+                push_deliveries,
+                ride_id,
+                parsed.events,
+            )
         return Response(content=encoded, media_type="application/json")
+
+    @app.put(
+        "/api/v1/rides/{ride_id}/push-registrations/{installation_id}",
+        response_model=PushRegistrationResponse,
+    )
+    def put_push_registration(
+        ride_id: str,
+        installation_id: str,
+        payload: PushRegistrationRequest,
+        request: Request,
+        session: Session = Depends(database_session),
+    ) -> dict[str, object]:
+        registration = register_push(
+            session,
+            cipher=cipher,
+            ride_id=ride_id,
+            bearer_token=_ride_bearer(request),
+            installation_id=installation_id,
+            device_header=request.headers.get("x-ride-relay-device", ""),
+            request=payload,
+        )
+        return registration_json(registration)
+
+    @app.delete(
+        "/api/v1/rides/{ride_id}/push-registrations/{installation_id}",
+        status_code=204,
+        response_model=None,
+    )
+    def delete_push_registration(
+        ride_id: str,
+        installation_id: str,
+        request: Request,
+        session: Session = Depends(database_session),
+    ) -> Response:
+        revoke_push(
+            session,
+            ride_id=ride_id,
+            bearer_token=_ride_bearer(request),
+            installation_id=installation_id,
+            device_header=request.headers.get("x-ride-relay-device", ""),
+        )
+        return Response(status_code=204)
 
     @app.post(
         "/api/v1/rides/{ride_id}/presence:sync",
@@ -635,6 +699,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return Response(content=encoded, media_type="application/json")
 
     return app
+
+
+def _ride_bearer(request: Request) -> str:
+    authorization = request.headers.get("authorization", "")
+    if not authorization.startswith("Bearer "):
+        raise RelayServiceError(401, "Ride credential required")
+    return authorization[7:]
+
+
+def _dispatch_push_events(
+    session_factory: sessionmaker[Session],
+    dispatcher: PushDispatcher,
+    delivery_counter: Counter,
+    ride_id: str,
+    events: list[dict[str, object]],
+) -> None:
+    with session_factory() as session:
+        try:
+            report = dispatcher.dispatch(session, ride_id=ride_id, events=events)
+            for outcome, count in (
+                ("delivered", report.delivered),
+                ("failed", report.failed),
+                ("not_configured", report.not_configured),
+            ):
+                if count:
+                    delivery_counter.labels(outcome=outcome).inc(count)
+        except Exception:
+            # The durable event is already committed. Push is best-effort and
+            # a provider failure must never turn a successful sync into data
+            # loss or expose provider/token details in an API response.
+            session.rollback()
+            delivery_counter.labels(outcome="dispatch_error").inc()
 
 
 def default_app() -> FastAPI:

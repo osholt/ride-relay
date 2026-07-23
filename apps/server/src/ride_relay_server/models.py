@@ -4,6 +4,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     ForeignKey,
     Index,
@@ -35,6 +36,10 @@ class Ride(Base):
         cascade="all, delete-orphan",
     )
     replays: Mapped[list[IdempotencyReplay]] = relationship(
+        back_populates="ride",
+        cascade="all, delete-orphan",
+    )
+    push_registrations: Mapped[list[PushRegistration]] = relationship(
         back_populates="ride",
         cascade="all, delete-orphan",
     )
@@ -117,6 +122,83 @@ class IdempotencyReplay(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     ride: Mapped[Ride] = relationship(back_populates="replays")
+
+
+class PushRegistration(Base):
+    """Encrypted provider token bound to one installation and live ride."""
+
+    __tablename__ = "push_registrations"
+    __table_args__ = (
+        UniqueConstraint(
+            "ride_id",
+            "installation_id",
+            "provider",
+            name="uq_push_registration_installation",
+        ),
+        Index("ix_push_registrations_active", "ride_id", "revoked_at"),
+        Index("ix_push_registrations_token", "provider", "token_hash"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ride_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("rides.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    installation_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    platform: Mapped[str] = mapped_column(String(16), nullable=False)
+    provider: Mapped[str] = mapped_column(String(16), nullable=False)
+    token_hash: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
+    token_ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    safety_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    status_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    administrative_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    ride: Mapped[Ride] = relationship(back_populates="push_registrations")
+    deliveries: Mapped[list[PushDelivery]] = relationship(
+        back_populates="registration",
+        cascade="all, delete-orphan",
+    )
+
+
+class PushDelivery(Base):
+    """One provider attempt per durable event and recipient registration."""
+
+    __tablename__ = "push_deliveries"
+    __table_args__ = (
+        UniqueConstraint(
+            "ride_id",
+            "event_id",
+            "registration_id",
+            name="uq_push_delivery_event_recipient",
+        ),
+        Index("ix_push_deliveries_status", "status", "attempted_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ride_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    event_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    registration_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("push_registrations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    category: Mapped[str] = mapped_column(String(24), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    provider_message_id: Mapped[str | None] = mapped_column(String(256))
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    registration: Mapped[PushRegistration] = relationship(back_populates="deliveries")
 
 
 class DiscoverySuggestion(Base):

@@ -201,6 +201,52 @@ void main() {
     },
   );
 
+  test(
+    'destination review preserves ordered stops and reports ambiguity',
+    () async {
+      final search = _FakeDestinationSearchService({
+        'Start': const [
+          DestinationMatch(
+            label: 'Start one',
+            point: GeoPoint(latitude: 53, longitude: -1),
+          ),
+        ],
+        'Stop': const [
+          DestinationMatch(
+            label: 'Stop one',
+            point: GeoPoint(latitude: 53.1, longitude: -1.1),
+          ),
+          DestinationMatch(
+            label: 'Stop two',
+            point: GeoPoint(latitude: 54, longitude: -2),
+          ),
+        ],
+        'Finish': const [
+          DestinationMatch(
+            label: 'Finish one',
+            point: GeoPoint(latitude: 53.2, longitude: -1.2),
+          ),
+        ],
+      });
+      final routing = _FakeRoadRoutingService();
+      final planner = DestinationRoutePlanner(
+        searchService: search,
+        routingService: routing,
+      );
+
+      final plan = await planner.planForReview(
+        originQuery: 'Start',
+        stopQueries: const ['Stop'],
+        query: 'Finish',
+      );
+
+      expect(plan.route.waypoints, hasLength(3));
+      expect(plan.route.waypoints[1].name, 'Stop one');
+      expect(routing.requests.single[1].latitude, 53.1);
+      expect(plan.warnings.single, contains('Stop 1 had 2 possible matches'));
+    },
+  );
+
   test('routing failure preserves the original sparse GPX route', () async {
     final route = ImportedRoute(
       id: 'route',
@@ -252,4 +298,14 @@ class _FailingRoadRoutingService implements RoadRoutingService {
   Future<RoadRouteResult> routeThrough(List<GeoPoint> waypoints) {
     throw const FormatException('offline');
   }
+}
+
+class _FakeDestinationSearchService implements DestinationSearchService {
+  const _FakeDestinationSearchService(this.results);
+
+  final Map<String, List<DestinationMatch>> results;
+
+  @override
+  Future<List<DestinationMatch>> search(String query) async =>
+      results[query] ?? const [];
 }

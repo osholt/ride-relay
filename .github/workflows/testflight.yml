@@ -64,16 +64,23 @@ jobs:
         env:
           BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
           RIDE_RELAY_API_BASE_URL: ${{ vars.RIDE_RELAY_API_BASE_URL }}
+          RIDE_RELAY_FIREBASE_IOS_APP_ID: ${{ vars.RIDE_RELAY_FIREBASE_IOS_APP_ID }}
         run: |
           set -euo pipefail
           test -n "$RIDE_RELAY_API_BASE_URL" || {
             echo "::error::Set the RIDE_RELAY_API_BASE_URL repository variable to the deployed relay's HTTPS base URL (see docs/server-runbook.md)." >&2
             exit 1
           }
+          push_enabled=false
+          if test -n "$RIDE_RELAY_FIREBASE_IOS_APP_ID"; then
+            push_enabled=true
+          fi
           flutter pub get
           flutter build ios --release --no-codesign \
             --build-number="$BUILD_NUMBER" \
-            --dart-define=RIDE_RELAY_API_BASE_URL="$RIDE_RELAY_API_BASE_URL"
+            --dart-define=RIDE_RELAY_API_BASE_URL="$RIDE_RELAY_API_BASE_URL" \
+            --dart-define=RIDE_RELAY_PUSH_ENABLED="$push_enabled" \
+            --dart-define=RIDE_RELAY_FIREBASE_IOS_APP_ID="$RIDE_RELAY_FIREBASE_IOS_APP_ID"
           xcodebuild \
             -workspace ios/Runner.xcworkspace \
             -scheme Runner \

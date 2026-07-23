@@ -9,6 +9,7 @@ CURRENT_CAPABILITIES = [
     "ride-start-v1",
     "membership-v1",
     "pre-start-presence-v1",
+    "push-notifications-v1",
     "route-revisions-v1",
 ]
 

@@ -80,6 +80,44 @@ class PresenceSyncResponse(BaseModel):
     positions: list[PresencePositionResponse]
 
 
+class PushPreferences(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    safety: bool = True
+    status: bool = True
+    administrative: bool = True
+
+
+class PushRegistrationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    platform: Literal["ios", "android"]
+    provider: Literal["apns", "fcm"]
+    token: str = Field(min_length=16, max_length=4096)
+    role: Literal["lead", "rider", "tailEndCharlie", "marker"]
+    preferences: PushPreferences = Field(default_factory=PushPreferences)
+
+    @model_validator(mode="after")
+    def provider_matches_platform(self) -> PushRegistrationRequest:
+        if self.platform == "ios" and self.provider != "apns":
+            raise ValueError("iOS registrations must use APNs")
+        if self.platform == "android" and self.provider != "fcm":
+            raise ValueError("Android registrations must use FCM")
+        return self
+
+
+class PushRegistrationResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    installationId: str
+    platform: Literal["ios", "android"]
+    provider: Literal["apns", "fcm"]
+    role: Literal["lead", "rider", "tailEndCharlie", "marker"]
+    preferences: PushPreferences
+    registeredAt: datetime
+    updatedAt: datetime
+
+
 class RegisterJoinCodeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

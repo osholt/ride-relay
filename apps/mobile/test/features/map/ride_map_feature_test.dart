@@ -16,6 +16,7 @@ import 'package:ride_relay/services/gpx_import_source.dart';
 import 'package:ride_relay/services/leader_ride_status.dart';
 import 'package:ride_relay/services/offline_tile_cache.dart';
 import 'package:ride_relay/services/route_importer.dart';
+import 'package:ride_relay/services/road_routing.dart';
 
 void main() {
   test('Android group mini-map uses the local fallback', () {
@@ -83,16 +84,19 @@ void main() {
       httpClient: MockClient((_) async => http.Response('', 404)),
     );
 
+    final routeStore = _RecordingRouteStore();
+    final publishedRoutes = <ImportedRoute?>[];
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData.dark(useMaterial3: true),
         home: RideMapScreen(
-          routeStore: InMemoryRouteStore(),
+          routeStore: routeStore,
           routeImporter: RouteImporter(source: const _NoFileSource()),
           offlineTileCache: cache,
           overlayMarkers: overlays,
           leaderStatus: leaderStatus,
           distanceUnit: DistanceUnit.miles,
+          onRouteChanged: publishedRoutes.add,
         ),
       ),
     );
@@ -113,16 +117,147 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
+    expect(find.text('Review route'), findsOneWidget);
     expect(
       find.text("King's Oak Academy to Cross Hands Hotel"),
       findsOneWidget,
     );
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('confirm-reviewed-route')),
+      250,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(find.byKey(const Key('confirm-reviewed-route')));
+    for (var i = 0; i < 5; i += 1) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
     expect(find.byTooltip('Navigate or export route'), findsOneWidget);
+    expect(routeStore.savedRoutes, hasLength(1));
+    expect(publishedRoutes.whereType<ImportedRoute>(), hasLength(1));
     expect(find.textContaining('basemap configured'), findsNothing);
     expect(find.text('Download map for offline use'), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
+  });
+
+  testWidgets('cancel keeps the authoritative route unchanged', (tester) async {
+    final directory = Directory.systemTemp.createTempSync('map-cancel-test');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final original = _testRoute(id: 'original', name: 'Original route');
+    final candidate = _testRoute(id: 'candidate', name: 'Candidate route');
+    final store = _RecordingRouteStore(original);
+    final published = <ImportedRoute?>[];
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: store,
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          changeRouteRequestToken: Object(),
+          demoRouteLoader: () async => candidate,
+          onRouteChanged: published.add,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Load demo route'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Review route'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('cancel-reviewed-route')),
+      250,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(find.byKey(const Key('cancel-reviewed-route')));
+    await tester.pumpAndSettle();
+
+    expect((await store.loadActiveRoute())?.id, original.id);
+    expect(store.savedRoutes, isEmpty);
+    expect(published.map((route) => route?.id), [original.id]);
+  });
+
+  testWidgets('editing recalculates before one confirmed route is saved', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync('map-edit-test');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final store = _RecordingRouteStore();
+    final search = _RecordingDestinationSearch();
+    final routing = _StraightRoadRoutingService();
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: store,
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          acquireCurrentPosition: () async =>
+              const GeoPoint(latitude: 51.45, longitude: -2.59),
+          destinationRoutePlanner: DestinationRoutePlanner(
+            searchService: search,
+            routingService: routing,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Enter destination'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('destination-field')), 'Wrong');
+    await tester.tap(find.byKey(const Key('plan-destination-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Wrong place'), findsWidgets);
+    expect(store.savedRoutes, isEmpty);
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('edit-reviewed-route')),
+      250,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(find.byKey(const Key('edit-reviewed-route')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('destination-field')))
+          .controller
+          ?.text,
+      'Wrong',
+    );
+
+    await tester.enterText(
+      find.byKey(const Key('destination-field')),
+      'Correct',
+    );
+    await tester.tap(find.byKey(const Key('plan-destination-button')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Correct place'), findsWidgets);
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('confirm-reviewed-route')),
+      250,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(find.byKey(const Key('confirm-reviewed-route')));
+    await tester.pumpAndSettle();
+
+    expect(search.queries, ['Wrong', 'Correct']);
+    expect(store.savedRoutes, hasLength(1));
+    expect(store.savedRoutes.single.name, 'To Correct place');
   });
 
   testWidgets('forwards the full-screen ride menu through the app wrapper', (
@@ -611,3 +746,68 @@ class _NoFileSource implements GpxImportSource {
   @override
   Future<PickedGpxFile?> pickGpxFile() async => null;
 }
+
+class _RecordingRouteStore implements RouteStore {
+  _RecordingRouteStore([this.route]);
+
+  ImportedRoute? route;
+  final savedRoutes = <ImportedRoute>[];
+
+  @override
+  Future<void> clearActiveRoute() async => route = null;
+
+  @override
+  Future<ImportedRoute?> loadActiveRoute() async => route;
+
+  @override
+  Future<void> saveActiveRoute(ImportedRoute value) async {
+    savedRoutes.add(value);
+    route = value;
+  }
+}
+
+class _RecordingDestinationSearch implements DestinationSearchService {
+  final queries = <String>[];
+
+  @override
+  Future<List<DestinationMatch>> search(String query) async {
+    queries.add(query);
+    return [
+      DestinationMatch(
+        label: '$query place',
+        point: GeoPoint(
+          latitude: query == 'Wrong' ? 52 : 51.5,
+          longitude: query == 'Wrong' ? -1 : -2.5,
+        ),
+      ),
+    ];
+  }
+}
+
+class _StraightRoadRoutingService implements RoadRoutingService {
+  @override
+  Future<RoadRouteResult> routeThrough(List<GeoPoint> waypoints) async =>
+      RoadRouteResult(
+        points: waypoints,
+        distanceMeters: 12000,
+        duration: const Duration(minutes: 22),
+      );
+}
+
+ImportedRoute _testRoute({required String id, required String name}) =>
+    ImportedRoute(
+      id: id,
+      name: name,
+      importedAt: DateTime.utc(2026, 7, 23),
+      sourceFileName: '$id.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 51.45, longitude: -2.59),
+            GeoPoint(latitude: 51.46, longitude: -2.58),
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );

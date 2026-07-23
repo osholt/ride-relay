@@ -45,6 +45,9 @@ phones when mobile coverage disappears.
 - Batch authenticated events through an optional HTTPS relay with durable
   cursors, strict size/time limits, idempotent server acknowledgement, and
   automatic bounded reconnect.
+- Deliver optional, role-targeted APNs/FCM hints for selected durable ride
+  alerts, with encrypted per-ride registrations and privacy-minimised
+  lock-screen text.
 - Deploy the included FastAPI/PostgreSQL relay behind Caddy TLS, with encrypted
   event storage, signed cursors, rate limits, retention cleanup, and health metrics.
 - Export GPX through the native share sheet, hand destinations/previews to
@@ -123,6 +126,9 @@ The deployable internet relay and its contract are documented in
 traffic unless `RIDE_RELAY_API_BASE_URL` is supplied as an HTTPS
 `--dart-define`. Deployment is covered by
 [docs/server-runbook.md](./docs/server-runbook.md).
+Optional role-targeted background alerts and their physical-device release
+gate are documented in
+[docs/push-notifications.md](./docs/push-notifications.md).
 
 Android requires JDK 17 and a current Android SDK. iOS requires Xcode. No Apple
 Developer signing identity is required for the development build:
