@@ -4,6 +4,8 @@ import hmac
 import json
 import math
 import re
+import secrets
+import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -14,18 +16,24 @@ from sqlalchemy.orm import Session
 
 from .config import Settings
 from .crypto import CursorCodec, DataCipher, base64url, sha256, token_hash
-from .models import IdempotencyReplay, Ride, RideJoinCode, StoredEvent
-from .schemas import SyncRequest, SyncResponse
+from .gpx import GpxValidationError, validate_gpx
+from .models import IdempotencyReplay, Ride, RideJoinCode, RidePlan, StoredEvent
+from .schemas import PresenceSyncRequest, SyncRequest, SyncResponse
 
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 JOIN_CODE = re.compile(r"^\d{6}$")
 TOKEN = re.compile(r"^rr1_[A-Za-z0-9_-]{43}$")
 IDEMPOTENCY_KEY = re.compile(r"^rr1-[A-Za-z0-9_-]{43}$")
 SIGNATURE = re.compile(r"^[0-9a-f]{64}$")
+PLAN_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+PLAN_CODE_LENGTH = 8
+PLAN_CODE = re.compile(f"^[{PLAN_CODE_ALPHABET}]{{{PLAN_CODE_LENGTH}}}$")
 EVENT_TYPES = {
     "rideCreated",
     "riderJoined",
+    "riderLeft",
     "roleChanged",
+    "rideStarted",
     "markerStarted",
     "markerPass",
     "markerEnded",
@@ -35,6 +43,11 @@ EVENT_TYPES = {
     "hazardCleared",
     "routeDeviationChanged",
     "routeAlertAcknowledged",
+    "routeRevisionChunk",
+    "routeRevisionPublished",
+    "routeCleared",
+    "ridePaused",
+    "rideResumed",
     "rideEnded",
     "iceInfoShared",
     "iceInfoViewed",
@@ -74,11 +87,69 @@ class ValidatedEvent:
     client_expires_at: datetime | None
 
 
+class _PreStartPresenceRegistry:
+    """Process-local latest-position cache; intentionally never persisted."""
+
+    def __init__(self, *, ttl: timedelta, maximum_riders: int) -> None:
+        self._ttl = ttl
+        self._maximum_riders = maximum_riders
+        self._entries: dict[str, dict[str, dict[str, Any]]] = {}
+        self._lock = threading.Lock()
+
+    @property
+    def ttl_seconds(self) -> int:
+        return int(self._ttl.total_seconds())
+
+    def synchronize(
+        self,
+        *,
+        ride_id: str,
+        rider_id: str,
+        position: dict[str, Any] | None,
+        clear: bool,
+        now: datetime,
+    ) -> list[dict[str, Any]]:
+        with self._lock:
+            for existing_ride_id, existing_ride in list(self._entries.items()):
+                self._purge_expired(existing_ride, now)
+                if not existing_ride:
+                    self._entries.pop(existing_ride_id, None)
+            ride = self._entries.setdefault(ride_id, {})
+            if clear:
+                ride.pop(rider_id, None)
+            elif position is not None:
+                if rider_id not in ride and len(ride) >= self._maximum_riders:
+                    raise RelayServiceError(409, "Pre-start presence capacity reached")
+                ride[rider_id] = {
+                    **position,
+                    "riderId": rider_id,
+                    "receivedAt": now,
+                    "expiresAt": now + self._ttl,
+                }
+            if not ride:
+                self._entries.pop(ride_id, None)
+                return []
+            return [dict(ride[key]) for key in sorted(ride)]
+
+    def clear_ride(self, ride_id: str) -> None:
+        with self._lock:
+            self._entries.pop(ride_id, None)
+
+    @staticmethod
+    def _purge_expired(ride: dict[str, dict[str, Any]], now: datetime) -> None:
+        for rider_id in [rider_id for rider_id, value in ride.items() if value["expiresAt"] <= now]:
+            ride.pop(rider_id, None)
+
+
 class RelayService:
     def __init__(self, settings: Settings, cipher: DataCipher, cursors: CursorCodec) -> None:
         self._settings = settings
         self._cipher = cipher
         self._cursors = cursors
+        self._pre_start_presence = _PreStartPresenceRegistry(
+            ttl=timedelta(seconds=settings.pre_start_presence_ttl_seconds),
+            maximum_riders=settings.maximum_pre_start_presence_riders,
+        )
 
     def synchronize(
         self,
@@ -162,6 +233,59 @@ class RelayService:
             if ride.ended_at is None:
                 ride.delete_after = now + timedelta(hours=self._settings.ride_retention_hours)
             return response
+
+    def synchronize_pre_start_presence(
+        self,
+        session: Session,
+        *,
+        ride_id: str,
+        bearer_token: str,
+        device_header: str,
+        request: PresenceSyncRequest,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        now = now or datetime.now(UTC)
+        self._validate_identity(ride_id, request.deviceId, device_header)
+        if not TOKEN.fullmatch(bearer_token):
+            raise RelayServiceError(401, "Ride credential rejected")
+        ride = session.get(Ride, ride_id)
+        if ride is None:
+            raise RelayServiceError(404, "Ride is not ready for presence")
+        if not hmac.compare_digest(ride.token_hash, token_hash(bearer_token)):
+            raise RelayServiceError(403, "Ride credential rejected")
+        lifecycle_event = session.scalar(
+            select(StoredEvent.event_type)
+            .where(
+                StoredEvent.ride_id == ride_id,
+                StoredEvent.event_type.in_(["rideStarted", "rideEnded"]),
+            )
+            .limit(1)
+        )
+        if lifecycle_event is not None:
+            self._pre_start_presence.clear_ride(ride_id)
+            positions: list[dict[str, Any]] = []
+        else:
+            position = (
+                request.position.model_dump(mode="json") if request.position is not None else None
+            )
+            if position is not None:
+                recorded_at = request.position.sample.recordedAt
+                if recorded_at < now - timedelta(minutes=5):
+                    raise RelayServiceError(400, "Presence sample is too old")
+                if recorded_at > now + timedelta(minutes=2):
+                    raise RelayServiceError(400, "Presence sample is from the future")
+            positions = self._pre_start_presence.synchronize(
+                ride_id=ride_id,
+                rider_id=request.deviceId,
+                position=position,
+                clear=request.clear,
+                now=now,
+            )
+        return {
+            "protocolVersion": 1,
+            "ttlSeconds": self._pre_start_presence.ttl_seconds,
+            "positions": positions,
+        }
 
     def register_join_code(
         self,
@@ -247,6 +371,93 @@ class RelayService:
                 "inviteSecret": secret,
                 "resolveToken": stored_resolve_token,
             }
+
+    def create_plan(
+        self,
+        session: Session,
+        *,
+        name: str | None,
+        gpx: str,
+        now: datetime | None = None,
+    ) -> dict[str, str]:
+        """A plan is unrelated to the live ride/join-code tables: it never
+        carries a ride secret, and fetching one never claims a ride. The
+        phone that loads it still runs its own unchanged create-ride flow.
+        """
+        now = now or datetime.now(UTC)
+        if name is not None and len(name) > 200:
+            raise RelayServiceError(400, "Plan name is too long")
+        try:
+            validate_gpx(
+                gpx,
+                maximum_bytes=self._settings.maximum_plan_bytes,
+                maximum_points=self._settings.maximum_plan_points,
+            )
+        except GpxValidationError as error:
+            raise RelayServiceError(400, str(error)) from error
+        expires_at = now + timedelta(days=self._settings.plan_retention_days)
+        with session.begin():
+            session.execute(delete(RidePlan).where(RidePlan.expires_at <= now))
+            for _ in range(8):
+                code = self._generate_plan_code()
+                ciphertext = self._cipher.encrypt_json(gpx, associated_data=self._plan_aad(code))
+                try:
+                    with session.begin_nested():
+                        session.add(
+                            RidePlan(
+                                code=code,
+                                name=name,
+                                gpx_ciphertext=ciphertext,
+                                created_at=now,
+                                expires_at=expires_at,
+                            )
+                        )
+                        session.flush()
+                    return {"code": code, "expiresAt": expires_at.isoformat()}
+                except IntegrityError:
+                    continue
+            raise RelayServiceError(500, "Could not allocate a plan code")
+
+    def get_plan(
+        self,
+        session: Session,
+        *,
+        code: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        now = now or datetime.now(UTC)
+        if not PLAN_CODE.fullmatch(code):
+            raise RelayServiceError(404, "Plan not found")
+        with session.begin():
+            record = session.get(RidePlan, code)
+            if record is None or self._as_utc(record.expires_at) <= now:
+                if record is not None:
+                    session.delete(record)
+                raise RelayServiceError(404, "Plan not found")
+            try:
+                gpx = self._cipher.decrypt_json(
+                    record.gpx_ciphertext,
+                    associated_data=self._plan_aad(code),
+                )
+            except ValueError as error:
+                raise RelayServiceError(500, "Plan record is invalid") from error
+            if not isinstance(gpx, str):
+                raise RelayServiceError(500, "Plan record is invalid")
+            return {
+                "code": record.code,
+                "name": record.name,
+                "gpx": gpx,
+                "createdAt": self._as_utc(record.created_at).isoformat(),
+                "expiresAt": self._as_utc(record.expires_at).isoformat(),
+            }
+
+    @staticmethod
+    def _generate_plan_code() -> str:
+        return "".join(secrets.choice(PLAN_CODE_ALPHABET) for _ in range(PLAN_CODE_LENGTH))
+
+    @staticmethod
+    def _plan_aad(code: str) -> bytes:
+        return f"plan:{code}".encode()
 
     @staticmethod
     def _validate_join_code(ride_code: str) -> None:
@@ -585,7 +796,7 @@ class RelayService:
             raise RelayServiceError(400, "Event string is too long")
         elif isinstance(value, float) and not math.isfinite(value):
             raise RelayServiceError(400, "Event number must be finite")
-        elif value is not None and not isinstance(value, (str, int, float, bool)):
+        elif value is not None and not isinstance(value, str | int | float | bool):
             raise RelayServiceError(400, "Event JSON value is invalid")
 
     @staticmethod
@@ -631,7 +842,7 @@ class RelayService:
         return f"replay:{ride_id}:{idempotency_key}".encode()
 
 
-def purge_expired(session: Session, now: datetime | None = None) -> tuple[int, int, int, int]:
+def purge_expired(session: Session, now: datetime | None = None) -> tuple[int, int, int, int, int]:
     now = now or datetime.now(UTC)
     with session.begin():
         events = session.execute(delete(StoredEvent).where(StoredEvent.expires_at <= now))
@@ -640,9 +851,11 @@ def purge_expired(session: Session, now: datetime | None = None) -> tuple[int, i
         )
         rides = session.execute(delete(Ride).where(Ride.delete_after <= now))
         join_codes = session.execute(delete(RideJoinCode).where(RideJoinCode.expires_at <= now))
+        plans = session.execute(delete(RidePlan).where(RidePlan.expires_at <= now))
     return (
         events.rowcount or 0,
         replays.rowcount or 0,
         rides.rowcount or 0,
         join_codes.rowcount or 0,
+        plans.rowcount or 0,
     )

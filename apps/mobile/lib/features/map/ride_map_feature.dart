@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -18,8 +19,10 @@ import '../../domain/quick_message.dart';
 import '../../domain/recorded_route_store.dart';
 import '../../domain/ride_role.dart';
 import '../../domain/route_store.dart';
+import '../../internet/plan_directory.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/demo_route_loader.dart';
+import '../../services/discovery_suggestion_queue.dart';
 import '../../services/gpx_import_source.dart';
 import '../../services/leader_ride_status.dart';
 import '../../services/map_geojson.dart';
@@ -27,6 +30,7 @@ import '../../services/map_style_repository.dart';
 import '../../services/maplibre_offline_manager.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/navigation_guidance.dart';
+import '../../services/motorcycle_discovery.dart';
 import '../../services/navigation_export.dart';
 import '../../services/navigation_camera.dart';
 import '../../services/offline_tile_cache.dart';
@@ -38,6 +42,12 @@ import '../../services/trail_direction_arrows.dart';
 import 'destination_route_sheet.dart';
 import 'motorcycle_icon.dart';
 import 'navigation_export_sheet.dart';
+
+@visibleForTesting
+bool shouldUseTiledGroupMiniMap({
+  required bool mapLibreEnabled,
+  required TargetPlatform platform,
+}) => mapLibreEnabled && platform != TargetPlatform.android;
 
 /// Self-contained production entry point for the map/GPX feature.
 ///
@@ -53,6 +63,8 @@ class RideMapFeature extends StatefulWidget {
     this.overlayMarkers,
     this.offRouteTraces,
     this.leaderStatus,
+    this.groupRiderCount,
+    this.onOpenRoster,
     this.junctionMarkerOverlay,
     this.emergencyContacts = const [],
     this.onEmergencyAlert,
@@ -67,6 +79,7 @@ class RideMapFeature extends StatefulWidget {
     this.acquireCurrentPosition,
     this.navigationExportCoordinator,
     this.routeStore,
+    this.canEditRoute = true,
     this.offlineTileCache,
     this.mapLibreOfflineManager,
     this.mapStyleString,
@@ -83,6 +96,8 @@ class RideMapFeature extends StatefulWidget {
     ValueListenable<List<MapOverlayMarker>>? overlayMarkers,
     ValueListenable<List<MapOverlayTrace>>? offRouteTraces,
     ValueListenable<LeaderRideStatus?>? leaderStatus,
+    int? groupRiderCount,
+    VoidCallback? onOpenRoster,
     ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay,
     List<MapEmergencyContact> emergencyContacts = const [],
     Future<void> Function()? onEmergencyAlert,
@@ -96,6 +111,7 @@ class RideMapFeature extends StatefulWidget {
     PickedGpxFile? pendingSharedGpxFile,
     Future<GeoPoint?> Function()? acquireCurrentPosition,
     RouteStore? routeStore,
+    bool canEditRoute = true,
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
     bool darkMapStyle = false,
     MotorcycleIconStyle localMotorcycleStyle = motorcycleIconStyleDefault,
@@ -107,6 +123,8 @@ class RideMapFeature extends StatefulWidget {
     overlayMarkers: overlayMarkers,
     offRouteTraces: offRouteTraces,
     leaderStatus: leaderStatus,
+    groupRiderCount: groupRiderCount,
+    onOpenRoster: onOpenRoster,
     junctionMarkerOverlay: junctionMarkerOverlay,
     emergencyContacts: emergencyContacts,
     onEmergencyAlert: onEmergencyAlert,
@@ -120,6 +138,7 @@ class RideMapFeature extends StatefulWidget {
     pendingSharedGpxFile: pendingSharedGpxFile,
     acquireCurrentPosition: acquireCurrentPosition,
     routeStore: routeStore,
+    canEditRoute: canEditRoute,
     distanceUnit: distanceUnit,
     basemapConfiguration: BasemapConfiguration.fromEnvironment().forBrightness(
       dark: darkMapStyle,
@@ -133,6 +152,8 @@ class RideMapFeature extends StatefulWidget {
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
   final ValueListenable<List<MapOverlayTrace>>? offRouteTraces;
   final ValueListenable<LeaderRideStatus?>? leaderStatus;
+  final int? groupRiderCount;
+  final VoidCallback? onOpenRoster;
   final ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay;
   final List<MapEmergencyContact> emergencyContacts;
   final Future<void> Function()? onEmergencyAlert;
@@ -147,6 +168,7 @@ class RideMapFeature extends StatefulWidget {
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
   final RouteStore? routeStore;
+  final bool canEditRoute;
   final OfflineTileCache? offlineTileCache;
   final MapLibreOfflineManager? mapLibreOfflineManager;
   final String? mapStyleString;
@@ -237,6 +259,8 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         overlayMarkers: widget.overlayMarkers,
         offRouteTraces: widget.offRouteTraces,
         leaderStatus: widget.leaderStatus,
+        groupRiderCount: widget.groupRiderCount,
+        onOpenRoster: widget.onOpenRoster,
         junctionMarkerOverlay: widget.junctionMarkerOverlay,
         emergencyContacts: widget.emergencyContacts,
         onEmergencyAlert: widget.onEmergencyAlert,
@@ -244,6 +268,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         ridePaused: widget.ridePaused,
         onLeaveRide: widget.onLeaveRide,
         onOpenRideMenu: widget.onOpenRideMenu,
+        canEditRoute: widget.canEditRoute,
         onRouteChanged: widget.onRouteChanged,
         changeRouteRequestToken: widget.changeRouteRequestToken,
         onChangeRouteRequestHandled: widget.onChangeRouteRequestHandled,
@@ -278,6 +303,7 @@ class RideMapScreen extends StatefulWidget {
     super.key,
     required this.routeStore,
     required this.routeImporter,
+    this.planDirectory,
     required this.offlineTileCache,
     this.mapLibreOfflineManager,
     this.mapStyleString = MapStyleRepository.fallbackStyle,
@@ -286,6 +312,8 @@ class RideMapScreen extends StatefulWidget {
     this.overlayMarkers,
     this.offRouteTraces,
     this.leaderStatus,
+    this.groupRiderCount,
+    this.onOpenRoster,
     this.junctionMarkerOverlay,
     this.emergencyContacts = const [],
     this.onEmergencyAlert,
@@ -293,6 +321,7 @@ class RideMapScreen extends StatefulWidget {
     this.ridePaused = false,
     this.onLeaveRide,
     this.onOpenRideMenu,
+    this.canEditRoute = true,
     this.onRouteChanged,
     this.changeRouteRequestToken,
     this.onChangeRouteRequestHandled,
@@ -311,6 +340,7 @@ class RideMapScreen extends StatefulWidget {
 
   final RouteStore routeStore;
   final RouteImporter routeImporter;
+  final PlanDirectory? planDirectory;
   final OfflineTileCache offlineTileCache;
   final MapLibreOfflineManager? mapLibreOfflineManager;
   final String mapStyleString;
@@ -319,6 +349,8 @@ class RideMapScreen extends StatefulWidget {
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
   final ValueListenable<List<MapOverlayTrace>>? offRouteTraces;
   final ValueListenable<LeaderRideStatus?>? leaderStatus;
+  final int? groupRiderCount;
+  final VoidCallback? onOpenRoster;
   final ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay;
   final List<MapEmergencyContact> emergencyContacts;
   final Future<void> Function()? onEmergencyAlert;
@@ -326,6 +358,7 @@ class RideMapScreen extends StatefulWidget {
   final bool ridePaused;
   final Future<void> Function()? onLeaveRide;
   final Future<void> Function()? onOpenRideMenu;
+  final bool canEditRoute;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final Object? changeRouteRequestToken;
   final VoidCallback? onChangeRouteRequestHandled;
@@ -356,6 +389,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
   static const _trailDirectionArrowImage = 'ride-relay-trail-direction-arrow';
   static const _trailDirectionArrowSampler = TrailDirectionArrowSampler();
   static const _navigationGuidancePlanner = NavigationGuidancePlanner();
+  static const _discoveryLineSource = 'ride-relay-discovery-lines';
+  static const _discoveryPointSource = 'ride-relay-discovery-points';
 
   final MapControllerImpl _mapController = MapControllerImpl();
   final RouteProgressTracker _routeProgressTracker = RouteProgressTracker();
@@ -364,6 +399,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
   );
   final Map<int, Offset> _mapPointerOrigins = {};
   late final http.Client _routingClient;
+  late final RoadRoutingService _roadRoutingService;
+  late final Future<DiscoverySuggestionQueue> _suggestionQueue;
+  late final DiscoverySuggestionConfiguration _suggestionConfiguration;
   late final DestinationRoutePlanner _defaultDestinationRoutePlanner;
   late final RouteGeometryEnricher _defaultRouteGeometryEnricher;
   ml.MapLibreMapController? _mapLibreController;
@@ -404,6 +442,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
   RouteProgressGeometry _progressGeometry = const RouteProgressGeometry.empty();
   TileDownloadProgress? _downloadProgress;
   TileDownloadCancellationToken? _downloadCancellation;
+  MotorcycleDiscoveryCatalogue _discoveryCatalogue =
+      const MotorcycleDiscoveryCatalogue([]);
+  final Set<MotorcycleDiscoveryCategory> _enabledDiscoveryCategories = {};
 
   BasemapConfiguration get _basemap => widget.offlineTileCache.configuration;
 
@@ -417,8 +458,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
   void initState() {
     super.initState();
     _routingClient = http.Client();
+    _suggestionQueue = DiscoverySuggestionQueue.openDefault();
+    _suggestionConfiguration =
+        DiscoverySuggestionConfiguration.fromEnvironment();
     final routingConfiguration = RoutingConfiguration.fromEnvironment();
-    final routingService = OsrmRoadRoutingService(
+    _roadRoutingService = OsrmRoadRoutingService(
       client: _routingClient,
       baseUrl: routingConfiguration.routingBaseUrl,
     );
@@ -427,10 +471,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
         client: _routingClient,
         baseUrl: routingConfiguration.geocodingBaseUrl,
       ),
-      routingService: routingService,
+      routingService: _roadRoutingService,
     );
     _defaultRouteGeometryEnricher = RouteGeometryEnricher(
-      routingService: routingService,
+      routingService: _roadRoutingService,
     );
     _mapLibreOfflineManager =
         widget.mapLibreOfflineManager ??
@@ -443,6 +487,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _markerOverviewVisible =
         widget.junctionMarkerOverlay?.value?.isLocalMarker ?? false;
     _loadPersistedRoute();
+    unawaited(_loadDiscoveryCatalogue());
     _maybeHandleChangeRouteRequest();
   }
 
@@ -530,6 +575,17 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
   }
 
+  Future<void> _loadDiscoveryCatalogue() async {
+    try {
+      final catalogue = await MotorcycleDiscoveryCatalogue.loadAsset();
+      if (!mounted) return;
+      setState(() => _discoveryCatalogue = catalogue);
+      _scheduleMapLibreSync(overlays: true);
+    } on Object catch (error) {
+      if (kDebugMode) debugPrint('Could not load discovery catalogue: $error');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final landscape =
@@ -592,18 +648,19 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     : null,
               ),
               actions: [
-                IconButton(
-                  tooltip: 'Plan a destination',
-                  visualDensity: compactDensity,
-                  onPressed: _routing ? null : _planDestination,
-                  icon: _routing
-                      ? const SizedBox.square(
-                          dimension: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.add_road),
-                ),
-                if (_route == null)
+                if (widget.canEditRoute)
+                  IconButton(
+                    tooltip: 'Plan a destination',
+                    visualDensity: compactDensity,
+                    onPressed: _routing ? null : _planDestination,
+                    icon: _routing
+                        ? const SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.add_road),
+                  ),
+                if (widget.canEditRoute && _route == null)
                   IconButton(
                     tooltip: 'Import GPX route',
                     visualDensity: compactDensity,
@@ -640,17 +697,23 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       : const EdgeInsets.all(8),
                   onSelected: _handleMenuAction,
                   itemBuilder: (context) => [
-                    PopupMenuItem(
-                      value: _MapAction.importGpx,
-                      child: Text(
-                        _route == null
-                            ? 'Import GPX route'
-                            : 'Replace GPX route',
+                    if (widget.canEditRoute) ...[
+                      PopupMenuItem(
+                        value: _MapAction.importGpx,
+                        child: Text(
+                          _route == null
+                              ? 'Import GPX route'
+                              : 'Replace GPX route',
+                        ),
                       ),
-                    ),
+                      const PopupMenuItem(
+                        value: _MapAction.loadDemo,
+                        child: Text('Load demo route'),
+                      ),
+                    ],
                     const PopupMenuItem(
-                      value: _MapAction.loadDemo,
-                      child: Text('Load demo route'),
+                      value: _MapAction.discoveryLayers,
+                      child: Text('Motorcycle discovery layers'),
                     ),
                     if (_route != null)
                       PopupMenuItem(
@@ -668,7 +731,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       value: _MapAction.clearOfflineTiles,
                       child: Text('Clear downloaded map data'),
                     ),
-                    if (_route != null)
+                    if (widget.canEditRoute && _route != null)
                       const PopupMenuItem(
                         value: _MapAction.removeRoute,
                         child: Text('Remove route'),
@@ -770,8 +833,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
                             .where((marker) => marker.id.startsWith('rider-'))
                             .toList(growable: false);
                         final groupSize =
+                            widget.groupRiderCount ??
                             groupRiders.length +
-                            (_effectivePosition == null ? 0 : 1);
+                                (_effectivePosition == null ? 0 : 1);
                         if (groupSize <= 1) return const SizedBox.shrink();
                         return _GroupMiniMap(
                           width: groupMiniMapWidth,
@@ -782,7 +846,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
                               .toList(growable: false),
                           currentPosition: _effectivePosition,
                           riders: groupRiders,
-                          showTiles: _basemap.usesMapLibre,
+                          riderCount: groupSize,
+                          onTap: widget.onOpenRoster,
+                          showTiles: shouldUseTiledGroupMiniMap(
+                            mapLibreEnabled: _basemap.usesMapLibre,
+                            platform: defaultTargetPlatform,
+                          ),
                           mapStyleString: widget.mapStyleString,
                         );
                       },
@@ -929,6 +998,56 @@ class _RideMapScreenState extends State<RideMapScreen> {
             tileProvider: LicensedCachingTileProvider(
               cache: widget.offlineTileCache,
             ),
+          ),
+        if (_visibleDiscoveryFeatures.any((feature) => !feature.isPoint))
+          PolylineLayer(
+            polylines: _visibleDiscoveryFeatures
+                .where((feature) => !feature.isPoint)
+                .map(
+                  (feature) => Polyline(
+                    points: feature.points.map(_latLng).toList(growable: false),
+                    color: _discoveryColour(feature.category),
+                    strokeWidth: 4,
+                    borderColor: const Color(0xCC10151C),
+                    borderStrokeWidth: 2,
+                    pattern:
+                        feature.category ==
+                            MotorcycleDiscoveryCategory.twistyHighlight
+                        ? StrokePattern.dashed(segments: const [8, 6])
+                        : const StrokePattern.solid(),
+                  ),
+                )
+                .toList(growable: false),
+          ),
+        if (_visibleDiscoveryFeatures.isNotEmpty)
+          MarkerLayer(
+            markers: _visibleDiscoveryFeatures
+                .map(
+                  (feature) => Marker(
+                    point: _latLng(feature.anchor),
+                    width: 40,
+                    height: 40,
+                    child: Semantics(
+                      button: true,
+                      label: '${feature.category.label}: ${feature.name}',
+                      child: GestureDetector(
+                        onTap: () => _showDiscoveryFeature(feature),
+                        child: Icon(
+                          feature.category ==
+                                  MotorcycleDiscoveryCategory.mountainPass
+                              ? Icons.terrain
+                              : Icons.route,
+                          color: _discoveryColour(feature.category),
+                          size: 30,
+                          shadows: const [
+                            Shadow(color: Color(0xFF10151C), blurRadius: 4),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+                .toList(growable: false),
           ),
         if (route != null)
           PolylineLayer(
@@ -1607,6 +1726,47 @@ class _RideMapScreenState extends State<RideMapScreen> {
     try {
       await _registerMarkerImages(controller);
       await controller.addGeoJsonSource(
+        _discoveryLineSource,
+        _discoveryLineGeoJson(),
+      );
+      await controller.addLineLayer(
+        _discoveryLineSource,
+        'ride-relay-discovery-line-casing',
+        const ml.LineLayerProperties(
+          lineColor: '#10151C',
+          lineOpacity: 0.75,
+          lineWidth: 7,
+          lineCap: 'round',
+          lineJoin: 'round',
+        ),
+        enableInteraction: false,
+      );
+      await controller.addLineLayer(
+        _discoveryLineSource,
+        'ride-relay-discovery-lines',
+        const ml.LineLayerProperties(
+          lineColor: ['get', 'color'],
+          lineOpacity: 0.9,
+          lineWidth: 4,
+          lineCap: 'round',
+          lineJoin: 'round',
+        ),
+      );
+      await controller.addGeoJsonSource(
+        _discoveryPointSource,
+        _discoveryPointGeoJson(),
+      );
+      await controller.addCircleLayer(
+        _discoveryPointSource,
+        'ride-relay-discovery-points',
+        const ml.CircleLayerProperties(
+          circleRadius: 7,
+          circleColor: ['get', 'color'],
+          circleStrokeWidth: 3,
+          circleStrokeColor: '#10151C',
+        ),
+      );
+      await controller.addGeoJsonSource(
         _remainingRouteSource,
         _remainingRouteGeoJson(),
       );
@@ -1791,6 +1951,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
     if (!_mapLibreStyleReady || controller == null) return;
     try {
       await controller.setGeoJsonSource(
+        _discoveryLineSource,
+        _discoveryLineGeoJson(),
+      );
+      await controller.setGeoJsonSource(
+        _discoveryPointSource,
+        _discoveryPointGeoJson(),
+      );
+      await controller.setGeoJsonSource(
         _remainingRouteSource,
         _remainingRouteGeoJson(),
       );
@@ -1861,6 +2029,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
         await controller.setGeoJsonSource(_positionSource, _positionGeoJson());
       }
       if (overlays) {
+        await controller.setGeoJsonSource(
+          _discoveryLineSource,
+          _discoveryLineGeoJson(),
+        );
+        await controller.setGeoJsonSource(
+          _discoveryPointSource,
+          _discoveryPointGeoJson(),
+        );
         await controller.setGeoJsonSource(
           _offRouteTraceSource,
           _offRouteTraceGeoJson(),
@@ -1950,6 +2126,48 @@ class _RideMapScreenState extends State<RideMapScreen> {
   Map<String, dynamic> _riddenRouteGeoJson() =>
       MapGeoJson.lines(_progressGeometry.riddenPaths, idPrefix: 'ridden-route');
 
+  List<MotorcycleDiscoveryFeature> get _visibleDiscoveryFeatures =>
+      _discoveryCatalogue.visible(categories: _enabledDiscoveryCategories);
+
+  Map<String, dynamic> _discoveryLineGeoJson() => {
+    'type': 'FeatureCollection',
+    'features': [
+      for (final feature in _visibleDiscoveryFeatures.where(
+        (feature) => !feature.isPoint,
+      ))
+        {
+          'type': 'Feature',
+          'id': feature.id,
+          'properties': {
+            'name': feature.name,
+            'category': feature.category.apiValue,
+            'color': _hexColor(_discoveryColour(feature.category)),
+          },
+          'geometry': {
+            'type': 'LineString',
+            'coordinates': [
+              for (final point in feature.points)
+                [point.longitude, point.latitude],
+            ],
+          },
+        },
+    ],
+  };
+
+  Map<String, dynamic> _discoveryPointGeoJson() => MapGeoJson.points(
+    _visibleDiscoveryFeatures.map(
+      (feature) => MapGeoJsonPoint(
+        id: feature.id,
+        point: feature.anchor,
+        properties: {
+          'name': feature.name,
+          'category': feature.category.apiValue,
+          'color': _hexColor(_discoveryColour(feature.category)),
+        },
+      ),
+    ),
+  );
+
   Map<String, dynamic> _offRouteTraceGeoJson() {
     final traces = widget.offRouteTraces?.value ?? const <MapOverlayTrace>[];
     return {
@@ -2018,6 +2236,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
     String layerId,
     ml.Annotation? annotation,
   ) {
+    if (layerId == 'ride-relay-discovery-lines' ||
+        layerId == 'ride-relay-discovery-points') {
+      final feature = _discoveryCatalogue.features
+          .where((feature) => feature.id == id)
+          .firstOrNull;
+      if (feature != null) _showDiscoveryFeature(feature);
+      return;
+    }
     if (layerId != 'ride-relay-overlay-icons' &&
         layerId != 'ride-relay-waypoint-circles') {
       return;
@@ -2047,6 +2273,68 @@ class _RideMapScreenState extends State<RideMapScreen> {
     } finally {
       if (mounted) setState(() => _importing = false);
     }
+  }
+
+  /// Loads a route prepared on the web planner. The plan code has no
+  /// relationship to a live ride or its credentials - this only fetches a
+  /// GPX file through the same parse-and-activate pipeline as a manual
+  /// import, exactly like [_importGpx] and [_importSharedGpx] above.
+  Future<void> _loadPlannedRoute() async {
+    if (_importing) return;
+    final code = await _promptForPlanCode();
+    if (code == null || code.trim().isEmpty || !mounted) return;
+    setState(() => _importing = true);
+    try {
+      final directory =
+          widget.planDirectory ?? HttpPlanDirectory.fromEnvironment();
+      final plan = await directory.fetch(code);
+      final route = widget.routeImporter.importFromFile(
+        PickedGpxFile(
+          name: '${plan.name ?? 'planned-route'}.gpx',
+          bytes: Uint8List.fromList(utf8.encode(plan.gpx)),
+        ),
+      );
+      await _activateRoute(route);
+    } on PlanDirectoryException catch (error) {
+      _showMessage(error.message);
+    } on FormatException catch (error) {
+      _showMessage(error.message);
+    } on Object catch (error) {
+      _showMessage('Could not load planned route: $error');
+    } finally {
+      if (mounted) setState(() => _importing = false);
+    }
+  }
+
+  Future<String?> _promptForPlanCode() {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Load a planned route'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.characters,
+          maxLength: 16,
+          decoration: const InputDecoration(
+            labelText: 'Plan code',
+            hintText: 'e.g. 7F3K9QRT',
+          ),
+          onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+            child: const Text('Load'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _planDestination() async {
@@ -2143,6 +2431,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 
   Future<ImportedRoute> _activateRoute(ImportedRoute route) async {
+    if (!widget.canEditRoute) {
+      throw const FormatException(
+        'Only the ride leader can replace the group route.',
+      );
+    }
     final enrichment = await _routeGeometryEnricher.enrich(route);
     final activeRoute = enrichment.route;
     await widget.routeStore.saveActiveRoute(activeRoute);
@@ -2304,15 +2597,395 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
   }
 
+  Color _discoveryColour(MotorcycleDiscoveryCategory category) =>
+      switch (category) {
+        MotorcycleDiscoveryCategory.twistyHighlight => const Color(0xFFF97316),
+        MotorcycleDiscoveryCategory.mountainPass => const Color(0xFF0F9D8A),
+        MotorcycleDiscoveryCategory.goodBikingRoad => const Color(0xFF2583E9),
+      };
+
+  Future<void> _showDiscoveryLayersSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Motorcycle discovery layers',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Optional reviewed highlights. Off by default and never a safety endorsement.',
+                ),
+                const SizedBox(height: 8),
+                for (final category in MotorcycleDiscoveryCategory.values)
+                  CheckboxListTile(
+                    value: _enabledDiscoveryCategories.contains(category),
+                    secondary: Icon(
+                      category == MotorcycleDiscoveryCategory.mountainPass
+                          ? Icons.terrain
+                          : Icons.route,
+                      color: _discoveryColour(category),
+                    ),
+                    title: Text(category.label),
+                    contentPadding: EdgeInsets.zero,
+                    onChanged: (enabled) {
+                      setState(() {
+                        if (enabled ?? false) {
+                          _enabledDiscoveryCategories.add(category);
+                        } else {
+                          _enabledDiscoveryCategories.remove(category);
+                        }
+                      });
+                      setSheetState(() {});
+                      _scheduleMapLibreSync(overlays: true);
+                    },
+                  ),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.of(sheetContext).pop();
+                    unawaited(_showDiscoverySuggestionForm());
+                  },
+                  icon: const Icon(Icons.add_location_alt_outlined),
+                  label: const Text('Suggest an addition'),
+                ),
+                if (_suggestionConfiguration.apiOrigin != null)
+                  FutureBuilder<DiscoverySuggestionQueue>(
+                    future: _suggestionQueue,
+                    builder: (context, snapshot) {
+                      final count = snapshot.data?.drafts.length ?? 0;
+                      return TextButton.icon(
+                        onPressed: count == 0
+                            ? null
+                            : () {
+                                Navigator.of(sheetContext).pop();
+                                unawaited(_confirmSendDiscoverySuggestions());
+                              },
+                        icon: const Icon(Icons.outbox_outlined),
+                        label: Text(
+                          'Send $count queued suggestion${count == 1 ? '' : 's'}',
+                        ),
+                      );
+                    },
+                  ),
+                const Text(
+                  'Proof-of-concept data © OpenStreetMap contributors, ODbL. Check access, closures, weather and road conditions.',
+                  style: TextStyle(fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showDiscoveryFeature(MotorcycleDiscoveryFeature feature) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                feature.category.label,
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+              Text(
+                feature.name,
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                [
+                  if (feature.score case final score?) 'Score $score/100',
+                  '${feature.confidence} confidence',
+                  'checked ${feature.lastVerified}',
+                ].join(' · '),
+              ),
+              const SizedBox(height: 8),
+              Text(feature.warning),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => launchUrl(
+                    Uri.parse(feature.sourceUrl),
+                    mode: LaunchMode.externalApplication,
+                  ),
+                  icon: const Icon(Icons.open_in_new),
+                  label: Text('Source: ${feature.sourceName}'),
+                ),
+              ),
+              FilledButton.icon(
+                onPressed: _routing
+                    ? null
+                    : () {
+                        Navigator.of(sheetContext).pop();
+                        unawaited(_addDiscoveryFeatureToRoute(feature));
+                      },
+                icon: const Icon(Icons.add_road),
+                label: const Text('Add to route via here'),
+              ),
+              TextButton.icon(
+                onPressed: () {
+                  Navigator.of(sheetContext).pop();
+                  unawaited(
+                    _showDiscoverySuggestionForm(
+                      feature: feature,
+                      action: 'correct',
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.edit_location_alt_outlined),
+                label: const Text('Suggest a correction or removal'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _addDiscoveryFeatureToRoute(
+    MotorcycleDiscoveryFeature feature,
+  ) async {
+    if (_routing) return;
+    final existing = _route;
+    final start =
+        existing?.paths.lastOrNull?.points.lastOrNull ?? _effectivePosition;
+    if (start == null) {
+      _showMessage(
+        'Load a route or enable location before adding this highlight.',
+      );
+      return;
+    }
+    setState(() => _routing = true);
+    try {
+      final extension = await _roadRoutingService.routeThrough([
+        start,
+        feature.anchor,
+      ]);
+      final route = ImportedRoute(
+        id:
+            existing?.id ??
+            'discovery-${DateTime.now().microsecondsSinceEpoch}',
+        name: existing?.name ?? 'Route via ${feature.name}',
+        description: existing?.description,
+        importedAt: existing?.importedAt ?? DateTime.now().toUtc(),
+        sourceFileName: existing?.sourceFileName ?? 'motorcycle-discovery',
+        paths: [
+          ...?existing?.paths,
+          RoutePath(
+            kind: RoutePathKind.route,
+            name: feature.name,
+            points: extension.points,
+          ),
+        ],
+        waypoints: [
+          ...?existing?.waypoints,
+          RouteWaypoint(
+            point: feature.anchor,
+            name: feature.name,
+            description: '${feature.category.label}; ${feature.warning}',
+            symbol: 'Scenic Area',
+          ),
+        ],
+      );
+      await _activateRoute(route);
+    } on Object catch (error) {
+      _showMessage('Could not route via ${feature.name}: $error');
+    } finally {
+      if (mounted) setState(() => _routing = false);
+    }
+  }
+
+  Future<void> _showDiscoverySuggestionForm({
+    MotorcycleDiscoveryFeature? feature,
+    String action = 'add',
+  }) async {
+    final point =
+        feature?.anchor ??
+        _effectivePosition ??
+        _route?.paths.lastOrNull?.points.lastOrNull;
+    if (point == null) {
+      _showMessage(
+        'Enable location or load a route before placing a suggestion.',
+      );
+      return;
+    }
+    var category =
+        feature?.category ?? MotorcycleDiscoveryCategory.goodBikingRoad;
+    var selectedAction = action;
+    final name = TextEditingController(text: feature?.name ?? '');
+    final reason = TextEditingController();
+    final evidence = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(
+            feature == null ? 'Suggest an addition' : 'Suggest a map update',
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (feature != null)
+                  DropdownButtonFormField<String>(
+                    initialValue: selectedAction,
+                    decoration: const InputDecoration(labelText: 'Change'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'correct',
+                        child: Text('Correct entry'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'remove',
+                        child: Text('Report closed, restricted or unsafe'),
+                      ),
+                    ],
+                    onChanged: (value) => setDialogState(
+                      () => selectedAction = value ?? selectedAction,
+                    ),
+                  ),
+                DropdownButtonFormField<MotorcycleDiscoveryCategory>(
+                  initialValue: category,
+                  decoration: const InputDecoration(labelText: 'Category'),
+                  items: [
+                    for (final item in MotorcycleDiscoveryCategory.values)
+                      DropdownMenuItem(value: item, child: Text(item.label)),
+                  ],
+                  onChanged: (value) =>
+                      setDialogState(() => category = value ?? category),
+                ),
+                TextField(
+                  controller: name,
+                  maxLength: 120,
+                  decoration: const InputDecoration(labelText: 'Name'),
+                ),
+                TextField(
+                  controller: reason,
+                  maxLength: 500,
+                  minLines: 3,
+                  maxLines: 5,
+                  decoration: const InputDecoration(
+                    labelText: 'Reason or current condition',
+                  ),
+                ),
+                TextField(
+                  controller: evidence,
+                  keyboardType: TextInputType.url,
+                  decoration: const InputDecoration(
+                    labelText: 'Evidence link (optional)',
+                  ),
+                ),
+                Text(
+                  'Location: ${point.latitude.toStringAsFixed(5)}, ${point.longitude.toStringAsFixed(5)}\n'
+                  'Saved privately on this device until you explicitly send it. Not a safety endorsement.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (name.text.trim().isEmpty || reason.text.trim().length < 5) {
+                  _showMessage('Enter a name and a short reason.');
+                  return;
+                }
+                Navigator.of(dialogContext).pop(true);
+              },
+              child: const Text('Save offline draft'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true) return;
+    final queue = await _suggestionQueue;
+    await queue.enqueue(
+      category: category,
+      action: selectedAction,
+      targetFeatureId: feature?.id,
+      name: name.text,
+      reason: reason.text,
+      evidenceUrl: evidence.text,
+      point: point,
+      geometryPoints: feature?.points,
+    );
+    _showMessage(
+      'Suggestion saved offline. It will only be sent when you choose Send queued suggestions.',
+    );
+  }
+
+  Future<void> _confirmSendDiscoverySuggestions() async {
+    final apiOrigin = _suggestionConfiguration.apiOrigin;
+    if (apiOrigin == null) return;
+    final queue = await _suggestionQueue;
+    if (queue.drafts.isEmpty || !mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Send suggestions for review?'),
+        content: Text(
+          '${queue.drafts.length} private draft${queue.drafts.length == 1 ? '' : 's'} will be sent to the administrator queue. Nothing becomes public automatically.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Keep offline'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Send now'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      final sent = await queue.sendAfterConfirmation(
+        client: _routingClient,
+        apiOrigin: apiOrigin,
+      );
+      _showMessage(
+        sent == 0
+            ? 'Suggestions could not be sent and remain saved offline.'
+            : '$sent suggestion${sent == 1 ? '' : 's'} sent for administrator review.',
+      );
+    } on Object {
+      _showMessage('Suggestions could not be sent and remain saved offline.');
+    }
+  }
+
   Future<void> _handleMenuAction(_MapAction action) async {
     switch (action) {
       case _MapAction.importGpx:
         await _importGpx();
       case _MapAction.loadDemo:
         await _loadDemoRoute();
+      case _MapAction.discoveryLayers:
+        await _showDiscoveryLayersSheet();
       case _MapAction.downloadOffline:
         await _downloadOfflineMap();
       case _MapAction.removeRoute:
+        if (!widget.canEditRoute || !await _confirmRemoveRoute()) return;
         await widget.routeStore.clearActiveRoute();
         if (mounted) {
           _routeProgressTracker.reset();
@@ -2333,6 +3006,30 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _showMessage('Offline map data cleared.');
     }
   }
+
+  Future<bool> _confirmRemoveRoute() async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Clear the group route?'),
+          content: const Text(
+            'The route will be removed for every rider after this signed '
+            'change is relayed. This cannot be undone offline.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              key: const Key('confirm-clear-group-route'),
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Clear route'),
+            ),
+          ],
+        ),
+      ) ??
+      false;
 
   void _showMessage(String message) {
     if (!mounted) return;
@@ -2362,6 +3059,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.onChangeRouteRequestHandled?.call();
       if (!mounted) return;
+      if (!widget.canEditRoute) {
+        _showMessage('Only the ride leader can replace the group route.');
+        return;
+      }
       if (sharedFile != null) {
         unawaited(_importSharedGpx(sharedFile));
       } else {
@@ -2385,6 +3086,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 
   Future<void> _showChangeRouteSheet() async {
+    if (!widget.canEditRoute) {
+      _showMessage('Only the ride leader can replace the group route.');
+      return;
+    }
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -2408,6 +3113,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
               onTap: () {
                 Navigator.of(sheetContext).pop();
                 _importGpx();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.qr_code),
+              title: const Text('Load a planned route'),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                _loadPlannedRoute();
               },
             ),
             ListTile(
@@ -2445,6 +3158,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
 enum _MapAction {
   importGpx,
   loadDemo,
+  discoveryLayers,
   downloadOffline,
   removeRoute,
   clearOfflineTiles,
@@ -2864,6 +3578,8 @@ class _GroupMiniMap extends StatefulWidget {
     required this.routePaths,
     required this.currentPosition,
     required this.riders,
+    required this.riderCount,
+    required this.onTap,
     required this.showTiles,
     required this.mapStyleString,
   });
@@ -2873,6 +3589,8 @@ class _GroupMiniMap extends StatefulWidget {
   final List<List<GeoPoint>> routePaths;
   final GeoPoint? currentPosition;
   final List<MapOverlayMarker> riders;
+  final int riderCount;
+  final VoidCallback? onTap;
   final bool showTiles;
   final String mapStyleString;
 
@@ -2946,8 +3664,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
 
   @override
   Widget build(BuildContext context) {
-    final riderCount =
-        widget.riders.length + (widget.currentPosition == null ? 0 : 1);
+    final riderCount = widget.riderCount;
     final visibleRoutePaths = _visibleRoutePaths(_snapshot());
     return Stack(
       clipBehavior: Clip.none,
@@ -3058,6 +3775,18 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
             ),
           ),
         ),
+        if (widget.onTap != null)
+          Positioned.fill(
+            bottom: -22,
+            child: Semantics(
+              button: true,
+              label: 'Open ride roster, $riderCount riders',
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: widget.onTap,
+              ),
+            ),
+          ),
       ],
     );
   }

@@ -89,7 +89,16 @@ void main() {
       localRole: RideRole.lead,
       localRiderId: 'lead',
       localLocation: null,
-      riderLocations: const [],
+      riderLocations: [
+        _location(
+          id: 'rider',
+          name: 'Alex',
+          role: RideRole.rider,
+          longitude: 0.01,
+          speed: 10,
+          at: now,
+        ),
+      ],
       routeAlerts: [
         RiderRouteAlert(
           riderId: 'rider',
@@ -111,6 +120,85 @@ void main() {
     expect(status!.offCourseAlerts.single.displayName, 'Alex');
     expect(status.offCourseAlerts.single.distanceFromRouteMeters, 240);
   });
+
+  test(
+    'off-course total excludes stale states and riders outside the roster',
+    () {
+      RiderRouteAlert alert({
+        required String riderId,
+        required String name,
+        required RouteTrackingState state,
+        DateTime? evaluatedAt,
+      }) => RiderRouteAlert(
+        riderId: riderId,
+        displayName: name,
+        assessment: RouteDeviationAssessment(
+          state: state,
+          alertLevel: RouteAlertLevel.urgent,
+          audience: RouteAlertAudience.coordinators,
+          evaluatedAt: evaluatedAt ?? now,
+          message: 'Coordinator alert',
+          distanceFromRouteMeters: state == RouteTrackingState.offRoute
+              ? 240
+              : null,
+        ),
+      );
+
+      final status = const LeaderRideStatusCalculator().calculate(
+        localRole: RideRole.lead,
+        localRiderId: 'lead',
+        localLocation: null,
+        riderLocations: [
+          _location(
+            id: 'current-off-route',
+            name: 'Alex',
+            role: RideRole.rider,
+            longitude: 0.01,
+            speed: 10,
+            at: now,
+          ),
+          _location(
+            id: 'current-stale',
+            name: 'Sam',
+            role: RideRole.rider,
+            longitude: 0.012,
+            speed: 0,
+            at: now.subtract(const Duration(minutes: 3)),
+          ),
+        ],
+        routeAlerts: [
+          alert(
+            riderId: 'current-off-route',
+            name: 'Alex',
+            state: RouteTrackingState.offRoute,
+          ),
+          alert(
+            riderId: 'current-off-route',
+            name: 'Alex duplicate',
+            state: RouteTrackingState.offRoute,
+            evaluatedAt: now.subtract(const Duration(seconds: 1)),
+          ),
+          alert(
+            riderId: 'current-stale',
+            name: 'Sam',
+            state: RouteTrackingState.gpsStale,
+          ),
+          for (var index = 0; index < 5; index += 1)
+            alert(
+              riderId: 'ghost-$index',
+              name: 'Ghost $index',
+              state: RouteTrackingState.offRoute,
+            ),
+        ],
+        route: const [],
+        now: now,
+      );
+
+      expect(status!.offCourseAlerts, hasLength(1));
+      expect(status.offCourseAlerts.single.riderId, 'current-off-route');
+      expect(status.offCourseAlerts.single.displayName, 'Alex');
+    },
+  );
 
   test('non-leaders do not receive leader map status', () {
     final status = const LeaderRideStatusCalculator().calculate(

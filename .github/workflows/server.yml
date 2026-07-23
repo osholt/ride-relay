@@ -69,7 +69,7 @@ jobs:
           enable-cache: true
       - run: uv sync --frozen --no-dev
       - run: uv run alembic upgrade head
-      - run: uv run python -c "from sqlalchemy import create_engine, inspect; from ride_relay_server.config import get_settings; assert {'rides', 'ride_events', 'idempotency_replays'} <= set(inspect(create_engine(get_settings().database_url)).get_table_names())"
+      - run: uv run python -c "from sqlalchemy import create_engine, inspect; from ride_relay_server.config import get_settings; assert {'rides', 'ride_events', 'idempotency_replays', 'ride_plans', 'discovery_suggestions', 'discovery_moderation_events', 'discovery_features'} <= set(inspect(create_engine(get_settings().database_url)).get_table_names())"
 
   container:
     name: Container build
@@ -90,3 +90,25 @@ jobs:
           --file deploy/compose.yaml
           --file deploy/compose.tailnet.yaml
           config --quiet
+      - name: Validate isolated pre-production deployment
+        env:
+          POSTGRES_PASSWORD: production-ci-only-password
+          RIDE_RELAY_CURSOR_SIGNING_KEY: CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws
+          RIDE_RELAY_DATA_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc
+          RIDE_RELAY_DOMAIN: relay.example.com
+          RIDE_RELAY_PREPRODUCTION_DOMAIN: preprod-relay.example.com
+          PREPRODUCTION_POSTGRES_PASSWORD: preproduction-ci-only-password
+          PREPRODUCTION_RIDE_RELAY_CURSOR_SIGNING_KEY: DQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0
+          PREPRODUCTION_RIDE_RELAY_DATA_ENCRYPTION_KEY: Dg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4
+        run: |
+          docker compose --file deploy/compose.preproduction.yaml config --quiet
+          docker compose \
+            --file deploy/compose.yaml \
+            --file deploy/compose.preproduction-proxy.yaml \
+            config --quiet
+          docker run --rm \
+            --env RIDE_RELAY_DOMAIN \
+            --env RIDE_RELAY_PREPRODUCTION_DOMAIN \
+            --volume "$PWD/deploy/Caddyfile.preproduction:/etc/caddy/Caddyfile:ro" \
+            caddy:2.11.4-alpine \
+            caddy validate --config /etc/caddy/Caddyfile

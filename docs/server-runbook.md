@@ -76,6 +76,43 @@ For maps, add a licence-approved archive and matching style as described in
 [maps-and-gpx.md](./maps-and-gpx.md), then add `--profile maps` to the Compose
 command and verify the style plus representative tiles.
 
+## Isolated pre-production on the same host
+
+Pre-production can share the VM and public Caddy process without sharing API
+containers, PostgreSQL data, credentials, or Docker volumes with production.
+Create an A record such as `preprod-relay.example.com` pointing to the same
+host, then prepare independent secrets:
+
+```bash
+cp deploy/preproduction.env.example deploy/.env.preproduction
+python3 -c 'import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("="))'
+python3 -c 'import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("="))'
+```
+
+Put the pre-production hostname and two new keys in
+`deploy/.env.preproduction`; never copy the production database password or
+encryption/signing keys. Put the same hostname in production's `deploy/.env`
+as `RIDE_RELAY_PREPRODUCTION_DOMAIN`.
+
+Start the isolated stack, then enable its route in the existing public proxy:
+
+```bash
+docker compose --env-file deploy/.env.preproduction \
+  -f deploy/compose.preproduction.yaml up -d --build
+docker compose --env-file deploy/.env \
+  -f deploy/compose.yaml \
+  -f deploy/compose.preproduction-proxy.yaml up -d caddy
+curl --fail https://preprod-relay.example.com/health/live
+curl --fail https://preprod-relay.example.com/api/v1/compatibility
+```
+
+Once enabled, include `compose.preproduction-proxy.yaml` whenever recreating
+the production Caddy service. Build test clients with
+`RIDE_RELAY_API_BASE_URL=https://preprod-relay.example.com/api`; production
+clients remain compiled against `https://relay.example.com/api`. Destructive
+pre-production testing is safe only after confirming the two Compose projects
+show different database containers and named PostgreSQL volumes.
+
 ## Tailnet-only field-test host
 
 For a private field test, the override runs a Tailscale sidecar with its own

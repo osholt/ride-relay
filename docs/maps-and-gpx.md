@@ -19,7 +19,37 @@ not bulk-download from the public OpenStreetMap tile servers.
 - Includes a valid 17.5 km, 484-point GPX track following roads from the King's
   Oak Academy car park to the Cross Hands Hotel car park.
 
+## Motorcycle discovery layers
+
+Twisty highlights, mountain passes and good biking roads are independent and
+off by default. The initial bundled Wales catalogue is a bounded,
+manually-reviewed proof of concept derived from OpenStreetMap under ODbL. The
+planned route remains visually dominant; tapping a highlight shows its source,
+confidence, last-verified date and safety warning, and can append a routed leg
+without discarding existing geometry or waypoints.
+
+Suggestions are first saved as private offline drafts. A build only exposes the
+explicit send action when `RIDE_RELAY_DISCOVERY_API_URL` is configured, and the
+rider must confirm that action after connectivity returns. Public map data can
+only come from the server's separately authenticated moderation pipeline.
+
+```text
+--dart-define=RIDE_RELAY_DISCOVERY_API_URL=https://api.tailendcharlie.app
+```
+
+Highlights are descriptive planning aids, not safety endorsements. Riders must
+check signs, closures, restrictions, weather, surface and current conditions.
+
 ## Riding display
+
+While an active-ride screen is foregrounded, the app requests the platform
+screen wake lock for the whole ride surface, not only while GPS says the bike
+is moving or while the Map tab is selected. It reasserts that request when the
+app resumes and every 15 seconds because iOS or Android may release a one-shot
+request after window or lifecycle changes. The request is removed when the
+ride surface is exited. This prevents automatic display sleep only; it does
+not override a rider manually locking the phone, keep the app running after a
+force-quit, or grant background CPU execution.
 
 The map uses foreground GPS speed, heading, and remaining route geometry to
 enter a heading-up follow view while moving. Landscape uses a wider zoom and a

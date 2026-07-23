@@ -13,6 +13,7 @@ import '../domain/ride_session.dart';
 import 'geo_calculations.dart';
 import 'gpx_exporter.dart';
 import 'measurement_formatter.dart';
+import 'ride_lifecycle.dart';
 
 typedef _TrailPoint = ({
   double latitude,
@@ -86,9 +87,21 @@ class RideSummaryExporter {
     required DateTime generatedAt,
   }) {
     final ordered = _sorted(events);
-    final startedAt = ordered.isEmpty
-        ? session.joinedAt
-        : _earlier(session.joinedAt, ordered.first.createdAt);
+    final lifecycle = RideLifecycleReducer.fromEvents(
+      rideId: session.rideId,
+      inviteSecret: session.inviteSecret,
+      events: ordered,
+    );
+    final startedAt =
+        lifecycle.startedAt ??
+        (ordered.isEmpty
+            ? session.joinedAt
+            : _earlier(session.joinedAt, ordered.first.createdAt));
+    final activityEvents = lifecycle.startedAt == null
+        ? ordered
+        : ordered
+              .where((event) => !event.createdAt.isBefore(startedAt))
+              .toList(growable: false);
     final endedAt = ordered
         .where((event) => event.type == RideEventType.rideEnded)
         .map((event) => event.createdAt)
@@ -96,7 +109,7 @@ class RideSummaryExporter {
 
     final completed = <MarkerSessionSummary>[];
     final active = <String, _MarkerAccumulator>{};
-    for (final event in ordered) {
+    for (final event in activityEvents) {
       switch (event.type) {
         case RideEventType.markerStarted:
           active.putIfAbsent(
@@ -135,7 +148,11 @@ class RideSummaryExporter {
     completed.sort((left, right) => left.startedAt.compareTo(right.startedAt));
 
     final riderIds = {session.localRiderId, ...ordered.map((e) => e.deviceId)};
-    final trail = _ownTrail(session.localRiderId, ordered);
+    final trail = _ownTrail(
+      session.localRiderId,
+      ordered,
+      notBefore: lifecycle.startedAt,
+    );
 
     return RideSummary(
       rideId: session.rideId,
@@ -158,7 +175,17 @@ class RideSummaryExporter {
     Iterable<RideEvent> events, {
     required DateTime generatedAt,
   }) {
-    final trail = _ownTrail(session.localRiderId, _sorted(events));
+    final ordered = _sorted(events);
+    final lifecycle = RideLifecycleReducer.fromEvents(
+      rideId: session.rideId,
+      inviteSecret: session.inviteSecret,
+      events: ordered,
+    );
+    final trail = _ownTrail(
+      session.localRiderId,
+      ordered,
+      notBefore: lifecycle.startedAt,
+    );
     if (trail.length < 2) return null;
     final trackName = session.rideName ?? 'Ride ${session.rideCode}';
     return ImportedRoute(
@@ -270,12 +297,17 @@ class RideSummaryExporter {
   /// break the whole export.
   static List<_TrailPoint> _ownTrail(
     String localRiderId,
-    List<RideEvent> ordered,
-  ) {
+    List<RideEvent> ordered, {
+    DateTime? notBefore,
+  }) {
     final trail = <_TrailPoint>[];
     for (final event in ordered) {
+      if (notBefore != null && event.createdAt.isBefore(notBefore)) continue;
       final point = _ownTrailPoint(event, localRiderId);
-      if (point != null) trail.add(point);
+      if (point != null &&
+          (notBefore == null || !point.recordedAt.isBefore(notBefore))) {
+        trail.add(point);
+      }
     }
     return trail;
   }

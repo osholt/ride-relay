@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Plan a road-following group ride and download it as a GPX file for Tail End Charlie."
+    />
+    <meta name="theme-color" content="#171124" />
+    <meta
+      name="tec-discovery-api"
+      content="https://relay.tailendcharlie.app"
+    />
+    <meta property="og:title" content="Ride planner | Tail End Charlie" />
+    <meta
+      property="og:description"
+      content="Choose your stops, build a road-following route, and download a GPX file."
+    />
+    <meta property="og:image" content="/assets/tail-end-charlie-icon.png" />
+    <meta property="og:type" content="website" />
+    <link rel="icon" href="/assets/tail-end-charlie-icon.png" />
+    <link rel="apple-touch-icon" href="/assets/tail-end-charlie-icon.png" />
+    <link rel="stylesheet" href="/styles.css" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css"
+      integrity="sha384-uTttxo/aOKbdE5RlD/SPzSDoDmNvGlUYPjONi2MN/b7c9HPSvW07OIuyP7uL6jxK"
+      crossorigin="anonymous"
+    />
+    <link rel="stylesheet" href="/planner.css" />
+    <title>Ride planner | Tail End Charlie</title>
+  </head>
+  <body class="planner-page">
+    <header class="planner-header">
+      <a class="brand" href="/" aria-label="Tail End Charlie home">
+        <img
+          src="/assets/tail-end-charlie-icon.png"
+          alt=""
+          width="42"
+          height="42"
+        />
+        <span>Tail End Charlie</span>
+      </a>
+      <div class="planner-header-copy">
+        <span>Ride planner</span>
+        <small>Build a route. Download the GPX. Ride together.</small>
+      </div>
+      <a class="planner-home-link" href="/">Back to website</a>
+    </header>
+
+    <main class="planner-layout">
+      <aside class="planner-panel" aria-label="Ride details">
+        <div class="planner-panel-intro">
+          <p class="eyebrow"><span></span> New route</p>
+          <h1>Plan your ride.</h1>
+          <p>
+            Search for a place or tap the map to add stops. Drag stops to
+            reorder them, or drag the purple route to reshape it along roads.
+          </p>
+        </div>
+
+        <div class="field-group">
+          <label for="ride-name">Ride name</label>
+          <input
+            id="ride-name"
+            name="ride-name"
+            type="text"
+            maxlength="100"
+            value="Sunday group ride"
+            autocomplete="off"
+          />
+          <p class="local-save-note">
+            <span id="draft-save-status">
+              Saved on this device for this planner. No tracking.
+              <a href="/privacy.html#website-planner-storage">Privacy</a>
+            </span>
+            <button id="clear-saved-draft" type="button">
+              Clear local data
+            </button>
+          </p>
+        </div>
+
+        <fieldset class="route-preferences">
+          <legend>Route preferences</legend>
+          <label for="route-style">Routing style</label>
+          <select id="route-style" name="route-style">
+            <option value="quickest">Quickest route</option>
+            <option value="balanced">Flowing (up to 25% longer)</option>
+            <option value="twisty">Twisty (up to 50% longer)</option>
+            <option value="very-twisty">Very twisty (up to 75% longer)</option>
+          </select>
+          <label class="checkbox-field" for="avoid-motorways">
+            <input id="avoid-motorways" type="checkbox" />
+            <span>Avoid motorways</span>
+          </label>
+          <label class="checkbox-field" for="avoid-major-roads">
+            <input id="avoid-major-roads" type="checkbox" />
+            <span>Avoid major roads</span>
+          </label>
+          <label class="checkbox-field" for="avoid-tolls">
+            <input id="avoid-tolls" type="checkbox" />
+            <span>Avoid toll roads</span>
+          </label>
+          <label class="checkbox-field" for="avoid-ferries">
+            <input id="avoid-ferries" type="checkbox" />
+            <span>Avoid ferries</span>
+          </label>
+          <p class="field-help">
+            The bendier styles choose the highest bend score within the stated
+            time allowance. “Avoid major roads” is the quieter-road option; the
+            other avoidances exclude only their named road or crossing type.
+          </p>
+        </fieldset>
+
+        <form class="place-search" id="place-search" role="search">
+          <label for="place-query">Find a point of interest</label>
+          <div class="search-row">
+            <input
+              id="place-query"
+              name="q"
+              type="search"
+              maxlength="160"
+              placeholder="Cafe, town or postcode"
+              autocomplete="off"
+            />
+            <button class="icon-button" type="submit">Search</button>
+          </div>
+          <p class="field-help">
+            Search runs only when you press Search. Do not enter personal or
+            confidential information.
+          </p>
+          <details class="catalog-browser" id="biker-browser">
+            <summary class="catalog-button" id="browse-biker-stops">
+              Browse biker cafés &amp; start locations
+            </summary>
+            <div class="catalog-browser-body">
+              <div class="catalog-control">
+                <label for="biker-place-filter">Search this list</label>
+                <input
+                  id="biker-place-filter"
+                  type="search"
+                  maxlength="100"
+                  placeholder="Cafe, area or postcode"
+                  autocomplete="off"
+                />
+              </div>
+              <div class="catalog-control">
+                <label for="biker-place-sort">Sort places</label>
+                <select id="biker-place-sort">
+                  <option value="alphabetical">Name A–Z</option>
+                  <option value="distance" disabled>Nearest to start</option>
+                  <option value="duration" disabled>Ride time from start</option>
+                </select>
+              </div>
+              <label
+                class="checkbox-field catalog-layer-toggle"
+                for="biker-layer-visible-menu"
+              >
+                <input id="biker-layer-visible-menu" type="checkbox" checked />
+                <span>Show café dots on the map</span>
+              </label>
+              <p
+                class="catalog-status"
+                id="biker-catalog-status"
+                aria-live="polite"
+              ></p>
+              <div
+                class="catalog-results"
+                id="biker-catalog-results"
+                aria-label="Biker café results"
+              ></div>
+              <p class="catalog-attribution">
+                Authorised Bike + Brew 2026 venues, checked against the
+                <a
+                  href="https://ukbikercafes.co.uk/bike-and-brew-list/"
+                  target="_blank"
+                  rel="noreferrer"
+                  >current directory</a
+                >.
+              </p>
+            </div>
+          </details>
+          <div
+            class="search-results"
+            id="search-results"
+            aria-live="polite"
+          ></div>
+        </form>
+
+        <details class="discovery-panel">
+          <summary>Motorcycle discovery layers</summary>
+          <p class="field-help">
+            Optional proof-of-concept highlights. They are not safety
+            endorsements; check restrictions, conditions and closures.
+          </p>
+          <label class="checkbox-field" for="layer-twisty">
+            <input id="layer-twisty" type="checkbox" />
+            <i class="legend-discovery legend-twisty"></i>
+            <span>Twisty highlights</span>
+          </label>
+          <label class="checkbox-field" for="layer-mountain-pass">
+            <input id="layer-mountain-pass" type="checkbox" />
+            <i class="legend-discovery legend-pass"></i>
+            <span>Mountain passes</span>
+          </label>
+          <label class="checkbox-field" for="layer-good-road">
+            <input id="layer-good-road" type="checkbox" />
+            <i class="legend-discovery legend-good-road"></i>
+            <span>Good biking roads</span>
+          </label>
+          <p class="discovery-layer-status" id="discovery-layer-status">
+            Layers are off by default.
+          </p>
+          <button class="text-button" id="suggest-discovery" type="button">
+            Suggest an addition or correction
+          </button>
+          <button
+            class="text-button"
+            id="send-suggestion-queue"
+            type="button"
+            hidden
+          >
+            Send queued suggestions
+          </button>
+          <p class="catalog-attribution">
+            Proof-of-concept data ©
+            <a
+              href="https://www.openstreetmap.org/copyright"
+              target="_blank"
+              rel="noreferrer"
+              >OpenStreetMap contributors</a
+            >, ODbL. Public additions require moderator approval.
+          </p>
+        </details>
+
+        <section class="route-stops" aria-labelledby="route-stops-title">
+          <div class="panel-section-heading">
+            <div>
+              <span class="section-kicker">Route points</span>
+              <h2 id="route-stops-title">Your stops</h2>
+            </div>
+            <div class="route-history-actions">
+              <button
+                class="text-button"
+                id="undo-route"
+                type="button"
+                aria-label="Undo last route edit"
+                disabled
+              >
+                Undo
+              </button>
+              <button
+                class="text-button"
+                id="redo-route"
+                type="button"
+                aria-label="Redo last route edit"
+                disabled
+              >
+                Redo
+              </button>
+              <button class="text-button" id="clear-route" type="button">
+                Clear
+              </button>
+            </div>
+          </div>
+          <button
+            class="text-button reset-adjustments"
+            id="reset-adjustments"
+            type="button"
+            hidden
+          >
+            Reset dragged route
+          </button>
+          <ol class="stop-list" id="stop-list"></ol>
+          <div class="empty-stops" id="empty-stops">
+            <span aria-hidden="true">＋</span>
+            <strong>Add your first stop</strong>
+            <p>Tap anywhere on the map or find a place above.</p>
+          </div>
+        </section>
+
+        <section class="route-summary" aria-label="Route summary">
+          <div>
+            <span>Distance</span>
+            <strong id="route-distance">—</strong>
+          </div>
+          <div>
+            <span>Estimated time</span>
+            <strong id="route-duration">—</strong>
+          </div>
+          <div>
+            <span>Bend score</span>
+            <strong id="route-twistiness">—</strong>
+          </div>
+        </section>
+
+        <p class="route-status" id="route-status" aria-live="polite">
+          Add at least two stops to generate a route.
+        </p>
+
+        <div class="planner-actions">
+          <button class="button button-primary" id="download-gpx" disabled>
+            Download GPX
+          </button>
+          <span>
+            After downloading, open or share the GPX with Tail End Charlie.
+          </span>
+        </div>
+      </aside>
+
+      <section class="planner-map-shell" id="map-shell" aria-label="Route map">
+        <div class="map" id="map"></div>
+        <div class="map-instructions" id="map-instructions">
+          Tap the map to add a route point
+        </div>
+        <button
+          class="map-expand-button"
+          id="map-expand"
+          type="button"
+          aria-pressed="false"
+          aria-label="Open map full screen"
+        >
+          <span aria-hidden="true">⛶</span>
+          <span class="map-expand-label">Full screen</span>
+        </button>
+        <div class="map-legend" aria-label="Map legend and layers">
+          <span><i class="legend-stop"></i> Stops</span>
+          <label class="map-layer-toggle" for="biker-layer-visible">
+            <input id="biker-layer-visible" type="checkbox" checked />
+            <i class="legend-poi"></i>
+            <span>Biker cafés</span>
+          </label>
+          <span><i class="legend-route"></i> Road route</span>
+        </div>
+      </section>
+    </main>
+
+    <dialog class="suggestion-dialog" id="suggestion-dialog">
+      <form method="dialog" id="suggestion-form">
+        <div class="suggestion-heading">
+          <div>
+            <span class="section-kicker">Community map</span>
+            <h2>Suggest a map update</h2>
+          </div>
+          <button
+            class="dialog-close"
+            value="cancel"
+            aria-label="Close"
+            formnovalidate
+          >
+            ×
+          </button>
+        </div>
+        <p class="field-help">
+          Suggestions stay private until an administrator approves them. Do
+          not copy locations from proprietary map or route collections.
+        </p>
+        <div class="suggestion-grid">
+          <label>
+            Change
+            <select id="suggestion-action" required>
+              <option value="add">Add a place or road</option>
+              <option value="correct">Correct an existing highlight</option>
+              <option value="remove">Report closed, restricted or unsafe</option>
+            </select>
+          </label>
+          <label>
+            Category
+            <select id="suggestion-category" required>
+              <option value="twisty_highlight">Twisty highlight</option>
+              <option value="mountain_pass">Mountain pass</option>
+              <option value="good_biking_road">Good biking road</option>
+              <option value="biker_stop">Biker stop</option>
+            </select>
+          </label>
+        </div>
+        <label>
+          Name
+          <input id="suggestion-name" maxlength="120" required />
+        </label>
+        <label>
+          Why should it be added or changed?
+          <textarea id="suggestion-reason" maxlength="500" rows="4" required></textarea>
+        </label>
+        <label>
+          Evidence link <span>(optional)</span>
+          <input id="suggestion-evidence" type="url" maxlength="500" placeholder="Official page or reusable source" />
+        </label>
+        <div class="suggestion-location">
+          <div>
+            <span>Location</span>
+            <strong id="suggestion-location">No point selected</strong>
+          </div>
+          <button id="pick-suggestion-location" type="button">
+            Pick point or road on map
+          </button>
+        </div>
+        <div class="suggestion-nearby" id="suggestion-nearby" aria-live="polite"></div>
+        <p class="field-help">
+          Submission does not endorse a road as safe. Offline suggestions are
+          kept on this device and only sent after you explicitly confirm.
+        </p>
+        <div class="suggestion-actions">
+          <button value="cancel" formnovalidate>Cancel</button>
+          <button class="button button-primary" id="queue-suggestion" value="default">
+            Confirm suggestion
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <noscript>
+      <p class="noscript-message">
+        The ride planner needs JavaScript to show the map and create GPX files.
+      </p>
+    </noscript>
+
+    <script
+      src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"
+      integrity="sha384-5+cfbwT0iiub6VsQAdn6yz16nr6sDiQoHx6tm4O8OVYXHYOxcffFmCJBL0dgdvGp"
+      crossorigin="anonymous"
+    ></script>
+    <script type="module" src="/planner.js"></script>
+  </body>
+</html>
