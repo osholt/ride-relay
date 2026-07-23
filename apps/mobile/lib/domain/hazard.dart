@@ -30,6 +30,25 @@ extension HazardTypeLabel on HazardType {
   };
 }
 
+/// Enforcement-related values remain decodable for old ride journals, but are
+/// deliberately excluded from new first-party reports until the exact feature
+/// has both documented data rights and market-specific legal approval.
+const riderReportableHazardTypes = <HazardType>[
+  HazardType.pothole,
+  HazardType.looseSurface,
+  HazardType.debris,
+  HazardType.roadworks,
+  HazardType.collision,
+  HazardType.stoppedVehicle,
+  HazardType.flooding,
+  HazardType.animals,
+  HazardType.other,
+];
+
+extension HazardTypePolicy on HazardType {
+  bool get isRiderReportable => riderReportableHazardTypes.contains(this);
+}
+
 enum HazardSeverity { advisory, caution, serious, critical }
 
 extension HazardSeverityLabel on HazardSeverity {

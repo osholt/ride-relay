@@ -40,6 +40,12 @@ and expiry. A report of the same type within 75 m and 30 minutes confirms the
 existing report rather than creating a duplicate. Expired hazards disappear on
 load or refresh; clearing creates a durable event.
 
+New first-party reports deliberately exclude police-presence and speed-camera
+categories. Older journal values remain decodable for compatibility, but cannot
+be created in the current UI or controller. The provider and legal decision is
+recorded in
+[crowd-hazard-feed-decision.md](./crowd-hazard-feed-decision.md).
+
 External sources implement `ExternalHazardProvider` and must expose an honest
 state (`unavailable`, `needsConfiguration`, `configured`, `loading`, `ready`, or
 `failed`). `WazeReadHazardProvider` is deliberately unavailable: the published

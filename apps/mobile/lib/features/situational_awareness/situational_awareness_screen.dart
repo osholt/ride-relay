@@ -300,7 +300,7 @@ class _HazardReportSheetState extends State<HazardReportSheet> {
               key: const Key('hazard-type-field'),
               initialValue: _type,
               decoration: const InputDecoration(labelText: 'Hazard'),
-              items: HazardType.values
+              items: riderReportableHazardTypes
                   .map(
                     (type) =>
                         DropdownMenuItem(value: type, child: Text(type.label)),
