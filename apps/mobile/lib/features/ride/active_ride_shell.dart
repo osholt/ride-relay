@@ -772,13 +772,17 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         ? 'none'
         : '${route.id}:${route.importedAt.toUtc().toIso8601String()}:'
               '${route.pathPointCount}';
+    final lifecycleFingerprint =
+        widget.rideController.rideStartedAt?.toUtc().toIso8601String() ??
+        'open';
+    final effectiveFingerprint = '$fingerprint:$lifecycleFingerprint';
     if (_simulationController != null &&
-        fingerprint == _simulationRouteFingerprint) {
+        effectiveFingerprint == _simulationRouteFingerprint) {
       return;
     }
     final previous = _simulationController;
     _simulationController = null;
-    _simulationRouteFingerprint = fingerprint;
+    _simulationRouteFingerprint = effectiveFingerprint;
     _handledAutomaticMarkerActivation = 0;
     _handledAutomaticMarkerRideOffActivation = 0;
     _junctionMarkerOverlay.value = null;
@@ -809,6 +813,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       markerJunctions: markerJunctions,
       fallbackJunctions: derivedJunctions,
       riderCount: session.simulationRiderCount,
+      rideStarted: widget.rideController.rideStarted,
     );
     _simulationController = controller;
     controller.addListener(_onSimulationVisualChanged);
@@ -817,7 +822,11 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       controller.dispose();
       return;
     }
-    controller.start();
+    if (widget.rideController.rideStarted &&
+        !widget.rideController.ridePaused &&
+        !widget.rideController.rideEnded) {
+      controller.start();
+    }
     _onSimulationVisualChanged();
     if (notify) setState(() {});
   }
@@ -1358,20 +1367,37 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     if (session != null) {
       _awarenessController?.updateLocalSession(session);
       _updateMapOverlays();
-      unawaited(_replaceAwarenessController(_activeRoute));
-      unawaited(_applyAuthoritativeRouteDecision());
+      unawaited(_synchroniseRideControllers());
     }
-    _applyRidePauseState();
     if (widget.rideController.rideEnded && !_rideEndHandled) {
       unawaited(_handleRideEnded());
     }
     _schedulePublish();
   }
 
+  Future<void> _synchroniseRideControllers() async {
+    await _replaceAwarenessController(_activeRoute);
+    if (!mounted) return;
+    if (_isSimulation) {
+      await _replaceSimulationController(_activeRoute);
+    } else {
+      await _applyAuthoritativeRouteDecision();
+    }
+    _applyRidePauseState();
+  }
+
   void _applyRidePauseState() {
     if (!_isSimulation) return;
     final simulation = _simulationController;
     if (simulation == null) return;
+    final rideStarted =
+        widget.rideController.rideStarted && !widget.rideController.rideEnded;
+    final simulationHadStarted = simulation.rideStarted;
+    simulation.setRideStarted(rideStarted);
+    if (!rideStarted) {
+      _simulationPausedByRide = false;
+      return;
+    }
     if (widget.rideController.ridePaused) {
       if (simulation.isRunning) {
         simulation.pause();
@@ -1379,7 +1405,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       }
       return;
     }
-    if (_simulationPausedByRide) {
+    if (!simulationHadStarted || _simulationPausedByRide) {
       _simulationPausedByRide = false;
       simulation.start();
     }
@@ -1482,6 +1508,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         // GPS speed dips at lights. Once there is a navigation fix, preserve
         // the map viewport until the rider deliberately leaves the map tab.
         final hideWhileMoving =
+            widget.rideController.rideStarted &&
             _selectedIndex == 0 &&
             _activeRoute != null &&
             (navigationPosition != null ||

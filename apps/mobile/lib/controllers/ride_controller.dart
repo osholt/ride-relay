@@ -895,17 +895,6 @@ class RideController extends ChangeNotifier {
         if (session.rideName != null) 'rideName': session.rideName,
       },
     );
-    if (isSimulation) {
-      await _record(
-        type: RideEventType.rideStarted,
-        priority: EventPriority.important,
-        payload: {
-          'leaderRiderId': session.localRiderId,
-          'leaderDisplayName': session.displayName,
-          'simulation': true,
-        },
-      );
-    }
   }
 
   int _validatedSimulationRiderCount(int value) {

@@ -259,6 +259,59 @@ void main() {
     expect(find.text('Navigation map'), findsOneWidget);
   });
 
+  testWidgets('simulated bikes wait for the leader to start the ride', (
+    tester,
+  ) async {
+    final controller = await _controller();
+    await controller.createSimulationRide();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_app(controller));
+    for (
+      var attempt = 0;
+      attempt < 30 && find.byIcon(Icons.science_outlined).evaluate().isEmpty;
+      attempt += 1
+    ) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.tap(find.byIcon(Icons.science_outlined));
+    for (
+      var attempt = 0;
+      attempt < 30 && find.text('READY').evaluate().isEmpty;
+      attempt += 1
+    ) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(find.text('READY'), findsOneWidget);
+    expect(find.text('Waiting for start'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const Key('simulation-play-pause')))
+          .onPressed,
+      isNull,
+    );
+
+    await tester.tap(find.byKey(const Key('start-ride-button')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('confirm-start-ride-button')));
+    await tester.pump();
+    for (
+      var attempt = 0;
+      attempt < 30 && find.text('RUNNING').evaluate().isEmpty;
+      attempt += 1
+    ) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(controller.rideStarted, isTrue);
+    expect(find.text('RUNNING'), findsOneWidget);
+    expect(find.text('Pause'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 300));
+  });
+
   testWidgets(
     'active ride moves navigation chrome to a left rail in landscape',
     (tester) async {

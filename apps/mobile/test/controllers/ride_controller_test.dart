@@ -236,6 +236,11 @@ void main() {
     expect(controller.session?.simulationRiderCount, 30);
     expect(controller.session?.displayName, 'Demo Lead');
     expect(controller.events.first.payload['simulation'], isTrue);
+    expect(controller.events, hasLength(1));
+    expect(controller.rideStarted, isFalse);
+
+    await controller.startRide();
+
     expect(controller.events.last.type, RideEventType.rideStarted);
     expect(controller.rideStarted, isTrue);
 
@@ -245,6 +250,7 @@ void main() {
     expect(controller.session?.simulationRiderCount, 12);
     expect(controller.session?.rideId, isNot(firstRideId));
     expect(await eventStore.eventsForRide(firstRideId), isEmpty);
+    expect(controller.rideStarted, isFalse);
   });
 
   test('invalid join code is rejected without creating a session', () async {

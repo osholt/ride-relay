@@ -69,6 +69,64 @@ void main() {
     },
   );
 
+  test('keeps the fleet staged until the ride starts', () async {
+    final stagedSession = RideSession(
+      rideId: 'staged-sim-ride',
+      rideCode: 'SIM123',
+      inviteSecret: 'simulation-secret-that-is-long-enough',
+      joinToken: 'test-join-token-0123456789',
+      localRiderId: 'lead',
+      displayName: 'Demo Lead',
+      role: RideRole.lead,
+      joinedAt: DateTime.utc(2026, 7, 17),
+      isSimulation: true,
+    );
+    final stagedAwareness = SituationalAwarenessController(
+      InMemoryEventStore(),
+      stagedSession,
+      route: const [
+        GeoPoint(latitude: 51, longitude: -1),
+        GeoPoint(latitude: 51, longitude: -0.9),
+      ],
+      rideStarted: false,
+    );
+    await stagedAwareness.initialize();
+    final stagedSimulation = RideSimulationController(
+      stagedAwareness,
+      session: stagedSession,
+      route: const [
+        GeoPoint(latitude: 51, longitude: -1),
+        GeoPoint(latitude: 51, longitude: -0.9),
+      ],
+      tickInterval: const Duration(days: 1),
+      rideStarted: false,
+    );
+    addTearDown(() {
+      stagedSimulation.dispose();
+      stagedAwareness.dispose();
+    });
+    await stagedSimulation.initialize();
+
+    final initialProgress = stagedSimulation.progress;
+    stagedSimulation.start();
+    await stagedSimulation.advance(const Duration(seconds: 2));
+
+    expect(stagedSimulation.state, RideSimulationState.ready);
+    expect(stagedSimulation.progress, initialProgress);
+    expect(stagedSimulation.simulatedElapsed, Duration.zero);
+    expect(
+      stagedSimulation.riders.every((rider) => rider.speedMetersPerSecond == 0),
+      isTrue,
+    );
+
+    stagedSimulation.setRideStarted(true);
+    stagedSimulation.start();
+    await stagedSimulation.advance(const Duration(seconds: 2));
+
+    expect(stagedSimulation.state, RideSimulationState.running);
+    expect(stagedSimulation.progress, greaterThan(initialProgress));
+  });
+
   test('uses short updates for continuous visual movement', () {
     final smoothSimulation = RideSimulationController(
       awareness,
