@@ -11,6 +11,7 @@ import '../domain/recorded_route_store.dart';
 import '../features/home/home_screen.dart';
 import '../features/onboarding/onboarding_screen.dart';
 import '../features/ride/active_ride_shell.dart';
+import '../internet/plan_directory.dart';
 
 class RideRelayApp extends StatelessWidget {
   const RideRelayApp({
@@ -23,6 +24,7 @@ class RideRelayApp extends StatelessWidget {
     required this.sharedRoutes,
     required this.recordedRoutes,
     required this.completedRides,
+    this.planDirectory,
     this.enableNativeServices = true,
   });
 
@@ -34,6 +36,7 @@ class RideRelayApp extends StatelessWidget {
   final SharedRouteController sharedRoutes;
   final RecordedRouteStore recordedRoutes;
   final CompletedRidesController completedRides;
+  final PlanDirectory? planDirectory;
   final bool enableNativeServices;
 
   @override
@@ -143,6 +146,7 @@ class RideRelayApp extends StatelessWidget {
             sharedRoutes: sharedRoutes,
             recordedRoutes: recordedRoutes,
             completedRides: completedRides,
+            planDirectory: planDirectory,
           );
         },
       ),

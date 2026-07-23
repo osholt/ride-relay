@@ -15,6 +15,7 @@ import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
 import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
+import 'package:ride_relay/internet/plan_directory.dart';
 import 'package:ride_relay/services/nearby_bridge.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -48,6 +49,38 @@ void main() {
     expect(find.text('Ready to ride?'), findsOneWidget);
 
     controller.dispose();
+  });
+
+  testWidgets('create ride accepts a web-planner route code', (tester) async {
+    final controller = await _controller();
+    addTearDown(controller.dispose);
+    _sharedRoutes.clearPending();
+    addTearDown(_sharedRoutes.clearPending);
+    final plans = _FakePlanDirectory();
+
+    await tester.pumpWidget(_app(controller, planDirectory: plans));
+    await tester.tap(find.text('Create a ride'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('planned-route-code-field')), findsOneWidget);
+    expect(find.text('Planned route code (optional)'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const Key('planned-route-code-field')),
+      'AB12CD34',
+    );
+    await tester.scrollUntilVisible(
+      find.widgetWithText(FilledButton, 'Create ride'),
+      180,
+      scrollable: _rideFormScrollable,
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Create ride'));
+    await tester.pumpAndSettle();
+
+    expect(plans.requestedCode, 'AB12CD34');
+    expect(find.text('Continue to ride'), findsOneWidget);
+
+    await tester.tap(find.text('Continue to ride'));
+    expect(_sharedRoutes.pending?.name, 'Peak Loop.gpx');
   });
 
   testWidgets('join form keeps the active ride code above an iOS keyboard', (
@@ -430,6 +463,7 @@ final _rideFormScrollable = find
 RideRelayApp _app(
   RideController controller, {
   RideCodePreferenceController? rideCodePreference,
+  PlanDirectory? planDirectory,
 }) => RideRelayApp(
   controller: controller,
   distanceUnits: DistanceUnitController.forLocale(const Locale('en', 'GB')),
@@ -439,6 +473,7 @@ RideRelayApp _app(
   sharedRoutes: _sharedRoutes,
   recordedRoutes: _recordedRoutes,
   completedRides: _completedRides,
+  planDirectory: planDirectory,
   enableNativeServices: false,
 );
 
@@ -474,6 +509,23 @@ class _SuccessfulRideCodeDirectory implements RideCodeDirectory {
     inviteSecret: 'test-invite-secret-0123456789',
     joinToken: 'test-join-token-0123456789',
   );
+}
+
+class _FakePlanDirectory implements PlanDirectory {
+  String? requestedCode;
+
+  @override
+  Future<FetchedPlan> fetch(String code) async {
+    requestedCode = code;
+    return const FetchedPlan(
+      name: 'Peak Loop',
+      gpx:
+          '<gpx version="1.1"><trk><trkseg>'
+          '<trkpt lat="53.1" lon="-1.2"/>'
+          '<trkpt lat="53.2" lon="-1.1"/>'
+          '</trkseg></trk></gpx>',
+    );
+  }
 }
 
 class _FakeNearbyBridge extends NearbyBridge {
