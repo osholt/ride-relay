@@ -30,6 +30,26 @@ build.
 
 ## Alternatives
 
+### Waze for Cities data feed
+
+Google's
+[Waze Data Feed](https://support.google.com/waze/partners/answer/10618035?hl=en)
+is a near-real-time technical source: partner JSON or XML feeds are refreshed
+about every two minutes and include traffic and hazard reports. The published
+[alert schema](https://support.google.com/waze/partners/answer/13458165?hl=en)
+includes a `HAZARD_ON_ROAD_MOBILE_SPEED_CAMERA` subtype, but does not document a
+general police-location alert for partner feeds.
+
+It is not a public Google API. Each feed URL contains a partner token and is
+limited to an approved managed area under a Waze partner agreement. Google's
+[eligibility rules](https://support.google.com/waze/partners/answer/10453062?hl=en)
+currently restrict applications to government agencies and private road
+operators. Tail End Charlie therefore cannot lawfully or reliably build its
+consumer feature from this feed without a qualifying UK authority/operator
+partner and explicit Waze approval covering in-app redistribution. If such a
+partner sponsors access, Waze could augment live mobile-camera and road-hazard
+coverage; it does not replace the commercial camera database decision today.
+
 ### TomTom
 
 [TomTom Safety Locations](https://developer.tomtom.com/navigation/android/guides/virtual-horizon/horizon-safety-locations)

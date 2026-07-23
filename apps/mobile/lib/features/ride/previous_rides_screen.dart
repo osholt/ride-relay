@@ -11,6 +11,7 @@ import '../../domain/imported_route.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/completed_ride_sharer.dart';
 import '../../services/map_geojson.dart';
+import '../../services/map_style_repository.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/ride_summary_exporter.dart';
 import 'ride_recap_screen.dart';
@@ -366,11 +367,13 @@ class ArchivedRideMap extends StatefulWidget {
     required this.plannedRoute,
     required this.traveledRoute,
     this.basemapConfiguration,
+    this.mapStyleString,
   });
 
   final ImportedRoute? plannedRoute;
   final ImportedRoute? traveledRoute;
   final BasemapConfiguration? basemapConfiguration;
+  final String? mapStyleString;
 
   @override
   State<ArchivedRideMap> createState() => _ArchivedRideMapState();
@@ -380,6 +383,7 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
   static const _plannedSource = 'archived-planned-source';
   static const _trackSource = 'archived-track-source';
   ml.MapLibreMapController? _controller;
+  late final Future<String> _mapStyle = _resolveMapStyle();
 
   List<GeoPoint> get _points => [
     ...?widget.plannedRoute?.allPoints,
@@ -399,42 +403,68 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
         widget.basemapConfiguration ??
         BasemapConfiguration.fromEnvironment().forBrightness(dark: true);
     final first = points.first;
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: ml.MapLibreMap(
-            key: const Key('archived-ride-map'),
-            styleString: configuration.styleUrl,
-            initialCameraPosition: ml.CameraPosition(
-              target: ml.LatLng(first.latitude, first.longitude),
-              zoom: points.length == 1 ? 14 : 10,
-            ),
-            onMapCreated: (controller) => _controller = controller,
-            onStyleLoadedCallback: () => unawaited(_prepareStyle()),
-            logoEnabled: false,
-            compassEnabled: true,
-            minMaxZoomPreference: ml.MinMaxZoomPreference(
-              3,
-              configuration.maximumNativeZoom.toDouble(),
-            ),
-          ),
-        ),
-        const Positioned(
-          right: 6,
-          bottom: 5,
-          child: DecoratedBox(
-            decoration: BoxDecoration(color: Color(0xB3000000)),
-            child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-              child: Text(
-                'OpenFreeMap · © OSM',
-                style: TextStyle(color: Colors.white, fontSize: 8),
+    return FutureBuilder<String>(
+      future: _mapStyle,
+      builder: (context, snapshot) {
+        final style = snapshot.data;
+        if (style == null) {
+          return const ColoredBox(
+            color: Color(0xFF111820),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: ml.MapLibreMap(
+                key: const Key('archived-ride-map'),
+                styleString: style,
+                initialCameraPosition: ml.CameraPosition(
+                  target: ml.LatLng(first.latitude, first.longitude),
+                  zoom: points.length == 1 ? 14 : 10,
+                ),
+                onMapCreated: (controller) => _controller = controller,
+                onStyleLoadedCallback: () => unawaited(_prepareStyle()),
+                logoEnabled: false,
+                compassEnabled: true,
+                minMaxZoomPreference: ml.MinMaxZoomPreference(
+                  3,
+                  configuration.maximumNativeZoom.toDouble(),
+                ),
               ),
             ),
-          ),
-        ),
-      ],
+            const Positioned(
+              right: 6,
+              bottom: 5,
+              child: DecoratedBox(
+                decoration: BoxDecoration(color: Color(0xB3000000)),
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  child: Text(
+                    'OpenFreeMap · © OSM',
+                    style: TextStyle(color: Colors.white, fontSize: 8),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
+  }
+
+  Future<String> _resolveMapStyle() async {
+    final supplied = widget.mapStyleString;
+    if (supplied != null) return supplied;
+    final configuration =
+        widget.basemapConfiguration ??
+        BasemapConfiguration.fromEnvironment().forBrightness(dark: true);
+    final repository = await MapStyleRepository.openDefault(configuration);
+    try {
+      return await repository.resolve();
+    } finally {
+      repository.dispose();
+    }
   }
 
   Future<void> _prepareStyle() async {
