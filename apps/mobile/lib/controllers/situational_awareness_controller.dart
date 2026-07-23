@@ -185,6 +185,11 @@ class SituationalAwarenessController extends ChangeNotifier {
     GeoPoint? position,
     String? details,
   }) async {
+    if (!type.isRiderReportable) {
+      throw const FormatException(
+        'Police and speed-camera reports are not supported.',
+      );
+    }
     HazardReport? result;
     await _run(() async {
       final reportPosition = position ?? localLocation?.sample.position;

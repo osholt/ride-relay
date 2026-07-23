@@ -6,6 +6,7 @@ import 'package:ride_relay/controllers/foreground_location_controller.dart';
 import 'package:ride_relay/controllers/situational_awareness_controller.dart';
 import 'package:ride_relay/data/in_memory_event_store.dart';
 import 'package:ride_relay/domain/geo_point.dart';
+import 'package:ride_relay/domain/hazard.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/domain/rider_location.dart';
@@ -62,6 +63,20 @@ void main() {
 
     expect(find.text('Roadworks'), findsOneWidget);
     expect(find.textContaining('1 report'), findsOneWidget);
+  });
+
+  testWidgets('does not offer enforcement report categories', (tester) async {
+    await controller.recordLocalLocation(_sample(51));
+    await tester.pumpWidget(_app(controller));
+
+    await tester.tap(find.byKey(const Key('report-hazard-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('hazard-type-field')));
+    await tester.pumpAndSettle();
+
+    expect(find.text(HazardType.policeActivity.label), findsNothing);
+    expect(find.text(HazardType.speedCamera.label), findsNothing);
+    expect(find.text(HazardType.debris.label), findsOneWidget);
   });
 
   testWidgets('shows coordinator off-route alert and Waze unavailable state', (
