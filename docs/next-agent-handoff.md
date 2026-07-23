@@ -4,9 +4,10 @@ Updated: 2026-07-23
 
 ## Current branch
 
-Issue #34 and #38 work is on `codex/route-review-push`, stacked directly on
-`codex/ui-navigation-batch` (draft PR #43). The user's primary worktree still
-contains an unrelated local Xcode signing edit and untracked
+Issue #34 and #38 work is on `codex/route-review-push` in
+[draft PR #52](https://github.com/osholt/tailendcharlie/pull/52), stacked
+directly on `codex/ui-navigation-batch` (draft PR #43). The user's primary
+worktree still contains an unrelated local Xcode signing edit and untracked
 `docs/carplay-entitlement-submission/` material; this feature work was completed
 in a separate clean worktree and must not overwrite either item.
 
