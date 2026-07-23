@@ -63,6 +63,12 @@ turn-by-turn map. It uses a second, throttled view of the configured MapLibre
 style, fits the latest known rider locations, distinguishes the local rider,
 and includes route geometry without changing the main camera.
 
+On Android, the overview uses the local route-and-rider renderer instead of a
+second nested MapLibre platform view. This avoids the black platform surface
+seen on affected Samsung-class devices while retaining route geometry, rider
+contrast, north indication, scale, and light/dark theme response. The iOS
+overview continues to use the configured MapLibre style when available.
+
 The primary route is split at the rider's monotonic along-route progress. The
 completed section is solid orange and the route ahead is a translucent dotted
 orange line. Suspected, confirmed, or recovering off-route riders receive a

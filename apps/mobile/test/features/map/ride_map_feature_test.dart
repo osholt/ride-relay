@@ -35,6 +35,19 @@ void main() {
     );
   });
 
+  test('local group mini-map follows light and dark appearance', () {
+    expect(
+      groupMiniMapBackgroundColor(Brightness.light),
+      const Color(0xFFE9EEF3),
+    );
+    expect(
+      groupMiniMapBackgroundColor(Brightness.dark),
+      const Color(0xFF151E28),
+    );
+    expect(groupMiniMapGridColor(Brightness.light), const Color(0xFFB8C4D0));
+    expect(groupMiniMapGridColor(Brightness.dark), const Color(0xFF263443));
+  });
+
   testWidgets('offers file import and loads bundled demo route offline', (
     tester,
   ) async {
