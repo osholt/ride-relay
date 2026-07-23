@@ -250,7 +250,9 @@ class _SimulationControls extends StatelessWidget {
                 Expanded(
                   child: FilledButton.icon(
                     key: const Key('simulation-play-pause'),
-                    onPressed: controller.state == RideSimulationState.completed
+                    onPressed:
+                        !controller.rideStarted ||
+                            controller.state == RideSimulationState.completed
                         ? null
                         : controller.isRunning
                         ? controller.pause
@@ -258,7 +260,13 @@ class _SimulationControls extends StatelessWidget {
                     icon: Icon(
                       controller.isRunning ? Icons.pause : Icons.play_arrow,
                     ),
-                    label: Text(controller.isRunning ? 'Pause' : 'Run'),
+                    label: Text(
+                      !controller.rideStarted
+                          ? 'Waiting for start'
+                          : controller.isRunning
+                          ? 'Pause'
+                          : 'Run',
+                    ),
                   ),
                 ),
                 const SizedBox(width: 10),

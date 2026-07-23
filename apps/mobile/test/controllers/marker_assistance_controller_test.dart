@@ -174,6 +174,7 @@ class _Fixture {
     );
     await ride.initialize();
     await ride.createRide('Oliver');
+    await ride.startRide();
     final awareness = SituationalAwarenessController(
       store,
       ride.session!,

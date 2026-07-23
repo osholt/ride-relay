@@ -3,10 +3,12 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:crypto/crypto.dart';
 import 'package:uuid/uuid.dart';
 
 import '../domain/event_store.dart';
 import '../domain/ice_share.dart';
+import '../domain/imported_route.dart';
 import '../domain/join_invite.dart';
 import '../domain/marker_assistance.dart';
 import '../domain/quick_message.dart';
@@ -19,6 +21,9 @@ import '../features/map/motorcycle_icon.dart';
 import '../services/nearby_bridge.dart';
 import '../services/marker_statistics.dart';
 import '../services/ride_event_authenticator.dart';
+import '../services/ride_lifecycle.dart';
+import '../services/ride_membership.dart';
+import '../services/ride_route_reducer.dart';
 import '../services/situation_event_factory.dart';
 import '../internet/internet_relay_client.dart';
 
@@ -34,6 +39,7 @@ class RideController extends ChangeNotifier {
     IdFactory? idFactory,
     Random? random,
     RideCodeDirectory? rideCodeDirectory,
+    this._installationId,
   }) : _clock = clock ?? DateTime.now,
        _idFactory = idFactory ?? const Uuid().v7,
        _random = random ?? Random.secure(),
@@ -48,6 +54,7 @@ class RideController extends ChangeNotifier {
   final Clock _clock;
   final IdFactory _idFactory;
   final Random _random;
+  final String? _installationId;
   final RideCodeDirectory _rideCodeDirectory;
 
   RideSession? _session;
@@ -58,6 +65,9 @@ class RideController extends ChangeNotifier {
   String? _errorMessage;
   RideRole? _roleBeforeMarker;
   Timer? _endedRideCleanupTimer;
+  RideLifecycle _lifecycle = const RideLifecycle();
+  RideRouteState _routeState = const RideRouteState();
+  final Map<String, Set<RideTransportEvidence>> _transportByEventId = {};
 
   /// ICE shares the local rider has acted on (called/texted the contact).
   /// Kept in memory only, for this session: it gates which received shares
@@ -72,6 +82,62 @@ class RideController extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
   bool get hasActiveRide => _session != null;
 
+  bool get rideStarted => _lifecycle.started;
+  DateTime? get rideStartedAt => _lifecycle.startedAt;
+  bool get isLocalRideLeader =>
+      _session?.role == RideRole.lead ||
+      (markerActive && _roleBeforeMarker == RideRole.lead);
+  RidePhase get ridePhase => rideEnded
+      ? RidePhase.ended
+      : rideStarted
+      ? RidePhase.started
+      : RidePhase.open;
+
+  RideRouteState get authoritativeRouteState => _routeState;
+  ImportedRoute? get authoritativeRoute => _routeState.route;
+
+  List<RideParticipant> get participants {
+    final activeSession = _session;
+    if (activeSession == null) return const [];
+    return const RideMembershipReducer().fromEvents(
+      rideId: activeSession.rideId,
+      inviteSecret: activeSession.inviteSecret,
+      events: _events,
+      now: _clock(),
+      localRiderId: activeSession.localRiderId,
+      localDisplayName: activeSession.displayName,
+      localRole: activeSession.role,
+      localJoinedAt: activeSession.joinedAt,
+      localMotorcycleStyle: activeSession.motorcycleStyle,
+      localRiderColor: activeSession.riderColor,
+      rideStartedAt: rideStartedAt,
+      rideEndedAt: _rideEndedAt,
+      transportByEventId: _transportByEventId,
+    );
+  }
+
+  List<RideParticipant> get liveParticipants => participants
+      .where((participant) => participant.isIncludedInLiveCount)
+      .toList(growable: false);
+
+  RideParticipant? participantFor(String riderId) => participants
+      .where((participant) => participant.riderId == riderId)
+      .firstOrNull;
+
+  void noteTransportObservation(
+    String eventId,
+    RideTransportEvidence evidence,
+  ) {
+    if (evidence == RideTransportEvidence.localDevice ||
+        evidence == RideTransportEvidence.journal) {
+      return;
+    }
+    final values = _transportByEventId.putIfAbsent(eventId, () => {});
+    if (values.add(evidence)) notifyListeners();
+  }
+
+  void refreshMembershipFreshness() => notifyListeners();
+
   bool get rideEnded {
     return _events.any((event) => event.type == RideEventType.rideEnded);
   }
@@ -79,6 +145,7 @@ class RideController extends ChangeNotifier {
   /// A lead-owned group coordination pause. It deliberately does not suppress
   /// GPS evidence: riders can still be found while the group is stopped.
   bool get ridePaused {
+    if (!rideStarted) return false;
     RideEvent? latest;
     for (final event in _events) {
       if (event.type != RideEventType.ridePaused &&
@@ -110,7 +177,7 @@ class RideController extends ChangeNotifier {
   }
 
   RideMarkingSummary get markingSummary => MarkerStatistics.fromEvents(
-    _events,
+    _rideActivityEvents,
     asOf: _clock(),
     markerDeviceId: _session?.localRiderId,
     authenticatedLocationEvidence: _authenticatedLocationEvidence,
@@ -118,17 +185,24 @@ class RideController extends ChangeNotifier {
 
   Map<String, String> get _authenticatedLocationEvidence {
     final activeSession = _session;
-    if (activeSession == null) return const {};
+    final startedAt = rideStartedAt;
+    if (activeSession == null || startedAt == null) return const {};
     final result = <String, String>{};
     for (final event in _events) {
       if (event.type != RideEventType.riderLocationUpdated ||
+          event.createdAt.isBefore(startedAt) ||
           !SituationEventFactory.verify(event, activeSession.inviteSecret)) {
         continue;
       }
       final rawLocation = event.payload['location'];
       if (rawLocation is! Map) continue;
       final riderId = rawLocation['riderId'];
+      final sample = rawLocation['sample'];
+      final recordedAt = sample is Map
+          ? DateTime.tryParse(sample['recordedAt'] as String? ?? '')
+          : null;
       if (riderId is String && riderId == event.deviceId) {
+        if (recordedAt != null && recordedAt.isBefore(startedAt)) continue;
         result[event.id] = riderId;
       }
     }
@@ -248,6 +322,7 @@ class RideController extends ChangeNotifier {
     final activeSession = _session;
     if (activeSession != null) {
       _events = await _eventStore.eventsForRide(activeSession.rideId);
+      _rebuildLifecycle();
       await _expireEndedRideIfDue();
       await _purgeUnusedIceSharesIfEnded();
       _roleBeforeMarker = _activeMarkerPreviousRole();
@@ -261,6 +336,7 @@ class RideController extends ChangeNotifier {
       return;
     }
     _events = await _eventStore.eventsForRide(activeSession.rideId);
+    _rebuildLifecycle();
     await _expireEndedRideIfDue();
     await _purgeUnusedIceSharesIfEnded();
     notifyListeners();
@@ -367,7 +443,7 @@ class RideController extends ChangeNotifier {
         rideCode: credentials.rideCode,
         inviteSecret: credentials.inviteSecret,
         joinToken: credentials.joinToken,
-        localRiderId: _idFactory(),
+        localRiderId: _localRiderIdForRide(credentials.rideId),
         displayName: _normaliseName(displayName),
         role: RideRole.rider,
         joinedAt: now,
@@ -376,6 +452,8 @@ class RideController extends ChangeNotifier {
       );
       _session = session;
       await _sessionStore.save(session);
+      _events = await _eventStore.eventsForRide(session.rideId);
+      _rebuildLifecycle();
       await _record(
         type: RideEventType.riderJoined,
         payload: {
@@ -482,10 +560,91 @@ class RideController extends ChangeNotifier {
 
   Future<void> resumeRide() => _setRidePaused(false);
 
+  Future<void> startRide() async {
+    if (rideStarted || rideEnded) return;
+    await _run(() async {
+      final session = _requireSession();
+      if (session.role != RideRole.lead) {
+        throw const FormatException('Only the ride leader can start the ride.');
+      }
+      await _record(
+        type: RideEventType.rideStarted,
+        priority: EventPriority.important,
+        payload: {
+          'leaderRiderId': session.localRiderId,
+          'leaderDisplayName': session.displayName,
+        },
+      );
+    });
+  }
+
+  Future<void> publishRoute(ImportedRoute route) async {
+    await _run(() async {
+      final session = _requireSession();
+      if (!isLocalRideLeader) {
+        throw const FormatException(
+          'Only the ride leader can change the group route.',
+        );
+      }
+      final encoded = const RideRouteEncoder().encode(route);
+      final revisionId = _idFactory();
+      final revisionNumber = _routeState.revisionNumber + 1;
+      for (var index = 0; index < encoded.chunks.length; index += 1) {
+        await _record(
+          type: RideEventType.routeRevisionChunk,
+          priority: EventPriority.important,
+          payload: {
+            'revisionId': revisionId,
+            'revisionNumber': revisionNumber,
+            'leaderRiderId': session.localRiderId,
+            'index': index,
+            'data': encoded.chunks[index],
+          },
+        );
+      }
+      await _record(
+        type: RideEventType.routeRevisionPublished,
+        priority: EventPriority.important,
+        payload: {
+          'revisionId': revisionId,
+          'revisionNumber': revisionNumber,
+          'leaderRiderId': session.localRiderId,
+          'chunkCount': encoded.chunks.length,
+          'compressedBytes': encoded.compressedBytes,
+          'sha256': encoded.sha256Digest,
+          'routeName': route.name,
+        },
+      );
+    });
+  }
+
+  Future<void> clearRoute() async {
+    await _run(() async {
+      final session = _requireSession();
+      if (!isLocalRideLeader) {
+        throw const FormatException(
+          'Only the ride leader can clear the group route.',
+        );
+      }
+      await _record(
+        type: RideEventType.routeCleared,
+        priority: EventPriority.important,
+        payload: {
+          'revisionId': _idFactory(),
+          'revisionNumber': _routeState.revisionNumber + 1,
+          'leaderRiderId': session.localRiderId,
+        },
+      );
+    });
+  }
+
   Future<void> _setRidePaused(bool paused) async {
     if (ridePaused == paused) return;
     await _run(() async {
       final session = _requireSession();
+      if (!rideStarted) {
+        throw const FormatException('Start the ride before pausing it.');
+      }
       if (session.role != RideRole.lead) {
         throw const FormatException(
           'Only the ride leader can pause the group.',
@@ -507,6 +666,9 @@ class RideController extends ChangeNotifier {
       return;
     }
     await _run(() async {
+      if (!rideStarted) {
+        throw const FormatException('Start the ride before using marker mode.');
+      }
       final activeSession = _requireSession();
       _roleBeforeMarker = activeSession.role;
       final markerSessionId = _idFactory();
@@ -582,6 +744,10 @@ class RideController extends ChangeNotifier {
   Future<void> endRide() async {
     if (rideEnded) return;
     await _run(() async {
+      _requireSession();
+      if (!isLocalRideLeader) {
+        throw const FormatException('Only the ride leader can end the ride.');
+      }
       if (markerActive) {
         final current = currentMarkerSession;
         await _record(
@@ -615,9 +781,31 @@ class RideController extends ChangeNotifier {
     });
   }
 
-  Future<void> leaveRide() async {
+  Future<void> leaveRide({
+    Future<void> Function(RideEvent departure)? publishDeparture,
+  }) async {
     await _run(() async {
-      await _removeRideData();
+      final session = _requireSession();
+      final departure = await _record(
+        type: RideEventType.riderLeft,
+        priority: EventPriority.important,
+        expiresAt: _clock().add(const Duration(hours: 24)),
+        payload: {
+          'riderId': session.localRiderId,
+          'displayName': session.displayName,
+          'reason': 'left',
+        },
+      );
+      if (publishDeparture != null) {
+        try {
+          await publishDeparture(departure);
+        } on Object catch (error, stackTrace) {
+          if (kDebugMode) {
+            debugPrint('Departure remains queued locally: $error\n$stackTrace');
+          }
+        }
+      }
+      await _removeRideData(deleteEvents: false);
     });
   }
 
@@ -626,7 +814,7 @@ class RideController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _record({
+  Future<RideEvent> _record({
     required RideEventType type,
     required Map<String, Object?> payload,
     EventPriority priority = EventPriority.routine,
@@ -662,6 +850,8 @@ class RideController extends ChangeNotifier {
     );
     await _eventStore.append(event);
     _events = [..._events, event];
+    _rebuildLifecycle();
+    return event;
   }
 
   Future<void> _createRide({
@@ -674,12 +864,13 @@ class RideController extends ChangeNotifier {
   }) async {
     final now = _clock();
     final normalisedRideName = rideName?.trim();
+    final rideId = _idFactory();
     final session = RideSession(
-      rideId: _idFactory(),
+      rideId: rideId,
       rideCode: _generateCode(),
       inviteSecret: _generateInviteSecret(),
       joinToken: _generateJoinToken(),
-      localRiderId: _idFactory(),
+      localRiderId: _localRiderIdForRide(rideId),
       displayName: _normaliseName(displayName),
       role: RideRole.lead,
       joinedAt: now,
@@ -771,6 +962,17 @@ class RideController extends ChangeNotifier {
     (_) => _joinTokenAlphabet[_random.nextInt(_joinTokenAlphabet.length)],
   ).join();
 
+  String _localRiderIdForRide(String rideId) {
+    final installationId = _installationId;
+    if (installationId == null || installationId.isEmpty) {
+      return _idFactory();
+    }
+    final digest = sha256.convert(
+      utf8.encode('tail-end-charlie-rider-v1\n$installationId\n$rideId'),
+    );
+    return 'rider-${base64Url.encode(digest.bytes).replaceAll('=', '')}';
+  }
+
   DateTime? get _rideEndedAt {
     for (final event in _events.reversed) {
       if (event.type == RideEventType.rideEnded) return event.createdAt;
@@ -820,16 +1022,19 @@ class RideController extends ChangeNotifier {
     _events = _events.where((event) => !removed.contains(event.id)).toList();
   }
 
-  Future<void> _removeRideData() async {
+  Future<void> _removeRideData({bool deleteEvents = true}) async {
     _endedRideCleanupTimer?.cancel();
     _endedRideCleanupTimer = null;
     final rideId = _requireSession().rideId;
-    await _eventStore.deleteRide(rideId);
+    if (deleteEvents) await _eventStore.deleteRide(rideId);
     await _sessionStore.clear();
     _session = null;
     _events = const [];
+    _lifecycle = const RideLifecycle();
+    _routeState = const RideRouteState();
     _roleBeforeMarker = null;
     _usedIceShareEventIds.clear();
+    _transportByEventId.clear();
   }
 
   RideRole? _activeMarkerPreviousRole() {
@@ -849,6 +1054,31 @@ class RideController extends ChangeNotifier {
       }
     }
     return null;
+  }
+
+  Iterable<RideEvent> get _rideActivityEvents {
+    final startedAt = rideStartedAt;
+    if (startedAt == null) return const [];
+    return _events.where((event) => !event.createdAt.isBefore(startedAt));
+  }
+
+  void _rebuildLifecycle() {
+    final activeSession = _session;
+    if (activeSession == null) {
+      _lifecycle = const RideLifecycle();
+      _routeState = const RideRouteState();
+      return;
+    }
+    _lifecycle = RideLifecycleReducer.fromEvents(
+      rideId: activeSession.rideId,
+      inviteSecret: activeSession.inviteSecret,
+      events: _events,
+    );
+    _routeState = const RideRouteReducer().fromEvents(
+      rideId: activeSession.rideId,
+      inviteSecret: activeSession.inviteSecret,
+      events: _events,
+    );
   }
 
   @override

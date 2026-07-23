@@ -20,6 +20,25 @@ void main() {
     await store.clearActiveRoute();
     expect(await store.loadActiveRoute(), isNull);
   });
+
+  test('keeps active routes isolated by ride', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'scoped-route-store-test',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final firstRideStore = JsonFileRouteStore.forRide(directory, 'ride-a');
+    final secondRideStore = JsonFileRouteStore.forRide(directory, 'ride-b');
+
+    await firstRideStore.saveActiveRoute(_route('first', 'First route'));
+
+    expect((await firstRideStore.loadActiveRoute())?.id, 'first');
+    expect(await secondRideStore.loadActiveRoute(), isNull);
+
+    await secondRideStore.saveActiveRoute(_route('second', 'Second route'));
+
+    expect((await firstRideStore.loadActiveRoute())?.id, 'first');
+    expect((await secondRideStore.loadActiveRoute())?.id, 'second');
+  });
 }
 
 ImportedRoute _route(String id, String name) => ImportedRoute(

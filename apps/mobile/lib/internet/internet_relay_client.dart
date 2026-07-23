@@ -3,9 +3,11 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../domain/ride_event.dart';
+import '../domain/rider_location.dart';
 import '../domain/ride_session.dart';
 
 class InternetRelayConfiguration {
@@ -52,6 +54,98 @@ class InternetRelayConfiguration {
   }
 }
 
+abstract final class RelayProtocolCapabilities {
+  static const rideStart = 'ride-start-v1';
+  static const membership = 'membership-v1';
+  static const preStartPresence = 'pre-start-presence-v1';
+  static const routeRevisions = 'route-revisions-v1';
+
+  static const current = {
+    rideStart,
+    membership,
+    preStartPresence,
+    routeRevisions,
+  };
+}
+
+class RelayClientDescriptor {
+  const RelayClientDescriptor({
+    required this.protocolVersion,
+    required this.platform,
+    required this.appVersion,
+    required this.appBuild,
+    required this.capabilities,
+  });
+
+  factory RelayClientDescriptor.current() => RelayClientDescriptor(
+    protocolVersion: 1,
+    platform: defaultTargetPlatform.name,
+    appVersion: const String.fromEnvironment(
+      'RIDE_RELAY_APP_VERSION',
+      defaultValue: '1.0.1',
+    ),
+    appBuild: const String.fromEnvironment(
+      'RIDE_RELAY_APP_BUILD',
+      defaultValue: '22',
+    ),
+    capabilities: RelayProtocolCapabilities.current,
+  );
+
+  final int protocolVersion;
+  final String platform;
+  final String appVersion;
+  final String appBuild;
+  final Set<String> capabilities;
+
+  Map<String, String> get headers => {
+    'x-tailendcharlie-protocol': '$protocolVersion',
+    'x-tailendcharlie-platform': platform,
+    'x-tailendcharlie-app-version': appVersion,
+    'x-tailendcharlie-app-build': appBuild,
+    'x-tailendcharlie-capabilities': (capabilities.toList()..sort()).join(','),
+  };
+}
+
+enum RelayCompatibilityDisposition {
+  compatible,
+  legacyCompatible,
+  updateRequired,
+  serverUpgradeRequired,
+  temporarilyUnavailable,
+}
+
+class RelayCompatibilityResult {
+  const RelayCompatibilityResult({
+    required this.disposition,
+    required this.serverProtocol,
+    required this.minimumClientProtocol,
+    required this.capabilities,
+    required this.checkedAt,
+    required this.validUntil,
+    this.message,
+    this.updateUri,
+  });
+
+  final RelayCompatibilityDisposition disposition;
+  final int serverProtocol;
+  final int minimumClientProtocol;
+  final Set<String> capabilities;
+  final DateTime checkedAt;
+  final DateTime validUntil;
+  final String? message;
+  final Uri? updateUri;
+
+  bool get canSynchronize =>
+      disposition == RelayCompatibilityDisposition.compatible ||
+      disposition == RelayCompatibilityDisposition.legacyCompatible;
+
+  bool supports(String capability) => capabilities.contains(capability);
+}
+
+abstract interface class RelayCompatibilityApi {
+  Future<RelayCompatibilityResult> checkCompatibility();
+}
+
 class InternetSyncResult {
   const InternetSyncResult({
     required this.cursor,
@@ -71,6 +165,8 @@ class InternetRelayException implements Exception {
     this.unauthorized = false,
     this.retryAfter,
     this.statusCode,
+    this.code,
+    this.actionUrl,
   });
 
   final String message;
@@ -78,6 +174,8 @@ class InternetRelayException implements Exception {
   final bool unauthorized;
   final Duration? retryAfter;
   final int? statusCode;
+  final String? code;
+  final Uri? actionUrl;
 
   @override
   String toString() => 'InternetRelayException: $message';
@@ -93,6 +191,25 @@ abstract interface class InternetRelayApi {
   });
 
   void close();
+}
+
+abstract interface class PreStartPresenceApi {
+  InternetRelayConfiguration get configuration;
+
+  Future<PreStartPresenceResult> synchronizePreStartPresence({
+    required RideSession session,
+    required RiderLocation? position,
+    required bool clear,
+  });
+
+  void close();
+}
+
+class PreStartPresenceResult {
+  const PreStartPresenceResult({required this.locations, required this.ttl});
+
+  final List<RiderLocation> locations;
+  final Duration ttl;
 }
 
 /// The short-lived server directory that turns a six-digit ride code into the
@@ -146,17 +263,33 @@ class HttpRideCodeDirectory implements RideCodeDirectory {
   factory HttpRideCodeDirectory({
     required InternetRelayConfiguration configuration,
     required http.Client client,
-  }) => HttpRideCodeDirectory._(configuration, client);
+    RelayClientDescriptor? clientDescriptor,
+    DateTime Function()? clock,
+  }) => HttpRideCodeDirectory._(
+    configuration,
+    client,
+    clientDescriptor ?? RelayClientDescriptor.current(),
+    clock ?? DateTime.now,
+  );
 
-  HttpRideCodeDirectory._(this.configuration, this._client);
+  HttpRideCodeDirectory._(
+    this.configuration,
+    this._client,
+    this._clientDescriptor,
+    this._clock,
+  );
 
   final InternetRelayConfiguration configuration;
   final http.Client _client;
+  final RelayClientDescriptor _clientDescriptor;
+  final DateTime Function() _clock;
+  RelayCompatibilityResult? _cachedCompatibility;
 
   @override
   Future<void> register(RideSession session) async {
     _validateConfiguration();
     _validateSession(session);
+    await _ensureCompatibility();
     final response = await _send(
       http.Request('PUT', _joinCodeUri(session.rideCode))
         ..followRedirects = false
@@ -164,6 +297,7 @@ class HttpRideCodeDirectory implements RideCodeDirectory {
           'accept': 'application/json',
           'authorization': 'Bearer ${_rideBearerToken(session)}',
           'content-type': 'application/json',
+          ..._clientDescriptor.headers,
         })
         ..body = jsonEncode({
           'rideId': session.rideId,
@@ -181,11 +315,13 @@ class HttpRideCodeDirectory implements RideCodeDirectory {
     String? joinToken,
   }) async {
     _validateConfiguration();
+    await _ensureCompatibility();
     final normalizedCode = _normaliseCode(rideCode);
     final response = await _send(
       http.Request('GET', _joinCodeUri(normalizedCode))
         ..followRedirects = false
         ..headers['accept'] = 'application/json'
+        ..headers.addAll(_clientDescriptor.headers)
         ..headers.addAll(
           joinToken == null ? {} : {'x-ride-relay-join-token': joinToken},
         ),
@@ -248,10 +384,35 @@ class HttpRideCodeDirectory implements RideCodeDirectory {
         'Ride code service timed out. Check your connection and try again.',
         retryable: true,
       );
-    } on http.ClientException catch (error) {
-      throw RideCodeDirectoryException(
-        'Ride code service is unavailable: ${error.message}',
+    } on http.ClientException {
+      throw const RideCodeDirectoryException(
+        'Ride code service is temporarily unavailable. Check your connection and try again.',
         retryable: true,
+      );
+    }
+  }
+
+  Future<void> _ensureCompatibility() async {
+    try {
+      final result = await _fetchCompatibility(
+        configuration: configuration,
+        client: _client,
+        descriptor: _clientDescriptor,
+        clock: _clock,
+        cached: _cachedCompatibility,
+      );
+      _cachedCompatibility = result;
+      if (result.canSynchronize) return;
+      throw RideCodeDirectoryException(
+        result.message ?? 'This app and the ride service are not compatible.',
+        retryable:
+            result.disposition ==
+            RelayCompatibilityDisposition.temporarilyUnavailable,
+      );
+    } on InternetRelayException catch (error) {
+      throw RideCodeDirectoryException(
+        error.message,
+        retryable: error.retryable,
       );
     }
   }
@@ -353,17 +514,46 @@ class HttpRideCodeDirectory implements RideCodeDirectory {
   void close() => _client.close();
 }
 
-class HttpInternetRelayClient implements InternetRelayApi {
+class HttpInternetRelayClient
+    implements InternetRelayApi, RelayCompatibilityApi {
   factory HttpInternetRelayClient({
     required InternetRelayConfiguration configuration,
     required http.Client client,
-  }) => HttpInternetRelayClient._(configuration, client);
+    RelayClientDescriptor? clientDescriptor,
+    DateTime Function()? clock,
+  }) => HttpInternetRelayClient._(
+    configuration,
+    client,
+    clientDescriptor ?? RelayClientDescriptor.current(),
+    clock ?? DateTime.now,
+  );
 
-  HttpInternetRelayClient._(this.configuration, this._client);
+  HttpInternetRelayClient._(
+    this.configuration,
+    this._client,
+    this._clientDescriptor,
+    this._clock,
+  );
 
   @override
   final InternetRelayConfiguration configuration;
   final http.Client _client;
+  final RelayClientDescriptor _clientDescriptor;
+  final DateTime Function() _clock;
+  RelayCompatibilityResult? _cachedCompatibility;
+
+  @override
+  Future<RelayCompatibilityResult> checkCompatibility() async {
+    final result = await _fetchCompatibility(
+      configuration: configuration,
+      client: _client,
+      descriptor: _clientDescriptor,
+      clock: _clock,
+      cached: _cachedCompatibility,
+    );
+    _cachedCompatibility = result;
+    return result;
+  }
 
   @override
   Future<InternetSyncResult> synchronize({
@@ -424,6 +614,7 @@ class HttpInternetRelayClient implements InternetRelayApi {
         'content-type': 'application/json',
         'idempotency-key': _idempotencyKey(bodyBytes),
         'x-ride-relay-device': session.localRiderId,
+        ..._clientDescriptor.headers,
       })
       ..bodyBytes = bodyBytes;
 
@@ -437,9 +628,9 @@ class HttpInternetRelayClient implements InternetRelayApi {
         'Internet relay timed out before receiving response headers.',
         retryable: true,
       );
-    } on http.ClientException catch (error) {
-      throw InternetRelayException(
-        'Internet relay network error: ${error.message}',
+    } on http.ClientException {
+      throw const InternetRelayException(
+        'Internet relay is temporarily unavailable. Check your connection and try again.',
         retryable: true,
       );
     }
@@ -456,7 +647,7 @@ class HttpInternetRelayClient implements InternetRelayApi {
       );
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw _failureForResponse(response);
+      throw _failureForResponse(response, responseBytes);
     }
     final contentType = response.headers['content-type']?.toLowerCase();
     if (contentType == null || !contentType.contains('application/json')) {
@@ -545,18 +736,37 @@ class HttpInternetRelayClient implements InternetRelayApi {
     return bytes.takeBytes();
   }
 
-  InternetRelayException _failureForResponse(http.StreamedResponse response) {
+  InternetRelayException _failureForResponse(
+    http.StreamedResponse response,
+    Uint8List responseBytes,
+  ) {
     final status = response.statusCode;
     final unauthorized = status == 401 || status == 403;
     final retryable = status == 408 || status == 429 || status >= 500;
+    String? code;
+    String? serverMessage;
+    Uri? actionUrl;
+    try {
+      final decoded = jsonDecode(utf8.decode(responseBytes));
+      if (decoded is Map) {
+        code = decoded['code'] as String?;
+        serverMessage = decoded['message'] as String?;
+        actionUrl = Uri.tryParse(decoded['updateUrl'] as String? ?? '');
+      }
+    } on Object {
+      // A bounded but invalid error body falls back to the safe status text.
+    }
     return InternetRelayException(
-      unauthorized
-          ? 'Internet relay rejected this ride credential.'
-          : 'Internet relay returned HTTP $status.',
+      serverMessage ??
+          (unauthorized
+              ? 'Internet relay rejected this ride credential.'
+              : 'Internet relay returned HTTP $status.'),
       retryable: retryable,
       unauthorized: unauthorized,
       retryAfter: status == 429 ? _parseRetryAfter(response.headers) : null,
       statusCode: status,
+      code: code,
+      actionUrl: actionUrl,
     );
   }
 
@@ -596,6 +806,360 @@ class HttpInternetRelayClient implements InternetRelayApi {
 
   @override
   void close() => _client.close();
+}
+
+class HttpPreStartPresenceClient implements PreStartPresenceApi {
+  factory HttpPreStartPresenceClient({
+    required InternetRelayConfiguration configuration,
+    required http.Client client,
+    RelayClientDescriptor? clientDescriptor,
+    DateTime Function()? clock,
+  }) => HttpPreStartPresenceClient._(
+    configuration,
+    client,
+    clientDescriptor ?? RelayClientDescriptor.current(),
+    clock ?? DateTime.now,
+  );
+
+  HttpPreStartPresenceClient._(
+    this.configuration,
+    this._client,
+    this._clientDescriptor,
+    this._clock,
+  );
+
+  @override
+  final InternetRelayConfiguration configuration;
+  final http.Client _client;
+  final RelayClientDescriptor _clientDescriptor;
+  final DateTime Function() _clock;
+  RelayCompatibilityResult? _cachedCompatibility;
+
+  @override
+  Future<PreStartPresenceResult> synchronizePreStartPresence({
+    required RideSession session,
+    required RiderLocation? position,
+    required bool clear,
+  }) async {
+    final compatibility = await _fetchCompatibility(
+      configuration: configuration,
+      client: _client,
+      descriptor: _clientDescriptor,
+      clock: _clock,
+      cached: _cachedCompatibility,
+    );
+    _cachedCompatibility = compatibility;
+    if (!compatibility.supports(RelayProtocolCapabilities.preStartPresence)) {
+      throw const InternetRelayException(
+        'This ride service does not support pre-start positions yet.',
+        code: 'feature_unsupported',
+      );
+    }
+    if (clear && position != null) {
+      throw const InternetRelayException(
+        'A pre-start position cannot be published and cleared together.',
+      );
+    }
+    if (session.rideId.isEmpty ||
+        session.rideId.length > 128 ||
+        session.localRiderId.isEmpty ||
+        session.localRiderId.length > 128 ||
+        session.inviteSecret.length < 16) {
+      throw const InternetRelayException(
+        'Ride identity is invalid for pre-start positions.',
+      );
+    }
+    if (position != null && position.riderId != session.localRiderId) {
+      throw const InternetRelayException(
+        'A rider can only publish their own pre-start position.',
+      );
+    }
+    final bodyBytes = utf8.encode(
+      jsonEncode({
+        'protocolVersion': 1,
+        'deviceId': session.localRiderId,
+        'position': position == null
+            ? null
+            : {
+                'displayName': position.displayName,
+                'role': position.role.name,
+                'motorcycleStyle': position.motorcycleStyle.name,
+                'riderColor': position.riderColor.name,
+                'sample': position.sample.toJson(),
+              },
+        'clear': clear,
+      }),
+    );
+    if (bodyBytes.length > configuration.maximumRequestBytes) {
+      throw const InternetRelayException(
+        'Pre-start position request exceeds the size limit.',
+      );
+    }
+    final request = http.Request('POST', _presenceUri(session.rideId))
+      ..followRedirects = false
+      ..headers.addAll({
+        'accept': 'application/json',
+        'authorization': 'Bearer ${_rideBearerToken(session)}',
+        'content-type': 'application/json',
+        'x-ride-relay-device': session.localRiderId,
+        ..._clientDescriptor.headers,
+      })
+      ..bodyBytes = bodyBytes;
+
+    late http.StreamedResponse response;
+    try {
+      response = await _client
+          .send(request)
+          .timeout(configuration.headerTimeout);
+    } on TimeoutException {
+      throw const InternetRelayException(
+        'Pre-start position service timed out.',
+        retryable: true,
+      );
+    } on http.ClientException {
+      throw const InternetRelayException(
+        'Pre-start positions are temporarily unavailable.',
+        retryable: true,
+      );
+    }
+    final bytes = BytesBuilder(copy: false);
+    await for (final chunk in response.stream.timeout(
+      configuration.bodyTimeout,
+    )) {
+      if (bytes.length + chunk.length > configuration.maximumResponseBytes) {
+        throw const InternetRelayException(
+          'Pre-start position response exceeds the size limit.',
+        );
+      }
+      bytes.add(chunk);
+    }
+    final responseBytes = bytes.takeBytes();
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      String? message;
+      try {
+        final value = jsonDecode(utf8.decode(responseBytes));
+        if (value is Map) {
+          message = (value['error'] ?? value['message']) as String?;
+        }
+      } on Object {
+        // Use the bounded fallback below.
+      }
+      throw InternetRelayException(
+        message ?? 'Pre-start position service rejected the request.',
+        retryable:
+            response.statusCode == 404 ||
+            response.statusCode == 429 ||
+            response.statusCode >= 500,
+        unauthorized: response.statusCode == 401 || response.statusCode == 403,
+        statusCode: response.statusCode,
+      );
+    }
+    try {
+      final decoded = jsonDecode(utf8.decode(responseBytes));
+      if (decoded is! Map ||
+          decoded['protocolVersion'] != 1 ||
+          decoded['ttlSeconds'] is! int ||
+          decoded['positions'] is! List) {
+        throw const FormatException('Invalid presence response envelope.');
+      }
+      final ttlSeconds = (decoded['ttlSeconds'] as int).clamp(15, 300);
+      final values = decoded['positions'] as List;
+      if (values.length > 1000) {
+        throw const FormatException('Too many pre-start positions.');
+      }
+      final locations = values
+          .map((value) {
+            if (value is! Map) {
+              throw const FormatException('Invalid pre-start position.');
+            }
+            final raw = Map<String, Object?>.from(value);
+            final expiresAt = DateTime.parse(raw['expiresAt']! as String);
+            if (!expiresAt.isAfter(_clock())) {
+              throw const FormatException(
+                'Expired pre-start position returned.',
+              );
+            }
+            return RiderLocation.fromJson(raw);
+          })
+          .toList(growable: false);
+      return PreStartPresenceResult(
+        locations: List.unmodifiable(locations),
+        ttl: Duration(seconds: ttlSeconds),
+      );
+    } on InternetRelayException {
+      rethrow;
+    } on Object catch (error) {
+      throw InternetRelayException(
+        'Invalid pre-start position response: $error',
+      );
+    }
+  }
+
+  Uri _presenceUri(String rideId) {
+    final base = configuration.baseUri!;
+    final baseText = base.toString().endsWith('/')
+        ? base.toString().substring(0, base.toString().length - 1)
+        : base.toString();
+    return Uri.parse(
+      '$baseText/v1/rides/${Uri.encodeComponent(rideId)}/presence:sync',
+    );
+  }
+
+  @override
+  void close() => _client.close();
+}
+
+Future<RelayCompatibilityResult> _fetchCompatibility({
+  required InternetRelayConfiguration configuration,
+  required http.Client client,
+  required RelayClientDescriptor descriptor,
+  required DateTime Function() clock,
+  required RelayCompatibilityResult? cached,
+}) async {
+  final configurationError = configuration.configurationError;
+  if (configurationError != null) {
+    throw InternetRelayException(configurationError);
+  }
+  final now = clock();
+  if (cached != null && now.isBefore(cached.validUntil)) return cached;
+  final base = configuration.baseUri!;
+  final baseText = base.toString().endsWith('/')
+      ? base.toString().substring(0, base.toString().length - 1)
+      : base.toString();
+  final request = http.Request('GET', Uri.parse('$baseText/v1/compatibility'))
+    ..followRedirects = false
+    ..headers.addAll({'accept': 'application/json', ...descriptor.headers});
+  try {
+    final response = await client
+        .send(request)
+        .timeout(configuration.headerTimeout);
+    final bytes = BytesBuilder(copy: false);
+    await for (final chunk in response.stream.timeout(
+      configuration.bodyTimeout,
+    )) {
+      if (bytes.length + chunk.length > 16 * 1024) {
+        throw const InternetRelayException(
+          'Compatibility response exceeded the size limit.',
+        );
+      }
+      bytes.add(chunk);
+    }
+    if (response.statusCode == 404) {
+      return RelayCompatibilityResult(
+        disposition: RelayCompatibilityDisposition.legacyCompatible,
+        serverProtocol: 1,
+        minimumClientProtocol: 1,
+        capabilities: const {},
+        checkedAt: now,
+        validUntil: now.add(const Duration(minutes: 5)),
+        message: 'Legacy protocol-1 relay; newer ride features stay local.',
+      );
+    }
+    final body = bytes.takeBytes();
+    if (response.statusCode != 200) {
+      String? message;
+      String? code;
+      Uri? updateUri;
+      try {
+        final value = jsonDecode(utf8.decode(body));
+        if (value is Map) {
+          message = value['message'] as String?;
+          code = value['code'] as String?;
+          updateUri = _safeUri(value['updateUrl']);
+        }
+      } on Object {
+        // Fall through to the bounded status message.
+      }
+      throw InternetRelayException(
+        message ?? 'Ride service compatibility check failed.',
+        retryable: response.statusCode == 429 || response.statusCode >= 500,
+        statusCode: response.statusCode,
+        code: code,
+        actionUrl: updateUri,
+      );
+    }
+    final decoded = jsonDecode(utf8.decode(body));
+    if (decoded is! Map) {
+      throw const FormatException('Compatibility response is not an object.');
+    }
+    final serverProtocol = decoded['serverProtocol'];
+    final minimumClientProtocol = decoded['minimumClientProtocol'];
+    final maximumClientProtocol = decoded['maximumClientProtocol'];
+    final rawCapabilities = decoded['capabilities'];
+    final rawRequired = decoded['requiredCapabilities'];
+    final rawUpdateUrls = decoded['updateUrls'];
+    final cacheSeconds = decoded['cacheSeconds'];
+    if (serverProtocol is! int ||
+        minimumClientProtocol is! int ||
+        maximumClientProtocol is! int ||
+        rawCapabilities is! List ||
+        rawRequired is! List ||
+        rawUpdateUrls is! Map ||
+        cacheSeconds is! int) {
+      throw const FormatException('Compatibility fields are invalid.');
+    }
+    final capabilities = rawCapabilities.cast<String>().toSet();
+    final required = rawRequired.cast<String>().toSet();
+    final missingRequired = required.difference(descriptor.capabilities);
+    final updateUri = _safeUri(
+      rawUpdateUrls[descriptor.platform] ?? rawUpdateUrls['default'],
+    );
+    final disposition =
+        descriptor.protocolVersion < minimumClientProtocol ||
+            missingRequired.isNotEmpty
+        ? RelayCompatibilityDisposition.updateRequired
+        : descriptor.protocolVersion > maximumClientProtocol
+        ? RelayCompatibilityDisposition.serverUpgradeRequired
+        : RelayCompatibilityDisposition.compatible;
+    final message = switch (disposition) {
+      RelayCompatibilityDisposition.updateRequired =>
+        'Update Tail End Charlie before joining or synchronizing this ride.',
+      RelayCompatibilityDisposition.serverUpgradeRequired =>
+        'This app is newer than the configured ride service. Try again after the service is updated.',
+      _ => null,
+    };
+    return RelayCompatibilityResult(
+      disposition: disposition,
+      serverProtocol: serverProtocol,
+      minimumClientProtocol: minimumClientProtocol,
+      capabilities: Set.unmodifiable(capabilities),
+      checkedAt: now,
+      validUntil: now.add(Duration(seconds: cacheSeconds.clamp(30, 3600))),
+      message: message,
+      updateUri: updateUri,
+    );
+  } on InternetRelayException {
+    rethrow;
+  } on TimeoutException {
+    if (cached != null && now.isBefore(cached.validUntil)) return cached;
+    throw const InternetRelayException(
+      'Ride service compatibility check timed out.',
+      retryable: true,
+      code: 'temporarily_unavailable',
+    );
+  } on http.ClientException {
+    if (cached != null && now.isBefore(cached.validUntil)) return cached;
+    throw const InternetRelayException(
+      'Ride service is temporarily unavailable. Check your connection and try again.',
+      retryable: true,
+      code: 'temporarily_unavailable',
+    );
+  } on Object catch (error) {
+    throw InternetRelayException(
+      'Invalid ride service compatibility response: $error',
+    );
+  }
+}
+
+Uri? _safeUri(Object? value) {
+  if (value is! String) return null;
+  final uri = Uri.tryParse(value);
+  if (uri == null ||
+      (uri.scheme != 'https' && uri.scheme != 'http') ||
+      uri.host.isEmpty) {
+    return null;
+  }
+  return uri;
 }
 
 String _rideBearerToken(RideSession session) {

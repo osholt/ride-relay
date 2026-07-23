@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:share_plus/share_plus.dart';
-import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/foreground_location_controller.dart';
@@ -12,6 +11,7 @@ import '../../controllers/internet_relay_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/marker_assistance_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
+import '../../controllers/pre_start_presence_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/ride_simulation_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
@@ -26,6 +26,7 @@ import '../../domain/imported_route.dart' as route_domain;
 import '../../domain/quick_message.dart';
 import '../../domain/ride_event.dart';
 import '../../domain/ride_role.dart';
+import '../../domain/rider_location.dart';
 import '../../domain/rider_color.dart';
 import '../../domain/route_alert.dart';
 import '../../domain/route_store.dart';
@@ -44,6 +45,8 @@ import '../../services/gpx_import_source.dart';
 import '../../services/leader_ride_status.dart';
 import '../../services/route_decision_point_extractor.dart';
 import '../../services/ride_completion_detector.dart';
+import '../../services/ride_membership.dart';
+import '../../services/ride_screen_awake.dart';
 import '../map/motorcycle_icon.dart';
 import '../map/ride_map.dart';
 import '../settings/emergency_info_sheet.dart';
@@ -52,6 +55,7 @@ import '../situational_awareness/situational_awareness_screen.dart';
 import '../simulation/ride_simulation_screen.dart';
 import 'ended_ride_screen.dart';
 import 'ride_dashboard.dart';
+import 'ride_roster_sheet.dart';
 
 /// Owns the active-ride feature lifecycle and keeps each feature independently
 /// testable. Native permissions are requested only by the installed app, not by
@@ -66,6 +70,8 @@ class ActiveRideShell extends StatefulWidget {
     required this.enableNativeServices,
     required this.riderProfile,
     required this.sharedRoutes,
+    this.screenWakeLock = const WakelockPlusScreenWakeLock(),
+    this.screenWakeReassertInterval = const Duration(seconds: 15),
   });
 
   final RideController rideController;
@@ -75,6 +81,8 @@ class ActiveRideShell extends StatefulWidget {
   final bool enableNativeServices;
   final RiderProfileController riderProfile;
   final SharedRouteController sharedRoutes;
+  final ScreenWakeLock screenWakeLock;
+  final Duration screenWakeReassertInterval;
 
   @override
   State<ActiveRideShell> createState() => _ActiveRideShellState();
@@ -86,6 +94,8 @@ class _RideNavigationMenu extends StatelessWidget {
     required this.simulation,
     required this.selectedIndex,
     required this.onSelected,
+    required this.canChangeRoute,
+    required this.onOpenRoster,
     required this.onShareRoster,
     required this.onChangeRoute,
     required this.onEmergencyInfo,
@@ -103,6 +113,8 @@ class _RideNavigationMenu extends StatelessWidget {
   final bool simulation;
   final int selectedIndex;
   final ValueChanged<int> onSelected;
+  final bool canChangeRoute;
+  final VoidCallback onOpenRoster;
   final VoidCallback onShareRoster;
   final VoidCallback onChangeRoute;
   final VoidCallback onEmergencyInfo;
@@ -155,17 +167,28 @@ class _RideNavigationMenu extends StatelessWidget {
               ),
             const Divider(height: 20),
             ListTile(
-              key: const Key('ride-menu-change-route'),
-              leading: const Icon(Icons.edit_road_outlined),
-              title: const Text('Change route'),
-              subtitle: const Text(
-                'Plan a destination, import a GPX file, or load the demo route',
-              ),
+              key: const Key('ride-menu-open-roster'),
+              leading: const Icon(Icons.groups_2_outlined),
+              title: const Text('Ride roster'),
+              subtitle: const Text('Presence, freshness and relay evidence'),
               onTap: () {
                 Navigator.of(context).pop();
-                onChangeRoute();
+                onOpenRoster();
               },
             ),
+            if (canChangeRoute)
+              ListTile(
+                key: const Key('ride-menu-change-route'),
+                leading: const Icon(Icons.edit_road_outlined),
+                title: const Text('Change route'),
+                subtitle: const Text(
+                  'Plan a destination, import a GPX file, or load the demo route',
+                ),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  onChangeRoute();
+                },
+              ),
             ListTile(
               key: const Key('ride-menu-share-roster'),
               leading: const Icon(Icons.groups_outlined),
@@ -245,6 +268,102 @@ class _RideNavigationMenu extends StatelessWidget {
   }
 }
 
+class _PreStartRidePanel extends StatelessWidget {
+  const _PreStartRidePanel({
+    required this.rideCode,
+    required this.participants,
+    required this.isLeader,
+    required this.busy,
+    required this.onStartRide,
+  });
+
+  final String rideCode;
+  final List<RideParticipant> participants;
+  final bool isLeader;
+  final bool busy;
+  final VoidCallback onStartRide;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: const Color(0xFF17212B),
+    child: SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.groups_outlined, color: Color(0xFFFFC857)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Waiting to start',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      Text(
+                        'Ride $rideCode · Current positions only · no tracks recorded',
+                        style: const TextStyle(
+                          color: Color(0xFFA9B4C2),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (isLeader)
+                  FilledButton.icon(
+                    key: const Key('start-ride-button'),
+                    onPressed: busy ? null : onStartRide,
+                    icon: const Icon(Icons.play_arrow),
+                    label: const Text('Start ride'),
+                  )
+                else
+                  const Text(
+                    'LEADER STARTS',
+                    style: TextStyle(
+                      color: Color(0xFFFFC857),
+                      fontWeight: FontWeight.w800,
+                      fontSize: 11,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 9),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                key: const Key('pre-start-roster'),
+                children: [
+                  for (final participant in participants) ...[
+                    Chip(
+                      avatar: Icon(
+                        participant.role == RideRole.lead
+                            ? Icons.navigation
+                            : Icons.motorcycle,
+                        size: 16,
+                      ),
+                      label: Text(
+                        '${participant.displayName}${participant.isLocal ? ' (you)' : ''}',
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 class _ActiveRideShellState extends State<ActiveRideShell> {
   final _mapPosition = ValueNotifier<route_domain.GeoPoint?>(null);
   final _mapNavigationPosition = ValueNotifier<MapNavigationPosition?>(null);
@@ -257,15 +376,19 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   final _warnings = <String>{};
   final _rideCompletionDetector = RideCompletionDetector();
 
+  late final RideScreenAwakeCoordinator _screenAwakeCoordinator;
+
   SituationalAwarenessController? _awarenessController;
   CarPlayBridge? _carPlayBridge;
   ForegroundLocationController? _locationController;
   MarkerAssistanceController? _markerAssistanceController;
   NearbyRelayController? _relayController;
   InternetRelayController? _internetRelayController;
+  PreStartPresenceController? _preStartPresenceController;
   SharedPreferencesInternetCursorStore? _internetCursorStore;
   RideSimulationController? _simulationController;
   InMemoryRouteStore? _simulationRouteStore;
+  RouteStore? _rideRouteStore;
   StreamSubscription<RideEvent>? _receivedEventSubscription;
   StreamSubscription<RideEvent>? _internetReceivedEventSubscription;
   Timer? _stalenessTimer;
@@ -273,6 +396,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   Timer? _markerExitChromeTimer;
   Future<void> _publishChain = Future.value();
   String? _routeFingerprint;
+  String? _appliedAuthoritativeRouteRevision;
   String? _simulationRouteFingerprint;
   route_domain.ImportedRoute? _activeRoute;
   int _routeGeneration = 0;
@@ -296,36 +420,29 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   @override
   void initState() {
     super.initState();
+    _screenAwakeCoordinator = RideScreenAwakeCoordinator(
+      wakeLock: widget.screenWakeLock,
+      reassertInterval: widget.screenWakeReassertInterval,
+      onError: (error, _) {
+        if (kDebugMode) debugPrint('Could not enforce ride wake lock: $error');
+      },
+    )..start();
     widget.rideController.addListener(_onRideControllerChanged);
     widget.sharedRoutes.addListener(_onSharedRoutesChanged);
     if (widget.sharedRoutes.pending case final file?) {
-      _selectedIndex = 0;
-      _changeRouteRequestToken = Object();
-      _pendingSharedGpxFile = file;
+      if (widget.rideController.isLocalRideLeader) {
+        _selectedIndex = 0;
+        _changeRouteRequestToken = Object();
+        _pendingSharedGpxFile = file;
+      } else {
+        _warnings.add('Only the ride leader can replace the group route.');
+      }
       _clearSharedRoutePending();
     }
     unawaited(_initialize());
-    unawaited(_setScreenAwake(true));
     _carPlayBridge = CarPlayBridge(
       onEmergencyTriggered: _sendEmergencyMapAlert,
     );
-  }
-
-  /// The phone is normally mounted on the handlebars for the whole ride,
-  /// often with gloves on and a helmet visor down - if the screen locks, it
-  /// can't be unlocked safely while riding. Kept on for this widget's whole
-  /// lifetime (covering the ended-ride summary too) rather than tied to
-  /// navigation-mode/route-state: gaps in that narrower condition (no route
-  /// loaded, not yet detected as moving) were exactly what let the screen
-  /// sleep on a real ride.
-  Future<void> _setScreenAwake(bool enabled) async {
-    try {
-      await WakelockPlus.toggle(enable: enabled);
-    } on Object catch (error) {
-      // The ride remains usable in widget tests or on platforms without the
-      // plugin.
-      if (kDebugMode) debugPrint('Could not change ride wake lock: $error');
-    }
   }
 
   /// A GPX file can arrive (via the platform's "Open in..." delivery) while
@@ -336,6 +453,12 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     if (!mounted) return;
     final file = widget.sharedRoutes.pending;
     if (file == null) return;
+    if (!widget.rideController.isLocalRideLeader) {
+      _warnings.add('Only the ride leader can replace the group route.');
+      _clearSharedRoutePending();
+      setState(() {});
+      return;
+    }
     setState(() {
       _selectedIndex = 0;
       _changeRouteRequestToken = Object();
@@ -356,6 +479,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
 
   Future<void> _initialize() async {
     route_domain.ImportedRoute? route;
+    var publishStoredLeaderRoute = false;
     if (_isSimulation) {
       try {
         route = await const BundledDemoRouteLoader().load();
@@ -369,8 +493,28 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       }
     } else if (widget.enableNativeServices) {
       try {
-        final routeStore = await JsonFileRouteStore.openDefault();
-        route = await routeStore.loadActiveRoute();
+        final session = widget.rideController.session;
+        if (session != null) {
+          _rideRouteStore = await JsonFileRouteStore.openForRide(
+            session.rideId,
+          );
+          route = await _rideRouteStore!.loadActiveRoute();
+          final authoritative = widget.rideController.authoritativeRouteState;
+          _appliedAuthoritativeRouteRevision = authoritative.revisionId;
+          if (authoritative.hasDecision) {
+            route = authoritative.route;
+            if (route == null) {
+              await _rideRouteStore!.clearActiveRoute();
+            } else {
+              await _rideRouteStore!.saveActiveRoute(route);
+            }
+          } else if (session.role != RideRole.lead) {
+            route = null;
+            await _rideRouteStore!.clearActiveRoute();
+          } else {
+            publishStoredLeaderRoute = route != null;
+          }
+        }
       } on Object catch (error) {
         _warnings.add('Route storage could not be opened: $error');
       }
@@ -380,6 +524,11 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     await _replaceAwarenessController(route, notify: false);
     if (_isSimulation) {
       await _replaceSimulationController(route, notify: false);
+    }
+    if (publishStoredLeaderRoute && route != null) {
+      await widget.rideController.publishRoute(route);
+      _appliedAuthoritativeRouteRevision =
+          widget.rideController.authoritativeRouteState.revisionId;
     }
     if (!mounted) return;
 
@@ -393,12 +542,34 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         }
       }
       _stalenessTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+        widget.rideController.refreshMembershipFreshness();
         final awareness = _awarenessController;
         if (awareness != null) unawaited(awareness.refreshStaleness());
       });
       final locationController = ForegroundLocationController(
         DeviceLocationSource(),
         (sample) async {
+          final startedAt = widget.rideController.rideStartedAt;
+          if (startedAt == null) {
+            final currentSession = widget.rideController.session;
+            if (currentSession != null) {
+              _preStartPresenceController?.updateLocalPosition(
+                RiderLocation(
+                  riderId: currentSession.localRiderId,
+                  displayName: currentSession.displayName,
+                  role: currentSession.role,
+                  sample: sample,
+                  receivedAt: DateTime.now(),
+                  motorcycleStyle: currentSession.motorcycleStyle,
+                  riderColor: currentSession.riderColor,
+                ),
+              );
+            }
+            return;
+          }
+          if (sample.recordedAt.isBefore(startedAt)) {
+            return;
+          }
           final awareness = _awarenessController;
           if (awareness != null) {
             await awareness.recordLocalLocation(sample);
@@ -428,8 +599,22 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         _internetRelayController = internetRelayController;
         _internetReceivedEventSubscription = internetRelayController
             .receivedEvents
-            .listen(_onReceivedEvent);
+            .listen(
+              (event) =>
+                  _onReceivedEvent(event, RideTransportEvidence.internetRelay),
+            );
         await internetRelayController.start(session);
+        final preStartPresenceController = PreStartPresenceController(
+          HttpPreStartPresenceClient(
+            configuration: InternetRelayConfiguration.fromEnvironment(),
+            client: http.Client(),
+          ),
+        );
+        _preStartPresenceController = preStartPresenceController;
+        preStartPresenceController.addListener(_onPreStartPresenceChanged);
+        if (!widget.rideController.rideStarted) {
+          await preStartPresenceController.start(session);
+        }
       }
       if (session != null && session.inviteSecret.length >= 16) {
         final relayController = NearbyRelayController(
@@ -441,7 +626,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         );
         _relayController = relayController;
         _receivedEventSubscription = relayController.receivedEvents.listen(
-          _onReceivedEvent,
+          (event) => _onReceivedEvent(event, RideTransportEvidence.nearbyRelay),
         );
         try {
           await relayController.start(session);
@@ -468,7 +653,12 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         ? 'none'
         : '${route.id}:${route.importedAt.toUtc().toIso8601String()}:'
               '${route.pathPointCount}';
-    if (_awarenessController != null && fingerprint == _routeFingerprint) {
+    final lifecycleFingerprint =
+        widget.rideController.rideStartedAt?.toUtc().toIso8601String() ??
+        'open';
+    final effectiveFingerprint = '$fingerprint:$lifecycleFingerprint';
+    if (_awarenessController != null &&
+        effectiveFingerprint == _routeFingerprint) {
       return;
     }
     final generation = ++_routeGeneration;
@@ -509,6 +699,8 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
           configurationHint: 'No external traffic provider is configured.',
         ),
       ],
+      rideStarted: widget.rideController.rideStarted,
+      rideStartedAt: widget.rideController.rideStartedAt,
     );
     await controller.initialize();
     if (!mounted || generation != _routeGeneration) {
@@ -546,7 +738,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     previousMarker?.dispose();
     _awarenessController = controller;
     _markerAssistanceController = markerController;
-    _routeFingerprint = fingerprint;
+    _routeFingerprint = effectiveFingerprint;
     _riderTrails.clear();
     _offRouteTraces.value = const [];
     controller.addListener(_onAwarenessChanged);
@@ -560,9 +752,47 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   }
 
   Future<void> _handleRouteChanged(route_domain.ImportedRoute? route) async {
+    if (!_isSimulation && !widget.rideController.isLocalRideLeader) {
+      _warnings.add('A rider cannot replace the leader’s group route.');
+      await _applyAuthoritativeRouteDecision();
+      if (mounted) setState(() {});
+      return;
+    }
     _activeRoute = route;
     await _replaceAwarenessController(route);
-    if (_isSimulation) await _replaceSimulationController(route);
+    if (_isSimulation) {
+      await _replaceSimulationController(route);
+      return;
+    }
+    if (route == null) {
+      await widget.rideController.clearRoute();
+    } else {
+      await widget.rideController.publishRoute(route);
+    }
+    _appliedAuthoritativeRouteRevision =
+        widget.rideController.authoritativeRouteState.revisionId;
+  }
+
+  Future<void> _applyAuthoritativeRouteDecision() async {
+    if (_isSimulation) return;
+    final state = widget.rideController.authoritativeRouteState;
+    if (!state.hasDecision ||
+        state.revisionId == _appliedAuthoritativeRouteRevision) {
+      return;
+    }
+    _appliedAuthoritativeRouteRevision = state.revisionId;
+    final route = state.route;
+    final store = _rideRouteStore;
+    if (store != null) {
+      if (route == null) {
+        await store.clearActiveRoute();
+      } else {
+        await store.saveActiveRoute(route);
+      }
+    }
+    _activeRoute = route;
+    await _replaceAwarenessController(route);
+    if (mounted) setState(() {});
   }
 
   Future<void> _replaceSimulationController(
@@ -573,13 +803,17 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         ? 'none'
         : '${route.id}:${route.importedAt.toUtc().toIso8601String()}:'
               '${route.pathPointCount}';
+    final lifecycleFingerprint =
+        widget.rideController.rideStartedAt?.toUtc().toIso8601String() ??
+        'open';
+    final effectiveFingerprint = '$fingerprint:$lifecycleFingerprint';
     if (_simulationController != null &&
-        fingerprint == _simulationRouteFingerprint) {
+        effectiveFingerprint == _simulationRouteFingerprint) {
       return;
     }
     final previous = _simulationController;
     _simulationController = null;
-    _simulationRouteFingerprint = fingerprint;
+    _simulationRouteFingerprint = effectiveFingerprint;
     _handledAutomaticMarkerActivation = 0;
     _handledAutomaticMarkerRideOffActivation = 0;
     _junctionMarkerOverlay.value = null;
@@ -610,6 +844,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       markerJunctions: markerJunctions,
       fallbackJunctions: derivedJunctions,
       riderCount: session.simulationRiderCount,
+      rideStarted: widget.rideController.rideStarted,
     );
     _simulationController = controller;
     controller.addListener(_onSimulationVisualChanged);
@@ -618,7 +853,11 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       controller.dispose();
       return;
     }
-    controller.start();
+    if (widget.rideController.rideStarted &&
+        !widget.rideController.ridePaused &&
+        !widget.rideController.rideEnded) {
+      controller.start();
+    }
     _onSimulationVisualChanged();
     if (notify) setState(() {});
   }
@@ -785,7 +1024,30 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   }) {
     final awareness = _awarenessController;
     if (awareness == null) return;
-    final localLocation = awareness.localLocation;
+    final participants = {
+      for (final participant in widget.rideController.participants)
+        participant.riderId: participant,
+    };
+    final locationSource = !_isSimulation && !widget.rideController.rideStarted
+        ? _preStartPresenceController?.locations ?? const <RiderLocation>[]
+        : awareness.riderLocations;
+    final visibleRiderLocations = locationSource
+        .where(
+          (location) =>
+              participants[location.riderId]?.isEligibleForLivePosition ??
+              false,
+        )
+        .toList(growable: false);
+    final activeRiderIds = participants.values
+        .where((participant) => participant.isEligibleForRouteAlerts)
+        .map((participant) => participant.riderId)
+        .toSet();
+    final localLocation = visibleRiderLocations
+        .where(
+          (location) =>
+              location.riderId == widget.rideController.session?.localRiderId,
+        )
+        .firstOrNull;
     final simulatedRiders = _isSimulation
         ? _simulationController?.riders
         : null;
@@ -848,7 +1110,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         ),
       ),
       ...(simulatedRiders == null
-              ? awareness.riderLocations
+              ? visibleRiderLocations
                     .where(
                       (location) => location.riderId != localLocation?.riderId,
                     )
@@ -914,13 +1176,15 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     unawaited(
       _carPlayBridge?.publish(
             session: widget.rideController.session,
-            riderLocations: awareness.riderLocations,
-            routeAlerts: awareness.routeAlerts,
+            riderLocations: visibleRiderLocations,
+            routeAlerts: awareness.routeAlerts
+                .where((alert) => activeRiderIds.contains(alert.riderId))
+                .toList(growable: false),
             activeHazards: awareness.activeHazards,
           ) ??
           Future<void>.value(),
     );
-    if (updateDerivedState) {
+    if (updateDerivedState && widget.rideController.rideStarted) {
       final session = widget.rideController.session;
       _leaderStatus.value = session == null
           ? null
@@ -928,10 +1192,14 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
               localRole: session.role,
               localRiderId: session.localRiderId,
               localLocation: localLocation,
-              riderLocations: awareness.riderLocations,
-              routeAlerts: awareness.routeAlerts,
+              riderLocations: visibleRiderLocations,
+              routeAlerts: awareness.routeAlerts
+                  .where((alert) => activeRiderIds.contains(alert.riderId))
+                  .toList(growable: false),
               route: awareness.route,
             );
+    } else if (!widget.rideController.rideStarted) {
+      _leaderStatus.value = null;
     }
   }
 
@@ -939,6 +1207,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     SituationalAwarenessController awareness,
   ) async {
     if (_autoEndingRide ||
+        !widget.rideController.rideStarted ||
         widget.rideController.rideEnded ||
         widget.rideController.ridePaused ||
         widget.rideController.markerActive) {
@@ -1034,6 +1303,13 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     };
     final traces = <MapOverlayTrace>[];
     for (final location in awareness.riderLocations) {
+      final participant = widget.rideController.participantFor(
+        location.riderId,
+      );
+      if (participant?.isEligibleForLivePosition != true) {
+        _riderTrails.remove(location.riderId);
+        continue;
+      }
       final point = route_domain.GeoPoint(
         latitude: location.sample.position.latitude,
         longitude: location.sample.position.longitude,
@@ -1094,7 +1370,11 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         .toList(growable: false);
   }
 
-  Future<void> _onReceivedEvent(RideEvent event) async {
+  Future<void> _onReceivedEvent(
+    RideEvent event,
+    RideTransportEvidence transport,
+  ) async {
+    widget.rideController.noteTransportObservation(event.id, transport);
     if (_isSituationalEvent(event.type)) {
       try {
         await _awarenessController?.ingestRemoteEvent(event);
@@ -1123,18 +1403,40 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     if (session != null) {
       _awarenessController?.updateLocalSession(session);
       _updateMapOverlays();
+      unawaited(_synchroniseRideControllers());
+      if (widget.rideController.rideStarted) {
+        unawaited(_preStartPresenceController?.stop());
+      }
     }
-    _applyRidePauseState();
     if (widget.rideController.rideEnded && !_rideEndHandled) {
       unawaited(_handleRideEnded());
     }
     _schedulePublish();
   }
 
+  Future<void> _synchroniseRideControllers() async {
+    await _replaceAwarenessController(_activeRoute);
+    if (!mounted) return;
+    if (_isSimulation) {
+      await _replaceSimulationController(_activeRoute);
+    } else {
+      await _applyAuthoritativeRouteDecision();
+    }
+    _applyRidePauseState();
+  }
+
   void _applyRidePauseState() {
     if (!_isSimulation) return;
     final simulation = _simulationController;
     if (simulation == null) return;
+    final rideStarted =
+        widget.rideController.rideStarted && !widget.rideController.rideEnded;
+    final simulationHadStarted = simulation.rideStarted;
+    simulation.setRideStarted(rideStarted);
+    if (!rideStarted) {
+      _simulationPausedByRide = false;
+      return;
+    }
     if (widget.rideController.ridePaused) {
       if (simulation.isRunning) {
         simulation.pause();
@@ -1142,7 +1444,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       }
       return;
     }
-    if (_simulationPausedByRide) {
+    if (!simulationHadStarted || _simulationPausedByRide) {
       _simulationPausedByRide = false;
       simulation.start();
     }
@@ -1154,7 +1456,13 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     _stalenessTimer?.cancel();
     _simulationAwarenessTimer?.cancel();
     _stalenessTimer = null;
+    await _preStartPresenceController?.stop();
     await _locationController?.stop();
+  }
+
+  void _onPreStartPresenceChanged() {
+    if (!mounted || widget.rideController.rideStarted) return;
+    _updateMapOverlays();
   }
 
   void _schedulePublish() {
@@ -1202,7 +1510,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         onRemoveRide: _removeEndedRide,
       );
     }
-    final body = _isSimulation
+    final selectedBody = _isSimulation
         ? switch (_selectedIndex) {
             0 => _buildMap(),
             1 => _buildSimulation(),
@@ -1214,6 +1522,27 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
             1 => _buildDetails(),
             _ => _buildAwareness(),
           };
+    final session = widget.rideController.session!;
+    final body = widget.rideController.rideStarted
+        ? selectedBody
+        : Column(
+            children: [
+              _PreStartRidePanel(
+                rideCode: session.rideCode,
+                participants: widget.rideController.participants,
+                isLeader: session.role == RideRole.lead,
+                busy: widget.rideController.busy,
+                onStartRide: _confirmStartRide,
+              ),
+              Expanded(
+                child: MediaQuery.removePadding(
+                  context: context,
+                  removeTop: true,
+                  child: selectedBody,
+                ),
+              ),
+            ],
+          );
 
     return ValueListenableBuilder<MapNavigationPosition?>(
       valueListenable: _mapNavigationPosition,
@@ -1224,6 +1553,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         // GPS speed dips at lights. Once there is a navigation fix, preserve
         // the map viewport until the rider deliberately leaves the map tab.
         final hideWhileMoving =
+            widget.rideController.rideStarted &&
             _selectedIndex == 0 &&
             _activeRoute != null &&
             (navigationPosition != null ||
@@ -1315,6 +1645,8 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       overlayMarkers: _mapOverlays,
       offRouteTraces: _offRouteTraces,
       leaderStatus: _leaderStatus,
+      groupRiderCount: widget.rideController.liveParticipants.length,
+      onOpenRoster: _openRoster,
       junctionMarkerOverlay: _junctionMarkerOverlay,
       emergencyContacts: _emergencyContacts,
       onEmergencyAlert: _sendEmergencyMapAlert,
@@ -1329,7 +1661,8 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       acquireCurrentPosition: _isSimulation
           ? () async => _mapPosition.value
           : _acquireCurrentPosition,
-      routeStore: _simulationRouteStore,
+      routeStore: _isSimulation ? _simulationRouteStore : _rideRouteStore,
+      canEditRoute: _isSimulation || widget.rideController.isLocalRideLeader,
       distanceUnit: widget.distanceUnits.value,
       darkMapStyle: widget.mapStyleMode.resolveDark(
         MediaQuery.platformBrightnessOf(context),
@@ -1456,6 +1789,36 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     }
   }
 
+  Future<void> _confirmStartRide() async {
+    if (widget.rideController.session?.role != RideRole.lead ||
+        widget.rideController.rideStarted) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Start this ride?'),
+        content: const Text(
+          'Live location sharing, route progress, off-course alerts and ride '
+          'recording will begin for the group.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            key: const Key('confirm-start-ride-button'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.play_arrow),
+            label: const Text('Start ride'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed ?? false) await widget.rideController.startRide();
+  }
+
   Future<void> _confirmLeaveRideFromMap() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1515,10 +1878,13 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       builder: (context) => _RideNavigationMenu(
         simulation: _isSimulation,
         selectedIndex: _selectedIndex,
+        canChangeRoute:
+            _isSimulation || widget.rideController.isLocalRideLeader,
         onSelected: (index) {
           Navigator.of(context).pop();
           if (mounted) setState(() => _selectedIndex = index);
         },
+        onOpenRoster: _openRoster,
         onShareRoster: _shareRoster,
         onChangeRoute: _requestRouteChange,
         onEmergencyInfo: () =>
@@ -1530,12 +1896,17 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         ridePaused: widget.rideController.ridePaused,
         canToggleRidePause:
             !_isSimulation &&
+            widget.rideController.rideStarted &&
             widget.rideController.session?.role == RideRole.lead,
         onToggleRidePause: _toggleRidePause,
-        canEndRide: widget.rideController.session?.role == RideRole.lead,
+        canEndRide: widget.rideController.isLocalRideLeader,
         onEndRide: _confirmEndRide,
       ),
     );
+  }
+
+  void _openRoster() {
+    unawaited(RideRosterSheet.show(context, widget.rideController));
   }
 
   /// Switches to the map tab and asks it to open its route picker. The route
@@ -1704,7 +2075,9 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     controller: widget.rideController,
     distanceUnits: widget.distanceUnits,
     mapStyleMode: widget.mapStyleMode,
+    riderProfile: widget.riderProfile,
     onLeaveRide: _leaveRide,
+    onOpenRoster: _openRoster,
     relayController: _relayController,
     markerAssistanceController: _markerAssistanceController,
     internetRelayController: _internetRelayController,
@@ -1712,6 +2085,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   );
 
   Future<route_domain.GeoPoint?> _acquireCurrentPosition() async {
+    if (!widget.rideController.rideStarted) return null;
     final existing = _mapPosition.value;
     if (existing != null) return existing;
     final locationController = _locationController;
@@ -1748,10 +2122,18 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     }
     return SituationalAwarenessScreen(
       controller: awareness,
+      rideStarted: widget.rideController.rideStarted,
       locationController: widget.enableNativeServices && !_isSimulation
           ? _locationController
           : null,
+      onLocationStopped: _clearPreStartPresence,
     );
+  }
+
+  Future<void> _clearPreStartPresence() async {
+    if (!widget.rideController.rideStarted) {
+      await _preStartPresenceController?.clearLocalPosition();
+    }
   }
 
   Future<void> _removeEndedRide() async {
@@ -1762,17 +2144,25 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
 
   Future<void> _leaveRide() async {
     _simulationController?.pause();
+    await _preStartPresenceController?.stop();
     final rideId = widget.rideController.session?.rideId;
     if (rideId != null) await _internetCursorStore?.clear(rideId);
-    await widget.rideController.leaveRide();
+    await widget.rideController.leaveRide(
+      publishDeparture: (departure) async {
+        await _relayController?.publish(departure);
+        await _internetRelayController?.synchronizeNow();
+      },
+    );
   }
 
   @override
   void dispose() {
+    unawaited(_screenAwakeCoordinator.stop());
     widget.rideController.removeListener(_onRideControllerChanged);
     widget.sharedRoutes.removeListener(_onSharedRoutesChanged);
     _simulationController?.removeListener(_onSimulationVisualChanged);
     _simulationController?.dispose();
+    _preStartPresenceController?.removeListener(_onPreStartPresenceChanged);
     _awarenessController?.removeListener(_onAwarenessChanged);
     _markerAssistanceController?.dispose();
     _awarenessController?.dispose();
@@ -1783,6 +2173,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     _locationController?.dispose();
     unawaited(_relayController?.close());
     unawaited(_internetRelayController?.close());
+    unawaited(_preStartPresenceController?.close());
     _mapPosition.dispose();
     _mapNavigationPosition.dispose();
     _mapOverlays.dispose();
@@ -1790,7 +2181,6 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     _leaderStatus.dispose();
     _junctionMarkerOverlay.dispose();
     unawaited(_carPlayBridge?.dispose());
-    unawaited(_setScreenAwake(false));
     super.dispose();
   }
 }

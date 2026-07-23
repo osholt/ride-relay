@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/app/ride_relay_app.dart';
 import 'package:ride_relay/controllers/distance_unit_controller.dart';
 import 'package:ride_relay/controllers/map_style_mode_controller.dart';
+import 'package:ride_relay/controllers/ride_code_preference_controller.dart';
 import 'package:ride_relay/controllers/ride_controller.dart';
 import 'package:ride_relay/controllers/rider_profile_controller.dart';
 import 'package:ride_relay/controllers/shared_route_controller.dart';
@@ -10,6 +11,8 @@ import 'package:ride_relay/data/in_memory_event_store.dart';
 import 'package:ride_relay/data/in_memory_session_store.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
+import 'package:ride_relay/domain/ride_session.dart';
+import 'package:ride_relay/internet/internet_relay_client.dart';
 import 'package:ride_relay/services/nearby_bridge.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -17,8 +20,17 @@ void main() {
   setUpAll(() async {
     SharedPreferences.setMockInitialValues({});
     _riderProfile = await RiderProfileController.load();
+    await _riderProfile.completeOnboarding(
+      displayName: 'Oliver',
+      motorcycleStyle: _riderProfile.motorcycleStyle,
+      riderColor: _riderProfile.riderColor,
+      educationSkipped: false,
+      rideChoice: OnboardingRideChoice.create,
+    );
+    _riderProfile.takePendingRideChoice();
     _sharedRoutes = await SharedRouteController.load();
     _mapStyleMode = await MapStyleModeController.load();
+    _rideCodePreference = RideCodePreferenceController.memory();
   });
 
   testWidgets('home screen exposes the two ride entry points', (tester) async {
@@ -31,6 +43,113 @@ void main() {
     expect(find.text('Ready to ride?'), findsOneWidget);
 
     controller.dispose();
+  });
+
+  testWidgets('join form keeps the active ride code above an iOS keyboard', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(375, 667);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetViewInsets);
+    final controller = await _controller();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_app(controller));
+    await tester.tap(find.text('Join a ride'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('ride-code-field')),
+      180,
+      scrollable: _rideFormScrollable,
+    );
+    await tester.tap(find.byKey(const Key('ride-code-field')));
+    tester.view.viewInsets = const FakeViewPadding(bottom: 290);
+    await tester.pumpAndSettle();
+
+    final keyboardTop = tester.view.physicalSize.height - 290;
+    expect(
+      tester.getRect(find.byKey(const Key('ride-code-field'))).bottom,
+      lessThanOrEqualTo(keyboardTop),
+    );
+    expect(tester.takeException(), isNull);
+
+    await tester.scrollUntilVisible(
+      find.widgetWithText(FilledButton, 'Join ride'),
+      160,
+      scrollable: _rideFormScrollable,
+    );
+    expect(find.widgetWithText(FilledButton, 'Join ride'), findsOneWidget);
+  });
+
+  testWidgets('join form explains and clears a remembered ride code', (
+    tester,
+  ) async {
+    final controller = await _controller();
+    addTearDown(controller.dispose);
+    final preference = RideCodePreferenceController.memory(savedCode: '123456');
+    addTearDown(preference.dispose);
+
+    await tester.pumpWidget(_app(controller, rideCodePreference: preference));
+    await tester.tap(find.text('Join a ride'));
+    await tester.pumpAndSettle();
+
+    final codeField = tester.widget<TextField>(
+      find.byKey(const Key('ride-code-field')),
+    );
+    expect(codeField.controller?.text, '123456');
+    expect(find.text('Saved from your last successful join'), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('forget-saved-ride-code')),
+      160,
+      scrollable: _rideFormScrollable,
+    );
+    await tester.tap(find.byKey(const Key('forget-saved-ride-code')));
+    await tester.pump();
+
+    expect(preference.savedCode, isNull);
+    expect(codeField.controller?.text, isEmpty);
+    expect(find.text('Saved from your last successful join'), findsNothing);
+  });
+
+  testWidgets('only a successful join replaces the remembered code', (
+    tester,
+  ) async {
+    final preference = RideCodePreferenceController.memory(savedCode: '111111');
+    addTearDown(preference.dispose);
+    final controller = await _controller(
+      rideCodeDirectory: const _SuccessfulRideCodeDirectory(),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_app(controller, rideCodePreference: preference));
+    await tester.tap(find.text('Join a ride'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('rider-name-field')), 'Oliver');
+    await tester.enterText(find.byKey(const Key('ride-code-field')), '123');
+    await tester.scrollUntilVisible(
+      find.widgetWithText(FilledButton, 'Join ride'),
+      180,
+      scrollable: _rideFormScrollable,
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Join ride'));
+    await tester.pumpAndSettle();
+    expect(preference.savedCode, '111111');
+    expect(find.text('Enter a valid six-digit ride code.'), findsOneWidget);
+
+    await tester.enterText(find.byKey(const Key('ride-code-field')), '222222');
+    await tester.scrollUntilVisible(
+      find.widgetWithText(FilledButton, 'Join ride'),
+      180,
+      scrollable: _rideFormScrollable,
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Join ride'));
+    await tester.pumpAndSettle();
+
+    expect(preference.savedCode, '222222');
+    expect(controller.hasActiveRide, isTrue);
   });
 
   testWidgets('settings can override locale-based distance units', (
@@ -46,6 +165,7 @@ void main() {
         controller: controller,
         distanceUnits: distanceUnits,
         mapStyleMode: _mapStyleMode,
+        rideCodePreference: _rideCodePreference,
         riderProfile: _riderProfile,
         sharedRoutes: _sharedRoutes,
         recordedRoutes: _recordedRoutes,
@@ -69,6 +189,7 @@ void main() {
   testWidgets('active ride shows coordination controls', (tester) async {
     final controller = await _controller();
     await controller.createRide('Oliver');
+    await controller.startRide();
     await tester.pumpWidget(_app(controller));
     await tester.pumpAndSettle();
 
@@ -101,6 +222,91 @@ void main() {
     expect(find.text('ACTIVE HAZARDS'), findsOneWidget);
 
     controller.dispose();
+  });
+
+  testWidgets('leader confirms start while pre-start roster stays private', (
+    tester,
+  ) async {
+    final controller = await _controller();
+    await controller.createRide('Oliver');
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_app(controller));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Waiting to start'), findsOneWidget);
+    expect(find.textContaining('Current positions only'), findsOneWidget);
+    expect(find.byKey(const Key('pre-start-roster')), findsOneWidget);
+    expect(find.text('Oliver (you)'), findsOneWidget);
+    expect(controller.rideStarted, isFalse);
+
+    await tester.tap(find.byKey(const Key('start-ride-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('Start this ride?'), findsOneWidget);
+    expect(
+      find.textContaining('Live location sharing, route progress'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('confirm-start-ride-button')));
+    await tester.pumpAndSettle();
+
+    expect(controller.rideStarted, isTrue);
+    expect(find.text('Waiting to start'), findsNothing);
+    expect(find.text('Navigation map'), findsOneWidget);
+  });
+
+  testWidgets('simulated bikes wait for the leader to start the ride', (
+    tester,
+  ) async {
+    final controller = await _controller();
+    await controller.createSimulationRide();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_app(controller));
+    for (
+      var attempt = 0;
+      attempt < 30 && find.byIcon(Icons.science_outlined).evaluate().isEmpty;
+      attempt += 1
+    ) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.tap(find.byIcon(Icons.science_outlined));
+    for (
+      var attempt = 0;
+      attempt < 30 && find.text('READY').evaluate().isEmpty;
+      attempt += 1
+    ) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(find.text('READY'), findsOneWidget);
+    expect(find.text('Waiting for start'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const Key('simulation-play-pause')))
+          .onPressed,
+      isNull,
+    );
+
+    await tester.tap(find.byKey(const Key('start-ride-button')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('confirm-start-ride-button')));
+    await tester.pump();
+    for (
+      var attempt = 0;
+      attempt < 30 && find.text('RUNNING').evaluate().isEmpty;
+      attempt += 1
+    ) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(controller.rideStarted, isTrue);
+    expect(find.text('RUNNING'), findsOneWidget);
+    expect(find.text('Pause'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 300));
   });
 
   testWidgets(
@@ -154,6 +360,7 @@ void main() {
   testWidgets('end ride confirmation includes marking summary', (tester) async {
     final controller = await _controller();
     await controller.createRide('Oliver');
+    await controller.startRide();
     await controller.startMarker();
     await controller.recordMarkerPass('rider-a');
     await tester.pumpWidget(_app(controller));
@@ -204,26 +411,61 @@ void main() {
 late RiderProfileController _riderProfile;
 late SharedRouteController _sharedRoutes;
 late MapStyleModeController _mapStyleMode;
+late RideCodePreferenceController _rideCodePreference;
 final _recordedRoutes = InMemoryRecordedRouteStore();
+final _rideFormScrollable = find
+    .descendant(
+      of: find.byKey(const Key('ride-form-scroll-view')),
+      matching: find.byType(Scrollable),
+    )
+    .first;
 
-RideRelayApp _app(RideController controller) => RideRelayApp(
+RideRelayApp _app(
+  RideController controller, {
+  RideCodePreferenceController? rideCodePreference,
+}) => RideRelayApp(
   controller: controller,
   distanceUnits: DistanceUnitController.forLocale(const Locale('en', 'GB')),
   mapStyleMode: _mapStyleMode,
+  rideCodePreference: rideCodePreference ?? _rideCodePreference,
   riderProfile: _riderProfile,
   sharedRoutes: _sharedRoutes,
   recordedRoutes: _recordedRoutes,
   enableNativeServices: false,
 );
 
-Future<RideController> _controller() async {
+Future<RideController> _controller({
+  RideCodeDirectory? rideCodeDirectory,
+}) async {
   final controller = RideController(
     InMemoryEventStore(),
     InMemorySessionStore(),
     const _FakeNearbyBridge(),
+    rideCodeDirectory: rideCodeDirectory,
   );
   await controller.initialize();
   return controller;
+}
+
+class _SuccessfulRideCodeDirectory implements RideCodeDirectory {
+  const _SuccessfulRideCodeDirectory();
+
+  @override
+  void close() {}
+
+  @override
+  Future<void> register(RideSession session) async {}
+
+  @override
+  Future<RideCodeCredentials> resolve(
+    String rideCode, {
+    String? joinToken,
+  }) async => RideCodeCredentials(
+    rideId: 'ride-$rideCode',
+    rideCode: rideCode,
+    inviteSecret: 'test-invite-secret-0123456789',
+    joinToken: 'test-join-token-0123456789',
+  );
 }
 
 class _FakeNearbyBridge extends NearbyBridge {

@@ -63,6 +63,21 @@ class Settings(BaseSettings):
         ge=1024 * 1024,
         le=1024 * 1024 * 1024,
     )
+    protocol_version: int = Field(default=1, ge=1, le=1000)
+    minimum_client_protocol: int = Field(default=1, ge=1, le=1000)
+    supported_capabilities: list[str] = Field(
+        default_factory=lambda: [
+            "ride-start-v1",
+            "membership-v1",
+            "pre-start-presence-v1",
+            "route-revisions-v1",
+        ]
+    )
+    required_capabilities: list[str] = Field(default_factory=list)
+    compatibility_cache_seconds: int = Field(default=300, ge=30, le=3600)
+    update_url: str = "https://tailendcharlie.app"
+    ios_update_url: str = "https://tailendcharlie.app"
+    android_update_url: str = "https://tailendcharlie.app"
     plan_retention_days: int = Field(default=30, ge=1, le=365)
     maximum_plan_bytes: int = Field(
         default=11 * 1024 * 1024,
@@ -74,6 +89,8 @@ class Settings(BaseSettings):
     plan_create_rate_limit_window_seconds: int = Field(default=3600, ge=1, le=86400)
     plan_lookup_rate_limit_requests: int = Field(default=30, ge=1, le=1000)
     plan_lookup_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
+    pre_start_presence_ttl_seconds: int = Field(default=45, ge=15, le=300)
+    maximum_pre_start_presence_riders: int = Field(default=200, ge=2, le=1000)
 
     @field_validator("data_encryption_key", "cursor_signing_key")
     @classmethod

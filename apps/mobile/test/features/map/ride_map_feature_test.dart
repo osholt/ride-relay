@@ -18,6 +18,23 @@ import 'package:ride_relay/services/offline_tile_cache.dart';
 import 'package:ride_relay/services/route_importer.dart';
 
 void main() {
+  test('Android group mini-map uses the local fallback', () {
+    expect(
+      shouldUseTiledGroupMiniMap(
+        mapLibreEnabled: true,
+        platform: TargetPlatform.android,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldUseTiledGroupMiniMap(
+        mapLibreEnabled: true,
+        platform: TargetPlatform.iOS,
+      ),
+      isTrue,
+    );
+  });
+
   testWidgets('offers file import and loads bundled demo route offline', (
     tester,
   ) async {
@@ -373,6 +390,13 @@ void main() {
       expect(find.byKey(const Key('ride-menu-button')), findsOneWidget);
       expect(find.byKey(const Key('group-mini-map')), findsOneWidget);
       expect(find.text('3 RIDERS'), findsOneWidget);
+      expect(find.byKey(const Key('mini-map-you-legend')), findsOneWidget);
+      expect(find.byKey(const Key('mini-map-north-indicator')), findsOneWidget);
+      expect(find.byKey(const Key('mini-map-scale')), findsOneWidget);
+      final arrowLayer = tester.widget<MarkerLayer>(
+        find.byKey(const Key('trail-direction-arrow-layer')),
+      );
+      expect(arrowLayer.markers, isNotEmpty);
       expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
       await tester.tap(find.byKey(const Key('ride-menu-button')));
       await tester.pump();
@@ -421,10 +445,11 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('navigation-follow-button')), findsOneWidget);
-      expect(find.text('Re-centre'), findsOneWidget);
+      expect(find.text('Follow me'), findsOneWidget);
+      expect(find.byTooltip('Follow my location'), findsOneWidget);
       expect(find.byType(AppBar), findsNothing);
 
-      await tester.tap(find.text('Re-centre'));
+      await tester.tap(find.text('Follow me'));
       await tester.pump();
       expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
 

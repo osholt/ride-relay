@@ -77,6 +77,7 @@ class RideSimulationController extends ChangeNotifier {
     this.tickInterval = const Duration(milliseconds: 100),
     this.eventInterval = const Duration(seconds: 2),
     this.riderCount = RideSession.defaultSimulationRiderCount,
+    bool rideStarted = true,
   }) : assert(session.isSimulation),
        assert(route.length >= 2),
        assert(
@@ -84,6 +85,9 @@ class RideSimulationController extends ChangeNotifier {
              riderCount <= RideSession.maximumSimulationRiderCount,
        ),
        _session = session,
+       // Keep the public constructor argument usable outside this library.
+       // ignore: prefer_initializing_formals
+       _rideStarted = rideStarted,
        _routeSampler = _RouteSampler(route),
        _selectedLocalRole = session.role == RideRole.marker
            ? RideRole.rider
@@ -135,6 +139,7 @@ class RideSimulationController extends ChangeNotifier {
   bool _tecDelayed = false;
   bool _emitting = false;
   bool _markerMode = false;
+  bool _rideStarted;
   Duration _eventElapsed = Duration.zero;
   int _eventSequence = 0;
   DateTime? _lastRecordedAt;
@@ -153,6 +158,7 @@ class RideSimulationController extends ChangeNotifier {
   double get timeScale => _timeScale;
   double get baseSpeedMetersPerSecond => _baseSpeedMetersPerSecond;
   bool get tecDelayed => _tecDelayed;
+  bool get rideStarted => _rideStarted;
   RideRole get localRole => _selectedLocalRole;
   bool get markerMode => _markerMode;
   SimulationMarkerPhase get markerPhase => _markerPhase;
@@ -342,8 +348,21 @@ class RideSimulationController extends ChangeNotifier {
     await _emitPositions();
   }
 
+  void setRideStarted(bool value) {
+    if (_rideStarted == value) return;
+    _rideStarted = value;
+    if (!value && _state != RideSimulationState.completed) {
+      _state = RideSimulationState.ready;
+      _timer?.cancel();
+      _timer = null;
+    }
+    notifyListeners();
+  }
+
   void start() {
-    if (_state == RideSimulationState.completed || isRunning) return;
+    if (!_rideStarted || _state == RideSimulationState.completed || isRunning) {
+      return;
+    }
     _state = RideSimulationState.running;
     _timer ??= Timer.periodic(tickInterval, (_) {
       if (isRunning) unawaited(_tick(tickInterval));
@@ -456,7 +475,9 @@ class RideSimulationController extends ChangeNotifier {
   /// Advances virtual time and emits one GPS fix per rider. Public so tests and
   /// scripted demos can progress deterministically without waiting for timers.
   Future<void> advance(Duration realElapsed) async {
-    if (_state == RideSimulationState.completed || _emitting) return;
+    if (!_rideStarted || _state == RideSimulationState.completed || _emitting) {
+      return;
+    }
     _advanceMotion(realElapsed);
     _eventElapsed = Duration.zero;
     await _emitPositions();
@@ -581,6 +602,7 @@ class RideSimulationController extends ChangeNotifier {
   }
 
   double _speedFor(_SimulatedAgent agent) {
+    if (!_rideStarted) return 0;
     if (_state == RideSimulationState.completed) return 0;
     if (_isStoppedAtMarker(agent)) return 0;
     if (agent.id == tecRiderId && _tecDelayed) {
