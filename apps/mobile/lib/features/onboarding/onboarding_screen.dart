@@ -368,7 +368,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         icon: Icons.notifications_none,
         title: 'Notifications',
         body:
-            'This build keeps safety alerts inside the active app, so it does not request a notification permission it cannot yet use.',
+            'Requested when you join a live ride if encrypted push delivery is configured. Lock-screen alerts omit coordinates, invitation secrets and medical details.',
       ),
       const SizedBox(height: 18),
       OutlinedButton.icon(
@@ -395,7 +395,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       ],
       const SizedBox(height: 18),
       const Text(
-        'Background delivery and battery behaviour depend on the platform and device settings. Keep the app open for the verified foreground experience.',
+        'Background delivery is best-effort and depends on platform and device settings. Durable in-app alerts remain the source of truth and push is not an emergency-service substitute.',
         style: TextStyle(color: Color(0xFF98A3B1), height: 1.4),
       ),
     ],

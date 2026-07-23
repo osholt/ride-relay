@@ -2,6 +2,7 @@ import CarPlay
 import Flutter
 import NearbyConnections
 import UIKit
+import UserNotifications
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
@@ -17,13 +18,20 @@ import UIKit
   private var pendingGpxImport: (data: Data, fileName: String)?
   private var carPlayChannel: FlutterMethodChannel?
   private var latestCarPlaySnapshot: [String: Any]?
+  private var pushChannel: FlutterMethodChannel?
+  private var apnsToken: String?
+  private var pendingPushTokenResult: FlutterResult?
+  private var pendingOpenedPush: [String: String]?
+  private var pushTokenTimeout: DispatchWorkItem?
   weak var carPlayListTemplate: CPListTemplate?
 
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    let launched = super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    UNUserNotificationCenter.current().delegate = self
+    return launched
   }
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
@@ -109,6 +117,26 @@ import UIKit
     }
     gpxImportChannel = gpxChannel
 
+    let pushChannel = FlutterMethodChannel(
+      name: "me.osholt.ride_relay/push",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    pushChannel.setMethodCallHandler { [weak self] call, result in
+      switch call.method {
+      case "configureAndRequest":
+        self?.requestPushPermission(result: result)
+      case "currentStatus":
+        self?.currentPushStatus(result: result)
+      case "consumeInitialNotification":
+        let pending = self?.pendingOpenedPush
+        self?.pendingOpenedPush = nil
+        result(pending)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    self.pushChannel = pushChannel
+
     let carPlayChannel = FlutterMethodChannel(
       name: "me.osholt.ride_relay/carplay",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
@@ -129,6 +157,161 @@ import UIKit
       result(nil)
     }
     self.carPlayChannel = carPlayChannel
+  }
+
+  private func requestPushPermission(result: @escaping FlutterResult) {
+    UNUserNotificationCenter.current().requestAuthorization(
+      options: [.alert, .badge, .sound]
+    ) { [weak self] _, _ in
+      DispatchQueue.main.async {
+        self?.currentPushStatus(result: result)
+      }
+    }
+  }
+
+  private func currentPushStatus(result: @escaping FlutterResult) {
+    UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
+      DispatchQueue.main.async {
+        guard let self else {
+          result([
+            "permission": "unavailable",
+            "platform": "ios",
+            "provider": "apns",
+          ])
+          return
+        }
+        let permission = self.pushPermission(settings.authorizationStatus)
+        guard permission == "granted" else {
+          result(self.pushStatus(permission: permission))
+          return
+        }
+        if self.apnsToken != nil {
+          result(self.pushStatus(permission: permission))
+          UIApplication.shared.registerForRemoteNotifications()
+          return
+        }
+        guard self.pendingPushTokenResult == nil else {
+          result(
+            FlutterError(
+              code: "push_registration_pending",
+              message: "Push registration is already in progress",
+              details: nil
+            )
+          )
+          return
+        }
+        self.pendingPushTokenResult = result
+        UIApplication.shared.registerForRemoteNotifications()
+        let timeout = DispatchWorkItem { [weak self] in
+          guard let self, let pending = self.pendingPushTokenResult else { return }
+          self.pendingPushTokenResult = nil
+          pending(self.pushStatus(permission: "granted"))
+        }
+        self.pushTokenTimeout?.cancel()
+        self.pushTokenTimeout = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: timeout)
+      }
+    }
+  }
+
+  private func pushPermission(_ status: UNAuthorizationStatus) -> String {
+    switch status {
+    case .authorized, .provisional, .ephemeral:
+      return "granted"
+    case .denied:
+      return "denied"
+    case .notDetermined:
+      return "unknown"
+    @unknown default:
+      return "unavailable"
+    }
+  }
+
+  private func pushStatus(permission: String) -> [String: String] {
+    var status = [
+      "permission": permission,
+      "platform": "ios",
+      "provider": "apns",
+    ]
+    if let apnsToken {
+      status["token"] = apnsToken
+    }
+    return status
+  }
+
+  override func application(
+    _ application: UIApplication,
+    didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+  ) {
+    super.application(
+      application,
+      didRegisterForRemoteNotificationsWithDeviceToken: deviceToken
+    )
+    let token = deviceToken.map { String(format: "%02x", $0) }.joined()
+    let changed = apnsToken != nil && apnsToken != token
+    apnsToken = token
+    pushTokenTimeout?.cancel()
+    pushTokenTimeout = nil
+    if let pending = pendingPushTokenResult {
+      pendingPushTokenResult = nil
+      pending(pushStatus(permission: "granted"))
+    } else if changed {
+      pushChannel?.invokeMethod(
+        "tokenRotated",
+        arguments: pushStatus(permission: "granted")
+      )
+    }
+  }
+
+  override func application(
+    _ application: UIApplication,
+    didFailToRegisterForRemoteNotificationsWithError error: Error
+  ) {
+    super.application(
+      application,
+      didFailToRegisterForRemoteNotificationsWithError: error
+    )
+    pushTokenTimeout?.cancel()
+    pushTokenTimeout = nil
+    if let pending = pendingPushTokenResult {
+      pendingPushTokenResult = nil
+      pending(pushStatus(permission: "granted"))
+    }
+  }
+
+  override func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    // The durable in-app alert is already visible while the app is active.
+    completionHandler([])
+  }
+
+  override func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping () -> Void
+  ) {
+    handlePushNotification(userInfo: response.notification.request.content.userInfo)
+    completionHandler()
+  }
+
+  func handlePushNotification(userInfo: [AnyHashable: Any]) {
+    guard
+      let rideID = userInfo["rideId"] as? String,
+      let eventID = userInfo["eventId"] as? String,
+      let category = userInfo["category"] as? String,
+      !rideID.isEmpty,
+      !eventID.isEmpty
+    else { return }
+    let value = [
+      "rideId": rideID,
+      "eventId": eventID,
+      "category": category,
+    ]
+    pendingOpenedPush = value
+    pushChannel?.invokeMethod("notificationOpened", arguments: value)
   }
 
   /// Called by CarPlaySceneDelegate once the CarPlay scene's list template is

@@ -52,6 +52,9 @@ Put two different generated values and a long random PostgreSQL password in
 Set `RIDE_RELAY_MAXIMUM_ACTIVE_RIDES` from the encrypted-volume capacity and
 expected field-test population; the default is 100. The event and replay byte
 quotas in the same file should also be kept within the available volume.
+If push delivery is enabled, add the APNs/FCM credentials described in
+[push-notifications.md](./push-notifications.md). A partially configured
+provider intentionally prevents startup.
 
 ## Deploy and verify
 
@@ -71,6 +74,9 @@ repository variable (`gh variable set RIDE_RELAY_API_BASE_URL --body
 Actions -> Variables) rather than editing the workflow file; `testflight.yml`
 reads it from there and fails the build with a clear error if it is unset. Run
 a two-phone ride claim/sync test before a field ride.
+After enabling push, also check
+`ride_relay_push_deliveries_total` on `/metrics` and complete the locked-screen
+physical-device matrix before treating background alerts as available.
 
 For maps, add a licence-approved archive and matching style as described in
 [maps-and-gpx.md](./maps-and-gpx.md), then add `--profile maps` to the Compose
@@ -93,6 +99,8 @@ Put the pre-production hostname and two new keys in
 `deploy/.env.preproduction`; never copy the production database password or
 encryption/signing keys. Put the same hostname in production's `deploy/.env`
 as `RIDE_RELAY_PREPRODUCTION_DOMAIN`.
+Use separate pre-production Firebase/provider credentials where possible; do
+not copy production push private keys merely to make a test build convenient.
 
 Start the isolated stack, then enable its route in the existing public proxy:
 

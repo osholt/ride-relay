@@ -59,12 +59,14 @@ abstract final class RelayProtocolCapabilities {
   static const membership = 'membership-v1';
   static const preStartPresence = 'pre-start-presence-v1';
   static const routeRevisions = 'route-revisions-v1';
+  static const pushNotifications = 'push-notifications-v1';
 
   static const current = {
     rideStart,
     membership,
     preStartPresence,
     routeRevisions,
+    pushNotifications,
   };
 }
 

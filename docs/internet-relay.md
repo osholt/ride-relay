@@ -36,7 +36,7 @@ X-TailEndCharlie-Protocol: 1
 X-TailEndCharlie-Platform: iOS|android|...
 X-TailEndCharlie-App-Version: <version>
 X-TailEndCharlie-App-Build: <build>
-X-TailEndCharlie-Capabilities: ride-start-v1,membership-v1,route-revisions-v1,pre-start-presence-v1
+X-TailEndCharlie-Capabilities: ride-start-v1,membership-v1,route-revisions-v1,pre-start-presence-v1,push-notifications-v1
 ```
 
 The server advertises its minimum/maximum protocol, supported and required
@@ -95,6 +95,15 @@ External monitoring can reuse this latest-position model, but must not reuse
 the group invite as a public tracking credential. It needs a separate,
 revocable, least-privilege observer token, explicit sharing controls, and the
 same short retention before it is exposed outside the ride group.
+
+### Background notification hints
+
+When configured, the client registers its provider token through a separate
+authenticated endpoint. Tokens never enter the ride event journal. Selected
+durable events can then produce a privacy-minimised APNs/FCM hint for current,
+role-relevant participants; repeated copies of the same event are
+deduplicated. See [push-notifications.md](./push-notifications.md) for the
+target matrix, provider configuration and real-device release gate.
 
 ## API contract
 

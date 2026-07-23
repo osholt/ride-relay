@@ -6,6 +6,7 @@ class DestinationPlanRequest {
   const DestinationPlanRequest({
     required this.query,
     this.startQuery,
+    this.stopQueries = const [],
     this.handoffTarget,
   });
 
@@ -16,34 +17,56 @@ class DestinationPlanRequest {
   /// Null or blank means "use my current location", same as before this
   /// field existed.
   final String? startQuery;
+  final List<String> stopQueries;
   final NavigationTarget? handoffTarget;
 }
 
 class DestinationRouteSheet extends StatefulWidget {
-  const DestinationRouteSheet({super.key});
+  const DestinationRouteSheet({super.key, this.initialRequest});
 
-  static Future<DestinationPlanRequest?> show(BuildContext context) =>
-      showModalBottomSheet<DestinationPlanRequest>(
-        context: context,
-        showDragHandle: true,
-        isScrollControlled: true,
-        builder: (_) => const DestinationRouteSheet(),
-      );
+  final DestinationPlanRequest? initialRequest;
+
+  static Future<DestinationPlanRequest?> show(
+    BuildContext context, {
+    DestinationPlanRequest? initialRequest,
+  }) => showModalBottomSheet<DestinationPlanRequest>(
+    context: context,
+    showDragHandle: true,
+    isScrollControlled: true,
+    builder: (_) => DestinationRouteSheet(initialRequest: initialRequest),
+  );
 
   @override
   State<DestinationRouteSheet> createState() => _DestinationRouteSheetState();
 }
 
 class _DestinationRouteSheetState extends State<DestinationRouteSheet> {
-  final _startController = TextEditingController();
-  final _destinationController = TextEditingController();
-  _DestinationHandoff _handoff = _DestinationHandoff.rideRelay;
+  late final TextEditingController _startController;
+  late final TextEditingController _destinationController;
+  final List<TextEditingController> _stopControllers = [];
+  late _DestinationHandoff _handoff;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initialRequest;
+    _startController = TextEditingController(text: initial?.startQuery ?? '');
+    _destinationController = TextEditingController(text: initial?.query ?? '');
+    _stopControllers.addAll(
+      initial?.stopQueries.map((value) => TextEditingController(text: value)) ??
+          const <TextEditingController>[],
+    );
+    _handoff = _handoffFromTarget(initial?.handoffTarget);
+  }
 
   @override
   void dispose() {
     _startController.dispose();
     _destinationController.dispose();
+    for (final controller in _stopControllers) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
@@ -81,6 +104,60 @@ class _DestinationRouteSheetState extends State<DestinationRouteSheet> {
                 hintText: 'Leave blank to use your current location',
                 prefixIcon: Icon(Icons.trip_origin),
               ),
+            ),
+            const SizedBox(height: 14),
+            for (var index = 0; index < _stopControllers.length; index++) ...[
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: TextField(
+                      key: Key('route-stop-field-$index'),
+                      controller: _stopControllers[index],
+                      textInputAction: TextInputAction.next,
+                      decoration: InputDecoration(
+                        labelText: 'Stop ${index + 1}',
+                        hintText: 'Place, postcode, or coordinates',
+                        prefixIcon: const Icon(Icons.add_location_alt_outlined),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Column(
+                    children: [
+                      IconButton(
+                        key: Key('move-route-stop-up-$index'),
+                        tooltip: 'Move stop earlier',
+                        onPressed: index == 0
+                            ? null
+                            : () => _moveStop(index, index - 1),
+                        icon: const Icon(Icons.arrow_upward),
+                      ),
+                      IconButton(
+                        key: Key('move-route-stop-down-$index'),
+                        tooltip: 'Move stop later',
+                        onPressed: index == _stopControllers.length - 1
+                            ? null
+                            : () => _moveStop(index, index + 1),
+                        icon: const Icon(Icons.arrow_downward),
+                      ),
+                      IconButton(
+                        key: Key('remove-route-stop-$index'),
+                        tooltip: 'Remove stop',
+                        onPressed: () => _removeStop(index),
+                        icon: const Icon(Icons.delete_outline),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+            ],
+            OutlinedButton.icon(
+              key: const Key('add-route-stop'),
+              onPressed: _stopControllers.length >= 8 ? null : _addStop,
+              icon: const Icon(Icons.add),
+              label: const Text('Add an intermediate stop'),
             ),
             const SizedBox(height: 14),
             TextField(
@@ -145,13 +222,41 @@ class _DestinationRouteSheetState extends State<DestinationRouteSheet> {
         startQuery: _startController.text.trim().isEmpty
             ? null
             : _startController.text.trim(),
+        stopQueries: _stopControllers
+            .map((controller) => controller.text.trim())
+            .where((value) => value.isNotEmpty)
+            .toList(growable: false),
         handoffTarget: _handoff.target,
       ),
     );
   }
+
+  void _addStop() {
+    setState(() => _stopControllers.add(TextEditingController()));
+  }
+
+  void _removeStop(int index) {
+    final removed = _stopControllers.removeAt(index);
+    removed.dispose();
+    setState(() {});
+  }
+
+  void _moveStop(int from, int to) {
+    final controller = _stopControllers.removeAt(from);
+    _stopControllers.insert(to, controller);
+    setState(() {});
+  }
 }
 
 enum _DestinationHandoff { rideRelay, calimoto, myRouteApp, googleMaps }
+
+_DestinationHandoff _handoffFromTarget(NavigationTarget? target) =>
+    switch (target) {
+      NavigationTarget.calimoto => _DestinationHandoff.calimoto,
+      NavigationTarget.myRouteApp => _DestinationHandoff.myRouteApp,
+      NavigationTarget.googleMaps => _DestinationHandoff.googleMaps,
+      _ => _DestinationHandoff.rideRelay,
+    };
 
 extension on _DestinationHandoff {
   String get label => switch (this) {

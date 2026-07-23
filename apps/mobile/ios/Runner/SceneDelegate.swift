@@ -11,6 +11,11 @@ class SceneDelegate: FlutterSceneDelegate {
     if let url = connectionOptions.urlContexts.first?.url {
       handleOpenedURL(url)
     }
+    if let response = connectionOptions.notificationResponse {
+      (UIApplication.shared.delegate as? AppDelegate)?.handlePushNotification(
+        userInfo: response.notification.request.content.userInfo
+      )
+    }
   }
 
   override func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {

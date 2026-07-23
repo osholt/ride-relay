@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 from functools import lru_cache
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -71,6 +71,7 @@ class Settings(BaseSettings):
             "membership-v1",
             "pre-start-presence-v1",
             "route-revisions-v1",
+            "push-notifications-v1",
         ]
     )
     required_capabilities: list[str] = Field(default_factory=list)
@@ -91,6 +92,15 @@ class Settings(BaseSettings):
     plan_lookup_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
     pre_start_presence_ttl_seconds: int = Field(default=45, ge=15, le=300)
     maximum_pre_start_presence_riders: int = Field(default=200, ge=2, le=1000)
+    apns_team_id: str = Field(default="", max_length=32)
+    apns_key_id: str = Field(default="", max_length=32)
+    apns_bundle_id: str = Field(default="", max_length=255)
+    apns_private_key_base64: SecretStr | None = None
+    apns_sandbox: bool = False
+    fcm_project_id: str = Field(default="", max_length=255)
+    fcm_client_email: str = Field(default="", max_length=320)
+    fcm_private_key_base64: SecretStr | None = None
+    push_delivery_timeout_seconds: int = Field(default=8, ge=2, le=30)
 
     @field_validator("data_encryption_key", "cursor_signing_key")
     @classmethod
@@ -116,6 +126,49 @@ class Settings(BaseSettings):
         if len(raw_value) < 32:
             raise ValueError("must contain at least 32 characters when configured")
         return value
+
+    @field_validator(
+        "apns_private_key_base64",
+        "fcm_private_key_base64",
+        mode="before",
+    )
+    @classmethod
+    def empty_push_secrets_are_none(cls, value: object) -> object:
+        if value is None or value == "":
+            return None
+        return value
+
+    @model_validator(mode="after")
+    def push_provider_settings_are_complete(self) -> Settings:
+        apns_values = (
+            self.apns_team_id,
+            self.apns_key_id,
+            self.apns_bundle_id,
+            self.apns_private_key_base64,
+        )
+        if any(apns_values) and not all(apns_values):
+            raise ValueError("APNs requires team ID, key ID, bundle ID and private key")
+        fcm_values = (
+            self.fcm_project_id,
+            self.fcm_client_email,
+            self.fcm_private_key_base64,
+        )
+        if any(fcm_values) and not all(fcm_values):
+            raise ValueError("FCM requires project ID, client email and private key")
+        return self
+
+    @property
+    def apns_configured(self) -> bool:
+        return bool(
+            self.apns_team_id
+            and self.apns_key_id
+            and self.apns_bundle_id
+            and self.apns_private_key_base64
+        )
+
+    @property
+    def fcm_configured(self) -> bool:
+        return bool(self.fcm_project_id and self.fcm_client_email and self.fcm_private_key_base64)
 
     def decoded_key(self, field: str) -> bytes:
         value = getattr(self, field).get_secret_value()

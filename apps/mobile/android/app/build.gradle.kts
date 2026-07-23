@@ -1,4 +1,5 @@
 import java.io.FileInputStream
+import java.util.Base64
 import java.util.Properties
 
 plugins {
@@ -16,10 +17,27 @@ if (hasReleaseKeystore) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
+val dartDefines =
+    (project.findProperty("dart-defines") as String?)
+        .orEmpty()
+        .split(",")
+        .mapNotNull { encoded ->
+            runCatching { String(Base64.getDecoder().decode(encoded)) }.getOrNull()
+        }
+        .mapNotNull { value ->
+            val separator = value.indexOf("=")
+            if (separator <= 0) null else value.substring(0, separator) to value.substring(separator + 1)
+        }
+        .toMap()
+
 android {
     namespace = "me.osholt.ride_relay"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
+
+    buildFeatures {
+        resValues = true
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -34,6 +52,34 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        if (
+            dartDefines["RIDE_RELAY_PUSH_ENABLED"] == "true" &&
+            !dartDefines["RIDE_RELAY_FIREBASE_API_KEY"].isNullOrEmpty() &&
+            !dartDefines["RIDE_RELAY_FIREBASE_PROJECT_ID"].isNullOrEmpty() &&
+            !dartDefines["RIDE_RELAY_FIREBASE_MESSAGING_SENDER_ID"].isNullOrEmpty() &&
+            !dartDefines["RIDE_RELAY_FIREBASE_ANDROID_APP_ID"].isNullOrEmpty()
+        ) {
+            resValue(
+                "string",
+                "google_api_key",
+                dartDefines.getValue("RIDE_RELAY_FIREBASE_API_KEY"),
+            )
+            resValue(
+                "string",
+                "project_id",
+                dartDefines.getValue("RIDE_RELAY_FIREBASE_PROJECT_ID"),
+            )
+            resValue(
+                "string",
+                "gcm_defaultSenderId",
+                dartDefines.getValue("RIDE_RELAY_FIREBASE_MESSAGING_SENDER_ID"),
+            )
+            resValue(
+                "string",
+                "google_app_id",
+                dartDefines.getValue("RIDE_RELAY_FIREBASE_ANDROID_APP_ID"),
+            )
+        }
     }
 
     signingConfigs {
@@ -70,4 +116,6 @@ flutter {
 
 dependencies {
     implementation("com.google.android.gms:play-services-nearby:19.3.0")
+    implementation(platform("com.google.firebase:firebase-bom:34.16.0"))
+    implementation("com.google.firebase:firebase-messaging")
 }

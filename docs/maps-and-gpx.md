@@ -78,6 +78,13 @@ the imported GPX.
 
 ## Destination and road routing
 
+Every calculated route, GPX import, plan-code import, recorded route and demo
+route opens a full-route review before it can replace the authoritative ride
+route. The leader can inspect distance, duration when available, ordered stops
+and warnings; destination routes can return to editing to replace, reorder or
+delete stops and recalculate. Cancelling leaves the stored and distributed
+route unchanged, while confirming produces one route update.
+
 The map's destination action performs one user-submitted place/postcode search
 and routes from the current foreground location. It does not send autocomplete
 or background geocoding traffic. Latitude/longitude input bypasses geocoding.

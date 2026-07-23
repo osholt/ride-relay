@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/foreground_location_controller.dart';
@@ -13,6 +14,7 @@ import '../../controllers/marker_assistance_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/pre_start_presence_controller.dart';
 import '../../controllers/ride_controller.dart';
+import '../../controllers/ride_push_notification_controller.dart';
 import '../../controllers/ride_simulation_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/shared_route_controller.dart';
@@ -32,6 +34,7 @@ import '../../domain/route_alert.dart';
 import '../../domain/route_store.dart';
 import '../../internet/internet_relay_client.dart';
 import '../../internet/internet_relay_worker.dart';
+import '../../internet/push_registration_client.dart';
 import '../../internet/shared_preferences_internet_cursor_store.dart';
 import '../../relay/native_nearby_transport.dart';
 import '../../relay/nearby_event_source.dart';
@@ -43,6 +46,7 @@ import '../../services/demo_route_loader.dart';
 import '../../services/external_hazard_provider.dart';
 import '../../services/gpx_import_source.dart';
 import '../../services/leader_ride_status.dart';
+import '../../services/native_push_token_source.dart';
 import '../../services/route_decision_point_extractor.dart';
 import '../../services/ride_completion_detector.dart';
 import '../../services/ride_membership.dart';
@@ -50,6 +54,7 @@ import '../../services/ride_screen_awake.dart';
 import '../map/motorcycle_icon.dart';
 import '../map/ride_map.dart';
 import '../settings/emergency_info_sheet.dart';
+import '../settings/notification_preferences_sheet.dart';
 import 'ice_share_inbox_sheet.dart';
 import '../situational_awareness/situational_awareness_screen.dart';
 import '../simulation/ride_simulation_screen.dart';
@@ -72,6 +77,8 @@ class ActiveRideShell extends StatefulWidget {
     required this.sharedRoutes,
     this.screenWakeLock = const WakelockPlusScreenWakeLock(),
     this.screenWakeReassertInterval = const Duration(seconds: 15),
+    this.pushTokenSource,
+    this.pushRegistrationApi,
   });
 
   final RideController rideController;
@@ -83,6 +90,8 @@ class ActiveRideShell extends StatefulWidget {
   final SharedRouteController sharedRoutes;
   final ScreenWakeLock screenWakeLock;
   final Duration screenWakeReassertInterval;
+  final PushTokenSource? pushTokenSource;
+  final PushRegistrationApi? pushRegistrationApi;
 
   @override
   State<ActiveRideShell> createState() => _ActiveRideShellState();
@@ -99,6 +108,7 @@ class _RideNavigationMenu extends StatelessWidget {
     required this.onShareRoster,
     required this.onChangeRoute,
     required this.onEmergencyInfo,
+    required this.onNotifications,
     required this.canShareIceInfo,
     required this.onShareIceInfo,
     required this.receivedIceShareCount,
@@ -118,6 +128,7 @@ class _RideNavigationMenu extends StatelessWidget {
   final VoidCallback onShareRoster;
   final VoidCallback onChangeRoute;
   final VoidCallback onEmergencyInfo;
+  final VoidCallback onNotifications;
   final bool canShareIceInfo;
   final VoidCallback onShareIceInfo;
   final int receivedIceShareCount;
@@ -209,6 +220,18 @@ class _RideNavigationMenu extends StatelessWidget {
               onTap: () {
                 Navigator.of(context).pop();
                 onEmergencyInfo();
+              },
+            ),
+            ListTile(
+              key: const Key('ride-menu-notifications'),
+              leading: const Icon(Icons.notifications_outlined),
+              title: const Text('Ride notifications'),
+              subtitle: const Text(
+                'Background alert permission and preferences',
+              ),
+              onTap: () {
+                Navigator.of(context).pop();
+                onNotifications();
               },
             ),
             if (canShareIceInfo)
@@ -384,6 +407,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   MarkerAssistanceController? _markerAssistanceController;
   NearbyRelayController? _relayController;
   InternetRelayController? _internetRelayController;
+  RidePushNotificationController? _pushNotificationController;
   PreStartPresenceController? _preStartPresenceController;
   SharedPreferencesInternetCursorStore? _internetCursorStore;
   RideSimulationController? _simulationController;
@@ -391,6 +415,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   RouteStore? _rideRouteStore;
   StreamSubscription<RideEvent>? _receivedEventSubscription;
   StreamSubscription<RideEvent>? _internetReceivedEventSubscription;
+  StreamSubscription<PushOpenRequest>? _pushOpenSubscription;
   Timer? _stalenessTimer;
   Timer? _simulationAwarenessTimer;
   Timer? _markerExitChromeTimer;
@@ -414,6 +439,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   bool _holdingNavigationChromeForMarkerExit = false;
   bool _autoEndingRide = false;
   bool _simulationPausedByRide = false;
+  RideRole? _lastPushRole;
 
   bool get _isSimulation => widget.rideController.session?.isSimulation == true;
 
@@ -604,6 +630,26 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
                   _onReceivedEvent(event, RideTransportEvidence.internetRelay),
             );
         await internetRelayController.start(session);
+        final pushNotificationController = RidePushNotificationController(
+          tokenSource:
+              widget.pushTokenSource ??
+              NativePushTokenSource(NativePushConfiguration.fromEnvironment()),
+          registrationApi:
+              widget.pushRegistrationApi ??
+              HttpPushRegistrationClient(
+                configuration: InternetRelayConfiguration.fromEnvironment(),
+                client: http.Client(),
+              ),
+          preferencesStore: await SharedPreferences.getInstance(),
+        );
+        _pushNotificationController = pushNotificationController;
+        pushNotificationController.addListener(
+          _onPushNotificationStatusChanged,
+        );
+        _pushOpenSubscription = pushNotificationController.openedNotifications
+            .listen(_onPushNotificationOpened);
+        await pushNotificationController.start(session);
+        _lastPushRole = session.role;
         final preStartPresenceController = PreStartPresenceController(
           HttpPreStartPresenceClient(
             configuration: InternetRelayConfiguration.fromEnvironment(),
@@ -1407,6 +1453,10 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       if (widget.rideController.rideStarted) {
         unawaited(_preStartPresenceController?.stop());
       }
+      if (_lastPushRole != session.role) {
+        _lastPushRole = session.role;
+        unawaited(_pushNotificationController?.refreshRegistration());
+      }
     }
     if (widget.rideController.rideEnded && !_rideEndHandled) {
       unawaited(_handleRideEnded());
@@ -1457,6 +1507,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     _simulationAwarenessTimer?.cancel();
     _stalenessTimer = null;
     await _preStartPresenceController?.stop();
+    await _pushNotificationController?.stop();
     await _locationController?.stop();
   }
 
@@ -1772,6 +1823,45 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   Future<void> _openIceShareInbox() =>
       IceShareInboxSheet.show(context, widget.rideController);
 
+  void _onPushNotificationStatusChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onPushNotificationOpened(PushOpenRequest request) {
+    final session = widget.rideController.session;
+    if (!mounted || session == null || request.rideId != session.rideId) {
+      return;
+    }
+    _internetRelayController?.wake();
+    final safetyAlert = request.category == 'safety';
+    setState(
+      () => _selectedIndex = switch ((_isSimulation, safetyAlert)) {
+        (true, true) => 3,
+        (true, false) => 2,
+        (false, true) => 2,
+        (false, false) => 1,
+      },
+    );
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(content: Text('Opened the authenticated ride alert.')),
+      );
+  }
+
+  Future<void> _openNotificationPreferences() async {
+    final controller = _pushNotificationController;
+    if (controller == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Notification settings are still loading.'),
+        ),
+      );
+      return;
+    }
+    await NotificationPreferencesSheet.show(context, controller);
+  }
+
   String? get _currentLeaderRiderId {
     final session = widget.rideController.session;
     if (session?.role == RideRole.lead) return session!.localRiderId;
@@ -1889,6 +1979,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         onChangeRoute: _requestRouteChange,
         onEmergencyInfo: () =>
             EmergencyInfoSheet.show(context, widget.riderProfile),
+        onNotifications: _openNotificationPreferences,
         canShareIceInfo: widget.riderProfile.hasEmergencyInfo,
         onShareIceInfo: _shareIceInfoWithGroup,
         receivedIceShareCount: widget.rideController.receivedIceShares.length,
@@ -2145,6 +2236,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   Future<void> _leaveRide() async {
     _simulationController?.pause();
     await _preStartPresenceController?.stop();
+    await _pushNotificationController?.stop();
     final rideId = widget.rideController.session?.rideId;
     if (rideId != null) await _internetCursorStore?.clear(rideId);
     await widget.rideController.leaveRide(
@@ -2168,12 +2260,17 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     _awarenessController?.dispose();
     unawaited(_receivedEventSubscription?.cancel());
     unawaited(_internetReceivedEventSubscription?.cancel());
+    unawaited(_pushOpenSubscription?.cancel());
     _stalenessTimer?.cancel();
     _markerExitChromeTimer?.cancel();
     _locationController?.dispose();
     unawaited(_relayController?.close());
     unawaited(_internetRelayController?.close());
     unawaited(_preStartPresenceController?.close());
+    _pushNotificationController?.removeListener(
+      _onPushNotificationStatusChanged,
+    );
+    unawaited(_pushNotificationController?.close());
     _mapPosition.dispose();
     _mapNavigationPosition.dispose();
     _mapOverlays.dispose();

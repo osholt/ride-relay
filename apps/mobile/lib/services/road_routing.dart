@@ -337,34 +337,64 @@ class DestinationRoutePlanner {
   final String Function() _idFactory;
   final DateTime Function() _clock;
 
-  /// [originQuery] is geocoded the same way [query] (the destination)
-  /// already is, and takes priority when given - the route need not start
-  /// from the rider's current location. [origin] is the fallback used only
-  /// when there is no [originQuery]; at least one of the two is required.
-  Future<ImportedRoute> plan({
+  Future<DestinationRoutePlan> planForReview({
     GeoPoint? origin,
     String? originQuery,
+    List<String> stopQueries = const [],
     required String query,
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
   }) async {
+    final warnings = <String>[];
     final GeoPoint resolvedOrigin;
+    String originLabel;
     if (originQuery != null && originQuery.trim().isNotEmpty) {
-      resolvedOrigin = (await searchService.search(originQuery)).first.point;
+      final originMatches = await searchService.search(originQuery);
+      if (originMatches.length > 1) {
+        warnings.add(
+          'The start location had ${originMatches.length} possible matches. '
+          'Check the selected pin before confirming.',
+        );
+      }
+      resolvedOrigin = originMatches.first.point;
+      originLabel = originMatches.first.label;
     } else if (origin != null) {
       resolvedOrigin = origin;
+      originLabel = 'Current location';
     } else {
       throw const FormatException(
         'A start location or current position is required.',
       );
     }
-    final matches = await searchService.search(query);
-    final destination = matches.first;
+
+    final resolvedStops = <DestinationMatch>[];
+    for (var index = 0; index < stopQueries.length; index += 1) {
+      final value = stopQueries[index].trim();
+      if (value.isEmpty) continue;
+      final matches = await searchService.search(value);
+      if (matches.length > 1) {
+        warnings.add(
+          'Stop ${index + 1} had ${matches.length} possible matches. '
+          'Check the selected pin before confirming.',
+        );
+      }
+      resolvedStops.add(matches.first);
+    }
+
+    final destinationMatches = await searchService.search(query);
+    if (destinationMatches.length > 1) {
+      warnings.add(
+        'The destination had ${destinationMatches.length} possible matches. '
+        'Check the selected pin before confirming.',
+      );
+    }
+    final destination = destinationMatches.first;
     final roadRoute = await routingService.routeThrough([
       resolvedOrigin,
+      ...resolvedStops.map((stop) => stop.point),
       destination.point,
     ]);
     final id = _idFactory();
-    return ImportedRoute(
+    final route = ImportedRoute(
       id: id,
       name: 'To ${_shortLabel(destination.label)}',
       description:
@@ -383,17 +413,68 @@ class DestinationRoutePlanner {
       waypoints: [
         RouteWaypoint(
           point: resolvedOrigin,
-          name: 'Start',
+          name: originLabel == 'Current location'
+              ? 'Start'
+              : _shortLabel(originLabel),
+          description: originLabel,
           symbol: 'Flag, Blue',
         ),
+        for (var index = 0; index < resolvedStops.length; index += 1)
+          RouteWaypoint(
+            point: resolvedStops[index].point,
+            name: _shortLabel(resolvedStops[index].label),
+            description: resolvedStops[index].label,
+            symbol: 'Flag, Green',
+          ),
         RouteWaypoint(
           point: destination.point,
-          name: destination.label,
+          name: _shortLabel(destination.label),
+          description: destination.label,
           symbol: 'Flag, Red',
         ),
       ],
     );
+    return DestinationRoutePlan(
+      route: route,
+      distanceMeters: roadRoute.distanceMeters,
+      duration: roadRoute.duration,
+      warnings: List.unmodifiable(warnings),
+    );
   }
+
+  /// [originQuery] is geocoded the same way [query] (the destination)
+  /// already is, and takes priority when given - the route need not start
+  /// from the rider's current location. [origin] is the fallback used only
+  /// when there is no [originQuery]; at least one of the two is required.
+  Future<ImportedRoute> plan({
+    GeoPoint? origin,
+    String? originQuery,
+    List<String> stopQueries = const [],
+    required String query,
+    DistanceUnit distanceUnit = DistanceUnit.kilometres,
+  }) async {
+    return (await planForReview(
+      origin: origin,
+      originQuery: originQuery,
+      stopQueries: stopQueries,
+      query: query,
+      distanceUnit: distanceUnit,
+    )).route;
+  }
+}
+
+class DestinationRoutePlan {
+  const DestinationRoutePlan({
+    required this.route,
+    required this.distanceMeters,
+    required this.duration,
+    this.warnings = const [],
+  });
+
+  final ImportedRoute route;
+  final double distanceMeters;
+  final Duration duration;
+  final List<String> warnings;
 }
 
 const _requestHeaders = {

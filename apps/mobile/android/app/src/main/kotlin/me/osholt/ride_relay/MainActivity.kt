@@ -1,6 +1,8 @@
 package me.osholt.ride_relay
 
 import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -8,7 +10,11 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import com.google.firebase.FirebaseApp
+import com.google.firebase.FirebaseOptions
+import com.google.firebase.messaging.FirebaseMessaging
 import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.AdvertisingOptions
 import com.google.android.gms.nearby.connection.ConnectionInfo
@@ -33,7 +39,9 @@ class MainActivity : FlutterActivity() {
         private const val METHOD_CHANNEL = "me.osholt.ride_relay/nearby"
         private const val EVENT_CHANNEL = "me.osholt.ride_relay/nearby_events"
         private const val GPX_METHOD_CHANNEL = "me.osholt.ride_relay/gpx_import"
+        private const val PUSH_METHOD_CHANNEL = "me.osholt.ride_relay/push"
         private const val PERMISSION_REQUEST = 7102
+        private const val PUSH_PERMISSION_REQUEST = 7103
         private const val LOCAL_NETWORK_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
     }
 
@@ -46,6 +54,7 @@ class MainActivity : FlutterActivity() {
     private val pendingPeers = mutableSetOf<String>()
     private var eventSink: EventChannel.EventSink? = null
     private var permissionResult: MethodChannel.Result? = null
+    private var pushPermissionResult: MethodChannel.Result? = null
     private var endpointName = "Tail End Charlie"
     private var serviceId = "me.osholt.ride_relay.relay.v1"
 
@@ -121,6 +130,23 @@ class MainActivity : FlutterActivity() {
                 result.success(mapOf("bytes" to pending.first, "fileName" to pending.second))
             }
         }
+        val pushChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            PUSH_METHOD_CHANNEL,
+        )
+        NativePushBridge.channel = pushChannel
+        pushChannel.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "configureAndRequest" -> configurePush(call, result, requestPermission = true)
+                "currentStatus" -> configurePush(call, result, requestPermission = false)
+                "consumeInitialNotification" -> {
+                    val pending = NativePushBridge.pendingOpenedNotification
+                    NativePushBridge.pendingOpenedNotification = null
+                    result.success(pending)
+                }
+                else -> result.notImplemented()
+            }
+        }
     }
 
     // Dart pulls this on its own schedule via consumePendingGpxImport rather
@@ -128,7 +154,32 @@ class MainActivity : FlutterActivity() {
     // the Flutter engine - and therefore any method call handler - exists.
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        createNotificationChannels()
         captureGpxIntent(intent)
+        capturePushIntent(intent)
+    }
+
+    private fun createNotificationChannels() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannels(
+            listOf(
+                NotificationChannel(
+                    "ride_safety_alerts",
+                    "Urgent ride alerts",
+                    NotificationManager.IMPORTANCE_HIGH,
+                ).apply {
+                    description = "Safety and assistance alerts for the active ride"
+                },
+                NotificationChannel(
+                    "ride_updates",
+                    "Ride updates",
+                    NotificationManager.IMPORTANCE_DEFAULT,
+                ).apply {
+                    description = "Marker, status and administrative ride updates"
+                },
+            ),
+        )
     }
 
     // launchMode="singleTop" routes a new VIEW/SEND intent here instead of a
@@ -136,6 +187,7 @@ class MainActivity : FlutterActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         captureGpxIntent(intent)
+        capturePushIntent(intent)
     }
 
     private fun captureGpxIntent(intent: Intent?) {
@@ -198,7 +250,112 @@ class MainActivity : FlutterActivity() {
                 grantResults.all { it == PackageManager.PERMISSION_GRANTED }
             permissionResult?.success(granted)
             permissionResult = null
+        } else if (requestCode == PUSH_PERMISSION_REQUEST) {
+            val result = pushPermissionResult
+            pushPermissionResult = null
+            if (result != null) currentPushStatus(result)
         }
+    }
+
+    private fun configurePush(
+        call: io.flutter.plugin.common.MethodCall,
+        result: MethodChannel.Result,
+        requestPermission: Boolean,
+    ) {
+        if (!ensureFirebaseConfigured(call)) {
+            result.success(pushStatus("unavailable"))
+            return
+        }
+        val needsRuntimePermission =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.POST_NOTIFICATIONS,
+                ) != PackageManager.PERMISSION_GRANTED
+        if (requestPermission && needsRuntimePermission) {
+            if (pushPermissionResult != null) {
+                result.error(
+                    "push_permission_pending",
+                    "Notification permission is already being requested",
+                    null,
+                )
+                return
+            }
+            pushPermissionResult = result
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                PUSH_PERMISSION_REQUEST,
+            )
+            return
+        }
+        currentPushStatus(result)
+    }
+
+    private fun ensureFirebaseConfigured(call: io.flutter.plugin.common.MethodCall): Boolean {
+        if (FirebaseApp.getApps(this).isNotEmpty()) return true
+        val apiKey = call.argument<String>("apiKey")
+        val projectId = call.argument<String>("projectId")
+        val senderId = call.argument<String>("messagingSenderId")
+        val appId = call.argument<String>("appId")
+        if (apiKey.isNullOrEmpty() ||
+            projectId.isNullOrEmpty() ||
+            senderId.isNullOrEmpty() ||
+            appId.isNullOrEmpty()
+        ) {
+            return false
+        }
+        val options = FirebaseOptions.Builder()
+            .setApiKey(apiKey)
+            .setProjectId(projectId)
+            .setGcmSenderId(senderId)
+            .setApplicationId(appId)
+            .build()
+        return FirebaseApp.initializeApp(this, options) != null
+    }
+
+    private fun currentPushStatus(result: MethodChannel.Result) {
+        val runtimeGranted =
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.POST_NOTIFICATIONS,
+                ) == PackageManager.PERMISSION_GRANTED
+        if (!runtimeGranted || !NotificationManagerCompat.from(this).areNotificationsEnabled()) {
+            result.success(pushStatus("denied"))
+            return
+        }
+        FirebaseMessaging.getInstance().token
+            .addOnSuccessListener { token ->
+                result.success(pushStatus("granted", token))
+            }
+            .addOnFailureListener {
+                result.success(pushStatus("granted"))
+            }
+    }
+
+    private fun pushStatus(permission: String, token: String? = null): Map<String, String> =
+        buildMap {
+            put("permission", permission)
+            put("platform", "android")
+            put("provider", "fcm")
+            if (!token.isNullOrEmpty()) put("token", token)
+        }
+
+    private fun capturePushIntent(intent: Intent?) {
+        val rideId = intent?.getStringExtra("rideId") ?: return
+        val eventId = intent.getStringExtra("eventId") ?: return
+        val category = intent.getStringExtra("category") ?: return
+        NativePushBridge.notificationOpened(
+            mapOf(
+                "rideId" to rideId,
+                "eventId" to eventId,
+                "category" to category,
+            ),
+        )
+        intent.removeExtra("rideId")
+        intent.removeExtra("eventId")
+        intent.removeExtra("category")
     }
 
     private fun requiredPermissions(): List<String> = buildList {
@@ -333,6 +490,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        NativePushBridge.channel = null
         stopNearby()
         super.onDestroy()
     }
