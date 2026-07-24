@@ -44,7 +44,12 @@ jobs:
     environment: android-internal
     steps:
       - name: Install Fastlane
-        run: gem install fastlane --version "$FASTLANE_VERSION" --no-document
+        run: |
+          gem install fastlane \
+            --version "$FASTLANE_VERSION" \
+            --no-document \
+            --user-install
+          echo "$(ruby -e 'puts Gem.user_dir')/bin" >> "$GITHUB_PATH"
       - name: Promote release
         env:
           SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
