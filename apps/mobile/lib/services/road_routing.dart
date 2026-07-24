@@ -56,6 +56,9 @@ class RoadRouteManeuver extends RouteManeuver {
     super.modifier,
     super.name,
     super.ref,
+    super.exitNumber,
+    super.drivingSide,
+    super.lanes,
   });
 
   /// OSRM does not expose UK give-way signage, but these manoeuvres are the
@@ -88,6 +91,16 @@ class RoadRouteManeuver extends RouteManeuver {
       modifier: json['modifier'] as String?,
       name: json['name'] as String?,
       ref: json['ref'] as String?,
+      exitNumber: (json['exitNumber'] as num?)?.toInt(),
+      drivingSide: json['drivingSide'] as String?,
+      lanes:
+          (json['lanes'] as List?)
+              ?.whereType<Map>()
+              .map(
+                (lane) => RouteLane.fromJson(Map<String, Object?>.from(lane)),
+              )
+              .toList(growable: false) ??
+          const [],
     );
   }
 }
@@ -223,11 +236,39 @@ class OsrmRoadRoutingService implements RoadRoutingService {
             modifier: rawManeuver['modifier'] as String?,
             name: step['name'] as String?,
             ref: step['ref'] as String?,
+            exitNumber: (rawManeuver['exit'] as num?)?.toInt(),
+            drivingSide: step['driving_side'] as String?,
+            lanes: _parseLanes(step['intersections']),
           ),
         );
       }
     }
     return List.unmodifiable(maneuvers);
+  }
+
+  static List<RouteLane> _parseLanes(Object? rawIntersections) {
+    if (rawIntersections is! List) return const [];
+    for (final rawIntersection in rawIntersections) {
+      if (rawIntersection is! Map || rawIntersection['lanes'] is! List) {
+        continue;
+      }
+      final lanes = <RouteLane>[];
+      for (final rawLane in rawIntersection['lanes'] as List) {
+        if (rawLane is! Map) continue;
+        final indications =
+            (rawLane['indications'] as List?)
+                ?.whereType<String>()
+                .map((value) => value.trim().toLowerCase())
+                .where((value) => value.isNotEmpty)
+                .toList(growable: false) ??
+            const <String>[];
+        lanes.add(
+          RouteLane(indications: indications, valid: rawLane['valid'] == true),
+        );
+      }
+      if (lanes.isNotEmpty) return List.unmodifiable(lanes);
+    }
+    return const [];
   }
 }
 

@@ -145,6 +145,36 @@ void main() {
       client.close();
     });
 
+    test('identifies an expired cursor as a retryable relay state', () async {
+      final client = HttpInternetRelayClient(
+        configuration: InternetRelayConfiguration(
+          baseUri: Uri.parse('https://relay.example'),
+        ),
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({'error': 'Invalid cursor'}),
+            400,
+            headers: {'content-type': 'application/json'},
+          ),
+        ),
+      );
+
+      await expectLater(
+        client.synchronize(
+          session: _session,
+          cursor: 'stale',
+          events: const [],
+        ),
+        throwsA(
+          isA<InternetRelayException>()
+              .having((error) => error.code, 'code', 'invalid_cursor')
+              .having((error) => error.retryable, 'retryable', isTrue)
+              .having((error) => error.message, 'message', 'Invalid cursor'),
+        ),
+      );
+      client.close();
+    });
+
     test('bounds the wait for response headers', () async {
       final client = HttpInternetRelayClient(
         configuration: InternetRelayConfiguration(

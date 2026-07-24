@@ -297,14 +297,18 @@ class _PreStartRidePanel extends StatelessWidget {
     required this.participants,
     required this.isLeader,
     required this.busy,
+    required this.routeName,
     required this.onStartRide,
+    required this.onChooseRoute,
   });
 
   final String rideCode;
   final List<RideParticipant> participants;
   final bool isLeader;
   final bool busy;
+  final String? routeName;
   final VoidCallback onStartRide;
+  final VoidCallback onChooseRoute;
 
   @override
   Widget build(BuildContext context) => Material(
@@ -358,6 +362,39 @@ class _PreStartRidePanel extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 9),
+            Row(
+              children: [
+                Icon(
+                  routeName == null
+                      ? Icons.route_outlined
+                      : Icons.check_circle_outline,
+                  size: 18,
+                  color: routeName == null
+                      ? const Color(0xFFFFC857)
+                      : const Color(0xFF6ED89A),
+                ),
+                const SizedBox(width: 7),
+                Expanded(
+                  child: Text(
+                    routeName == null
+                        ? 'No route selected'
+                        : 'Route: $routeName',
+                    maxLines: 2,
+                    style: const TextStyle(
+                      color: Color(0xFFD4DCE6),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                if (isLeader)
+                  TextButton(
+                    key: const Key('pre-start-choose-route'),
+                    onPressed: busy ? null : onChooseRoute,
+                    child: Text(routeName == null ? 'Choose route' : 'Change'),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 6),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
@@ -386,6 +423,8 @@ class _PreStartRidePanel extends StatelessWidget {
     ),
   );
 }
+
+enum _StartRideDecision { cancel, chooseRoute, start }
 
 class _ActiveRideShellState extends State<ActiveRideShell> {
   final _mapPosition = ValueNotifier<route_domain.GeoPoint?>(null);
@@ -435,6 +474,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   bool _loading = true;
   bool _relayConfigured = false;
   bool _refreshingRideEvents = false;
+  bool _publishingRouteChange = false;
   bool _rideEndHandled = false;
   bool _holdingNavigationChromeForMarkerExit = false;
   bool _autoEndingRide = false;
@@ -804,23 +844,36 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       if (mounted) setState(() {});
       return;
     }
+    _publishingRouteChange = true;
     _activeRoute = route;
-    await _replaceAwarenessController(route);
-    if (_isSimulation) {
-      await _replaceSimulationController(route);
-      return;
+    try {
+      await _replaceAwarenessController(route);
+      if (_isSimulation) {
+        await _replaceSimulationController(route);
+        return;
+      }
+      if (route == null) {
+        await widget.rideController.clearRoute();
+      } else {
+        await widget.rideController.publishRoute(route);
+      }
+      _appliedAuthoritativeRouteRevision =
+          widget.rideController.authoritativeRouteState.revisionId;
+      final store = _rideRouteStore;
+      if (store != null) {
+        if (route == null) {
+          await store.clearActiveRoute();
+        } else {
+          await store.saveActiveRoute(route);
+        }
+      }
+    } finally {
+      _publishingRouteChange = false;
     }
-    if (route == null) {
-      await widget.rideController.clearRoute();
-    } else {
-      await widget.rideController.publishRoute(route);
-    }
-    _appliedAuthoritativeRouteRevision =
-        widget.rideController.authoritativeRouteState.revisionId;
   }
 
   Future<void> _applyAuthoritativeRouteDecision() async {
-    if (_isSimulation) return;
+    if (_isSimulation || _publishingRouteChange) return;
     final state = widget.rideController.authoritativeRouteState;
     if (!state.hasDecision ||
         state.revisionId == _appliedAuthoritativeRouteRevision) {
@@ -1582,8 +1635,10 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
                 rideCode: session.rideCode,
                 participants: widget.rideController.participants,
                 isLeader: session.role == RideRole.lead,
-                busy: widget.rideController.busy,
+                busy: widget.rideController.busy || _loading,
+                routeName: _activeRoute?.name,
                 onStartRide: _confirmStartRide,
+                onChooseRoute: _requestRouteChange,
               ),
               Expanded(
                 child: MediaQuery.removePadding(
@@ -1691,6 +1746,10 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       );
     }
     return RideMapFeature.fromEnvironment(
+      key: ValueKey(
+        'ride-map:${_appliedAuthoritativeRouteRevision ?? 'local'}:'
+        '${_activeRoute?.id ?? 'none'}',
+      ),
       currentPosition: _mapPosition,
       navigationPosition: _mapNavigationPosition,
       overlayMarkers: _mapOverlays,
@@ -1705,7 +1764,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       ridePaused: widget.rideController.ridePaused,
       onLeaveRide: _confirmLeaveRideFromMap,
       onOpenRideMenu: _openRideMenu,
-      onRouteChanged: _onRouteChanged,
+      onRouteCommitted: _onRouteChanged,
       changeRouteRequestToken: _changeRouteRequestToken,
       onChangeRouteRequestHandled: _clearChangeRouteRequest,
       pendingSharedGpxFile: _pendingSharedGpxFile,
@@ -1884,29 +1943,58 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         widget.rideController.rideStarted) {
       return;
     }
-    final confirmed = await showDialog<bool>(
+    final route = _activeRoute;
+    final decision = await showDialog<_StartRideDecision>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Start this ride?'),
-        content: const Text(
-          'Live location sharing, route progress, off-course alerts and ride '
-          'recording will begin for the group.',
+        content: Text(
+          route == null
+              ? 'No route is selected. You can choose one now, or start '
+                    'without navigation. Live location sharing and ride '
+                    'recording begin only after you start.'
+              : 'Route: ${route.name}\n\nLive location sharing, route '
+                    'progress, off-course alerts and ride recording will '
+                    'begin for the group.',
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
+            onPressed: () =>
+                Navigator.pop(dialogContext, _StartRideDecision.cancel),
             child: const Text('Cancel'),
           ),
-          FilledButton.icon(
-            key: const Key('confirm-start-ride-button'),
-            onPressed: () => Navigator.pop(dialogContext, true),
-            icon: const Icon(Icons.play_arrow),
-            label: const Text('Start ride'),
-          ),
+          if (route == null) ...[
+            TextButton(
+              key: const Key('start-without-route-button'),
+              onPressed: () =>
+                  Navigator.pop(dialogContext, _StartRideDecision.start),
+              child: const Text('Start without route'),
+            ),
+            FilledButton.icon(
+              key: const Key('choose-route-before-start-button'),
+              onPressed: () =>
+                  Navigator.pop(dialogContext, _StartRideDecision.chooseRoute),
+              icon: const Icon(Icons.route_outlined),
+              label: const Text('Choose route'),
+            ),
+          ] else
+            FilledButton.icon(
+              key: const Key('confirm-start-ride-button'),
+              onPressed: () =>
+                  Navigator.pop(dialogContext, _StartRideDecision.start),
+              icon: const Icon(Icons.play_arrow),
+              label: const Text('Start ride'),
+            ),
         ],
       ),
     );
-    if (confirmed ?? false) await widget.rideController.startRide();
+    if (decision == _StartRideDecision.chooseRoute) {
+      _requestRouteChange();
+      return;
+    }
+    if (decision == _StartRideDecision.start) {
+      await widget.rideController.startRide();
+    }
   }
 
   Future<void> _confirmLeaveRideFromMap() async {
@@ -2176,7 +2264,6 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   );
 
   Future<route_domain.GeoPoint?> _acquireCurrentPosition() async {
-    if (!widget.rideController.rideStarted) return null;
     final existing = _mapPosition.value;
     if (existing != null) return existing;
     final locationController = _locationController;

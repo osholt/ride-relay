@@ -282,12 +282,9 @@ void main() {
     await tester.tap(find.byKey(const Key('start-ride-button')));
     await tester.pumpAndSettle();
     expect(find.text('Start this ride?'), findsOneWidget);
-    expect(
-      find.textContaining('Live location sharing, route progress'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('No route is selected'), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('confirm-start-ride-button')));
+    await tester.tap(find.byKey(const Key('start-without-route-button')));
     await tester.pumpAndSettle();
 
     expect(controller.rideStarted, isTrue);

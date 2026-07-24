@@ -34,11 +34,27 @@ void main() {
                   'steps': [
                     {
                       'name': 'Gorse Lane',
+                      'driving_side': 'left',
                       'maneuver': {
-                        'type': 'turn',
-                        'modifier': 'left',
+                        'type': 'roundabout',
+                        'modifier': 'right',
+                        'exit': 3,
                         'location': [-2.386091, 51.452344],
                       },
+                      'intersections': [
+                        {
+                          'lanes': [
+                            {
+                              'indications': ['left'],
+                              'valid': false,
+                            },
+                            {
+                              'indications': ['straight', 'right'],
+                              'valid': true,
+                            },
+                          ],
+                        },
+                      ],
                     },
                     {
                       'name': 'London Road',
@@ -73,6 +89,14 @@ void main() {
     expect(result.maneuvers, hasLength(2));
     expect(result.maneuvers.first.requiresSecondBikeDrop, isTrue);
     expect(result.maneuvers.first.name, 'Gorse Lane');
+    expect(result.maneuvers.first.exitNumber, 3);
+    expect(result.maneuvers.first.drivingSide, 'left');
+    expect(result.maneuvers.first.lanes, hasLength(2));
+    expect(result.maneuvers.first.lanes.first.valid, isFalse);
+    expect(result.maneuvers.first.lanes.last.indications, [
+      'straight',
+      'right',
+    ]);
     expect(result.maneuvers.last.requiresSecondBikeDrop, isFalse);
   });
 

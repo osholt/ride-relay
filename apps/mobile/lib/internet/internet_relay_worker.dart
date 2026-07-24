@@ -240,7 +240,13 @@ class InternetRelayWorker {
     } on InternetRelayException catch (error) {
       if (!_isCurrent(generation, session)) return;
       _failureCount += 1;
-      nextDelay = _boundedRetryDelay(error.retryAfter);
+      final cursorExpired = error.code == 'invalid_cursor';
+      if (cursorExpired) {
+        await _cursorStore.clear(session.rideId);
+        nextDelay = Duration.zero;
+      } else {
+        nextDelay = _boundedRetryDelay(error.retryAfter);
+      }
       final phase = switch (error.code) {
         'update_required' => InternetRelayPhase.updateRequired,
         'server_upgrade_required' => InternetRelayPhase.serverUpgradeRequired,
@@ -257,7 +263,9 @@ class InternetRelayWorker {
       _emit(
         InternetRelayStatus(
           phase: phase,
-          message: error.message,
+          message: cursorExpired
+              ? 'Refreshing the ride history after a relay update'
+              : error.message,
           lastSuccessfulSync: _status.lastSuccessfulSync,
           nextAttemptAt: _clock().add(nextDelay),
           pendingEventCount: _status.pendingEventCount,
@@ -311,7 +319,9 @@ class InternetRelayWorker {
 
   void wake() {
     if (!_running || _closed) return;
-    if (_syncing || _timer != null) return;
+    if (_syncing) return;
+    _timer?.cancel();
+    _timer = null;
     unawaited(synchronizeNow());
   }
 

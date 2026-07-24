@@ -170,6 +170,74 @@ void main() {
     await worker.close();
   });
 
+  test(
+    'clears an expired cursor and replays the ride from the start',
+    () async {
+      final cursorStore = InMemoryInternetCursorStore();
+      await cursorStore.save(_session.rideId, 'expired');
+      final api = _ExpiredCursorApi();
+      final worker = InternetRelayWorker(
+        api: api,
+        eventStore: InMemoryEventStore(),
+        cursorStore: cursorStore,
+        pollInterval: const Duration(days: 1),
+      );
+      final recovered = worker.statuses.firstWhere(
+        (status) => status.phase == InternetRelayPhase.synced,
+      );
+
+      await worker.start(_session);
+      await recovered.timeout(const Duration(seconds: 1));
+
+      expect(api.cursors, ['expired', isNull]);
+      expect(await cursorStore.load(_session.rideId), 'fresh');
+      await worker.close();
+    },
+  );
+
+  test('wake interrupts a scheduled poll to upload a new event now', () async {
+    final eventStore = InMemoryEventStore();
+    final api = _FakeApi(
+      results: [
+        const InternetSyncResult(
+          cursor: 'cursor-1',
+          acceptedEventIds: {},
+          events: [],
+        ),
+        InternetSyncResult(
+          cursor: 'cursor-2',
+          acceptedEventIds: const {'start'},
+          events: const [],
+        ),
+      ],
+    );
+    final worker = InternetRelayWorker(
+      api: api,
+      eventStore: eventStore,
+      cursorStore: InMemoryInternetCursorStore(),
+      pollInterval: const Duration(days: 1),
+    );
+    final initialSync = worker.statuses.firstWhere(
+      (status) => status.phase == InternetRelayPhase.synced,
+    );
+
+    await worker.start(_session);
+    await initialSync.timeout(const Duration(seconds: 1));
+    await eventStore.append(
+      _event(id: 'start', type: RideEventType.rideStarted),
+    );
+    final upload = worker.statuses.firstWhere(
+      (status) =>
+          status.phase == InternetRelayPhase.synced && api.callCount == 2,
+    );
+
+    worker.wake();
+    await upload.timeout(const Duration(seconds: 1));
+
+    expect(api.uploads.last.map((event) => event.id), ['start']);
+    await worker.close();
+  });
+
   test('withholds capability-dependent events from a legacy relay', () async {
     final eventStore = InMemoryEventStore();
     await eventStore.append(_event(id: 'core'));
@@ -286,6 +354,39 @@ class _RecoveringApi implements InternetRelayApi {
     }
     return const InternetSyncResult(
       cursor: 'recovered',
+      acceptedEventIds: {},
+      events: [],
+    );
+  }
+
+  @override
+  void close() {}
+}
+
+class _ExpiredCursorApi implements InternetRelayApi {
+  final List<String?> cursors = [];
+
+  @override
+  InternetRelayConfiguration get configuration =>
+      InternetRelayConfiguration(baseUri: Uri.parse('https://relay.example'));
+
+  @override
+  Future<InternetSyncResult> synchronize({
+    required RideSession session,
+    required String? cursor,
+    required List<RideEvent> events,
+  }) async {
+    cursors.add(cursor);
+    if (cursor != null) {
+      throw const InternetRelayException(
+        'Invalid cursor',
+        retryable: true,
+        statusCode: 400,
+        code: 'invalid_cursor',
+      );
+    }
+    return const InternetSyncResult(
+      cursor: 'fresh',
       acceptedEventIds: {},
       events: [],
     );
