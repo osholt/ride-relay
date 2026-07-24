@@ -1,0 +1,67 @@
+name: Promote Android testing release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_code:
+        description: Existing Google Play version code to promote
+        required: true
+        type: string
+      source_track:
+        description: Existing Google Play source track
+        required: true
+        default: internal
+        type: choice
+        options:
+          - internal
+          - alpha
+          - beta
+      target_track:
+        description: Google Play target track
+        required: true
+        default: alpha
+        type: choice
+        options:
+          - alpha
+          - beta
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-testing-promotion
+  cancel-in-progress: false
+
+env:
+  FASTLANE_VERSION: 2.228.0
+  PACKAGE_NAME: app.tailendcharlie
+
+jobs:
+  promote:
+    name: Promote existing Android release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: android-internal
+    steps:
+      - name: Install Fastlane
+        run: gem install fastlane --version "$FASTLANE_VERSION" --no-document
+      - name: Promote release
+        env:
+          SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          SOURCE_TRACK: ${{ inputs.source_track }}
+          TARGET_TRACK: ${{ inputs.target_track }}
+          VERSION_CODE: ${{ inputs.version_code }}
+        run: |
+          set -euo pipefail
+          test -n "$SERVICE_ACCOUNT_JSON"
+          test -n "$VERSION_CODE"
+          json_key_path="$RUNNER_TEMP/play-service-account.json"
+          umask 077
+          printf '%s' "$SERVICE_ACCOUNT_JSON" > "$json_key_path"
+          fastlane supply \
+            --json_key "$json_key_path" \
+            --package_name "$PACKAGE_NAME" \
+            --track "$SOURCE_TRACK" \
+            --track_promote_to "$TARGET_TRACK" \
+            --track_promote_release_status completed \
+            --version_code "$VERSION_CODE"
