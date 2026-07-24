@@ -879,7 +879,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     top: landscape
                         ? statusTop
                         : leaderStatusTop +
-                              (widget.leaderStatus == null ? 24 : 96),
+                              (widget.leaderStatus == null
+                                  ? 24
+                                  : hideChrome
+                                  ? 52
+                                  : 96),
                     child: ValueListenableBuilder<List<MapOverlayMarker>>(
                       valueListenable: widget.overlayMarkers!,
                       builder: (context, overlays, _) {
@@ -5071,6 +5075,54 @@ class _TecGapCard extends StatelessWidget {
         : distance == null || eta == null
         ? '$name · last update ${_ageLabel(age)}'
         : '$name · ${MeasurementFormatter(distanceUnit).distance(distance)} · about ${_durationLabel(eta)}';
+    if (compact) {
+      final compactDetail = name == null
+          ? 'waiting for location'
+          : distance == null || eta == null
+          ? '$name · ${_ageLabel(age)}'
+          : '$name · ${MeasurementFormatter(distanceUnit).distance(distance)} · ~${_durationLabel(eta)}';
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 360),
+          child: Card(
+            key: const Key('leader-tec-gap'),
+            margin: EdgeInsets.zero,
+            color: const Color(0xE6252E39),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.two_wheeler,
+                    size: 18,
+                    color: Color(0xFF6ED89A),
+                  ),
+                  const SizedBox(width: 7),
+                  const Text(
+                    'TEC',
+                    style: TextStyle(
+                      color: Color(0xFFB7C2CF),
+                      fontWeight: FontWeight.w800,
+                      fontSize: 11,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      compactDetail,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     return Card(
       key: const Key('leader-tec-gap'),
       margin: EdgeInsets.zero,
