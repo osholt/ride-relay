@@ -208,6 +208,22 @@ class _RideMapFeatureState extends State<RideMapFeature> {
     _dependencies = _openDependencies();
   }
 
+  @override
+  void didUpdateWidget(RideMapFeature oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.routeStore, widget.routeStore) ||
+        !identical(oldWidget.offlineTileCache, widget.offlineTileCache) ||
+        oldWidget.mapStyleString != widget.mapStyleString ||
+        !identical(
+          oldWidget.mapLibreOfflineManager,
+          widget.mapLibreOfflineManager,
+        )) {
+      setState(() {
+        _dependencies = _openDependencies();
+      });
+    }
+  }
+
   Future<_MapDependencies> _openDependencies() async {
     // Supplying all three map dependencies keeps integration tests and
     // embedders independent of platform storage while production continues to
@@ -266,6 +282,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         return const Scaffold(body: Center(child: CircularProgressIndicator()));
       }
       return RideMapScreen(
+        key: ObjectKey(dependencies),
         routeStore: dependencies.store,
         routeImporter: RouteImporter(source: const SystemGpxImportSource()),
         offlineTileCache: dependencies.cache,
