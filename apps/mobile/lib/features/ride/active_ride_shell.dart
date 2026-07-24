@@ -1153,20 +1153,29 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     final simulatedLocal = simulatedRiders
         ?.where((rider) => rider.isLocal)
         .firstOrNull;
+    // The authoritative post-start location journal must not ingest a fix
+    // captured before the leader started the ride. The map can still retain
+    // that foreground-only fix while it waits for the first post-start
+    // movement sample, otherwise a stationary rider disappears and Follow me
+    // incorrectly looks like a permission failure.
+    final activeDeviceSample = _isSimulation
+        ? null
+        : _locationController?.activeSample;
+    final localMapSample = localLocation?.sample ?? activeDeviceSample;
     final mapPoint = simulatedLocal != null
         ? route_domain.GeoPoint(
             latitude: simulatedLocal.position.latitude,
             longitude: simulatedLocal.position.longitude,
           )
-        : localLocation == null
+        : localMapSample == null
         ? null
         : route_domain.GeoPoint(
-            latitude: localLocation.sample.position.latitude,
-            longitude: localLocation.sample.position.longitude,
-            recordedAt: localLocation.sample.recordedAt,
+            latitude: localMapSample.position.latitude,
+            longitude: localMapSample.position.longitude,
+            recordedAt: localMapSample.recordedAt,
           );
     final navigationRecordedAt = simulatedLocal == null
-        ? localLocation?.sample.recordedAt
+        ? localMapSample?.recordedAt
         : DateTime.now();
     if (updateNavigationPosition) {
       _mapNavigationPosition.value = mapPoint == null
@@ -1176,10 +1185,10 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
               recordedAt: navigationRecordedAt!,
               speedMetersPerSecond:
                   simulatedLocal?.speedMetersPerSecond ??
-                  localLocation!.sample.speedMetersPerSecond,
+                  localMapSample!.speedMetersPerSecond,
               headingDegrees:
                   simulatedLocal?.headingDegrees ??
-                  localLocation!.sample.headingDegrees,
+                  localMapSample!.headingDegrees,
             );
       _mapPosition.value = mapPoint;
     }
@@ -2280,6 +2289,10 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     _mapPosition.addListener(onPosition);
     try {
       await locationController.requestAndStart();
+      // requestAndStart can resume an already-active iOS stream whose latest
+      // fix has not changed far enough to trigger the 10 m distance filter.
+      // Rebuild the map from that retained fix instead of waiting for movement.
+      _updateMapOverlays();
       onPosition();
       if (!locationController.status.canSample && !completer.isCompleted) {
         return null;

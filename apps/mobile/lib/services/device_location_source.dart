@@ -218,14 +218,22 @@ class DeviceLocationSource {
         message: 'Location access is blocked in device settings.',
       ),
     ),
-    DeviceLocationPermission.whileInUse ||
-    DeviceLocationPermission.always => _emit(
-      DeviceLocationStatus(
-        state: DeviceLocationState.ready,
-        message: 'Location is available while the app is open.',
-        lastSample: _status.lastSample,
-      ),
-    ),
+    DeviceLocationPermission.whileInUse || DeviceLocationPermission.always =>
+      _positionSubscription != null
+          ? _emit(
+              DeviceLocationStatus(
+                state: DeviceLocationState.sampling,
+                message: 'Foreground location is active.',
+                lastSample: _status.lastSample,
+              ),
+            )
+          : _emit(
+              DeviceLocationStatus(
+                state: DeviceLocationState.ready,
+                message: 'Location is available while the app is open.',
+                lastSample: _status.lastSample,
+              ),
+            ),
   };
 
   DeviceLocationStatus _emit(DeviceLocationStatus status) {
