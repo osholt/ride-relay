@@ -7,3 +7,11 @@
 
 /admin-suggestions.html
   X-Robots-Tag: noindex, nofollow, noarchive
+
+/.well-known/apple-app-site-association
+  Content-Type: application/json
+  Cache-Control: public, max-age=3600
+
+/.well-known/assetlinks.json
+  Content-Type: application/json
+  Cache-Control: public, max-age=3600
