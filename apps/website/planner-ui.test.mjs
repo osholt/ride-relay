@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
@@ -8,6 +9,10 @@ const plannerCss = await readFile(
 );
 const plannerHtml = await readFile(
   new URL("./planner.html", import.meta.url),
+  "utf8",
+);
+const plannerJs = await readFile(
+  new URL("./planner.js", import.meta.url),
   "utf8",
 );
 
@@ -26,9 +31,17 @@ test("the enabled app-code action is visually distinct from disabled actions", (
   assert.notEqual(enabledRule.groups.body.trim(), disabledRule.groups.body.trim());
 });
 
-test("planner assets are versioned so deployed fixes replace cached copies", () => {
-  assert.match(plannerHtml, /href="\/planner\.css\?v=\d{8}-\d+"/);
-  assert.match(plannerHtml, /src="\/planner\.js\?v=\d{8}-\d+"/);
+test("planner asset versions match their content so deployed fixes replace cached copies", () => {
+  const version = (content) =>
+    createHash("sha256").update(content).digest("hex").slice(0, 8);
+  assert.match(
+    plannerHtml,
+    new RegExp(`href="/planner\\.css\\?v=${version(plannerCss)}"`),
+  );
+  assert.match(
+    plannerHtml,
+    new RegExp(`src="/planner\\.js\\?v=${version(plannerJs)}"`),
+  );
 });
 
 test("email route is a visible route action rather than a hidden result", () => {
