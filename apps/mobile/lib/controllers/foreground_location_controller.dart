@@ -20,6 +20,7 @@ class ForegroundLocationController extends ChangeNotifier {
 
   DeviceLocationStatus get status => _status;
   bool get sharing => status.state == DeviceLocationState.sampling;
+  LocationSample? get activeSample => sharing ? status.lastSample : null;
 
   Future<void> initialize() async {
     _statusSubscription ??= _source.statuses.listen(_handleStatus);

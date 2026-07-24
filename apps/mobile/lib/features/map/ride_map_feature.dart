@@ -1523,7 +1523,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
       final acquired = await widget.acquireCurrentPosition?.call();
       if (!mounted) return;
       if (acquired == null && _effectivePosition == null) {
-        _showMessage('Allow location access to use the close navigation view.');
+        _showMessage(
+          'Could not get your position. Check Location Services and '
+          'Tail End Charlie location access.',
+        );
         return;
       }
     }

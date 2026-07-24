@@ -66,6 +66,39 @@ void main() {
     },
   );
 
+  test(
+    'requesting access again preserves the active fix and one stream',
+    () async {
+      final platform = _FakeLocationPlatform(
+        permission: DeviceLocationPermission.whileInUse,
+      );
+      final source = DeviceLocationSource(platform);
+      final controller = ForegroundLocationController(source, (_) async {});
+      await controller.initialize();
+      await controller.requestAndStart();
+
+      platform.positions.add(_sample);
+      await source.statuses.firstWhere(
+        (status) => status.lastSample == _sample,
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.sharing, isTrue);
+      expect(controller.activeSample, _sample);
+      await controller.requestAndStart();
+
+      expect(controller.sharing, isTrue);
+      expect(controller.activeSample, _sample);
+      expect(platform.streamRequests, 1);
+
+      await controller.stop();
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.activeSample, isNull);
+      controller.dispose();
+      await platform.dispose();
+    },
+  );
+
   test('disabled service is surfaced and stream is not started', () async {
     final platform = _FakeLocationPlatform(serviceEnabled: false);
     final source = DeviceLocationSource(platform);

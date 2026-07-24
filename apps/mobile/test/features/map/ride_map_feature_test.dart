@@ -265,6 +265,40 @@ void main() {
     expect(committed, isEmpty);
   });
 
+  testWidgets('follow me does not misreport a missing fix as denied access', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-follow-location-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final route = _testRoute(id: 'follow', name: 'Follow route');
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: _RecordingRouteStore(route),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          acquireCurrentPosition: () async => null,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('navigation-follow-button')));
+    await tester.pump();
+
+    expect(find.textContaining('Check Location Services'), findsOneWidget);
+    expect(find.textContaining('Allow location access'), findsNothing);
+  });
+
   testWidgets('editing recalculates before one confirmed route is saved', (
     tester,
   ) async {
