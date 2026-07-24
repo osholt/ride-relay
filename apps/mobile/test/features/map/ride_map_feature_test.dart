@@ -94,6 +94,84 @@ void main() {
     expect(find.text('3 RIDERS'), findsOneWidget);
   });
 
+  testWidgets('turn guidance reduces the TEC gap to a single-line chip', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-compact-tec-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final route = ImportedRoute(
+      id: 'guided',
+      name: 'Guided route',
+      importedAt: DateTime.utc(2026, 7, 24),
+      sourceFileName: 'guided.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 51.45, longitude: -2.59),
+            GeoPoint(latitude: 51.451, longitude: -2.58),
+          ],
+        ),
+      ],
+      waypoints: const [],
+      maneuvers: const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 51.451, longitude: -2.58),
+          type: 'turn',
+          modifier: 'right',
+        ),
+      ],
+    );
+    final navigation = ValueNotifier(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 51.45, longitude: -2.59),
+        recordedAt: DateTime.utc(2026, 7, 24, 12),
+        speedMetersPerSecond: 10,
+        headingDegrees: 90,
+      ),
+    );
+    final leaderStatus = ValueNotifier<LeaderRideStatus?>(
+      const LeaderRideStatus(
+        tecName: 'Charlie',
+        distanceToTecMeters: 3200,
+        estimatedTimeToTec: Duration(minutes: 4),
+        offCourseAlerts: [],
+      ),
+    );
+    addTearDown(navigation.dispose);
+    addTearDown(leaderStatus.dispose);
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(route),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          leaderStatus: leaderStatus,
+          distanceUnit: DistanceUnit.miles,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final chip = find.byKey(const Key('leader-tec-gap'));
+    expect(chip, findsOneWidget);
+    expect(find.text('TEC GAP'), findsNothing);
+    expect(find.text('TEC'), findsOneWidget);
+    expect(find.textContaining('Charlie · 2.0 mi · ~4 min'), findsOneWidget);
+    expect(tester.getSize(chip).height, lessThanOrEqualTo(44));
+    expect(tester.getSize(chip).width, lessThanOrEqualTo(360));
+  });
+
   testWidgets('offers file import and loads bundled demo route offline', (
     tester,
   ) async {
@@ -152,7 +230,8 @@ void main() {
     expect(find.text('Import GPX'), findsOneWidget);
     expect(find.text('ROUTE-ONLY OFFLINE MAP'), findsOneWidget);
     expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
-    expect(find.text('TEC GAP'), findsOneWidget);
+    expect(find.byKey(const Key('leader-tec-gap')), findsOneWidget);
+    expect(find.text('TEC'), findsOneWidget);
     expect(find.textContaining('Alex is clearly off course'), findsOneWidget);
     expect(find.textContaining('2.0 mi'), findsOneWidget);
     expect(find.textContaining('0.1 mi'), findsOneWidget);

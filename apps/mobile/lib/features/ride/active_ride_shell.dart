@@ -442,7 +442,8 @@ class _PreStartRidePanel extends StatelessWidget {
 
 enum _StartRideDecision { cancel, chooseRoute, start }
 
-class _ActiveRideShellState extends State<ActiveRideShell> {
+class _ActiveRideShellState extends State<ActiveRideShell>
+    with WidgetsBindingObserver {
   final _mapPosition = ValueNotifier<route_domain.GeoPoint?>(null);
   final _mapNavigationPosition = ValueNotifier<MapNavigationPosition?>(null);
   final _mapOverlays = ValueNotifier<List<MapOverlayMarker>>(const []);
@@ -502,6 +503,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _screenAwakeCoordinator = RideScreenAwakeCoordinator(
       wakeLock: widget.screenWakeLock,
       reassertInterval: widget.screenWakeReassertInterval,
@@ -661,8 +663,21 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
             await awareness.recordLocalLocation(sample);
           }
         },
+        onSampleError: (error, stackTrace) {
+          if (kDebugMode) {
+            debugPrint(
+              'Could not persist a location update; continuing: '
+              '$error\n$stackTrace',
+            );
+          }
+          final added = _warnings.add(
+            'A location update could not be saved. Live GPS is continuing.',
+          );
+          if (added && mounted) setState(() {});
+        },
       );
       _locationController = locationController;
+      locationController.addListener(_onDeviceLocationChanged);
       try {
         await locationController.initialize();
       } on Object catch (error) {
@@ -1181,7 +1196,10 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     final activeDeviceSample = _isSimulation
         ? null
         : _locationController?.activeSample;
-    final localMapSample = localLocation?.sample ?? activeDeviceSample;
+    final localMapSample = _newestLocationSample(
+      localLocation?.sample,
+      activeDeviceSample,
+    );
     final mapPoint = simulatedLocal != null
         ? route_domain.GeoPoint(
             latitude: simulatedLocal.position.latitude,
@@ -1596,6 +1614,20 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   void _onPreStartPresenceChanged() {
     if (!mounted || widget.rideController.rideStarted) return;
     _updateMapOverlays();
+  }
+
+  void _onDeviceLocationChanged() {
+    if (!mounted) return;
+    // The foreground map follows the newest device fix even if writing that
+    // sample to the durable ride journal is briefly delayed or fails. Only
+    // the journal feeds trails, summaries and GPX recording.
+    _updateMapOverlays(updateDerivedState: false, updateOverlayMarkers: false);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    unawaited(_locationController?.restartAfterForegroundResume());
   }
 
   void _schedulePublish() {
@@ -2375,6 +2407,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     unawaited(_screenAwakeCoordinator.stop());
     widget.rideController.removeListener(_onRideControllerChanged);
     widget.sharedRoutes.removeListener(_onSharedRoutesChanged);
@@ -2389,6 +2422,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     unawaited(_pushOpenSubscription?.cancel());
     _stalenessTimer?.cancel();
     _markerExitChromeTimer?.cancel();
+    _locationController?.removeListener(_onDeviceLocationChanged);
     _locationController?.dispose();
     unawaited(_relayController?.close());
     unawaited(_internetRelayController?.close());
@@ -2406,4 +2440,15 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     unawaited(_carPlayBridge?.dispose());
     super.dispose();
   }
+}
+
+LocationSample? _newestLocationSample(
+  LocationSample? journalSample,
+  LocationSample? deviceSample,
+) {
+  if (journalSample == null) return deviceSample;
+  if (deviceSample == null) return journalSample;
+  return deviceSample.recordedAt.isAfter(journalSample.recordedAt)
+      ? deviceSample
+      : journalSample;
 }
