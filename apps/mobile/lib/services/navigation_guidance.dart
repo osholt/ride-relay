@@ -6,10 +6,16 @@ class NavigationGuidance {
   const NavigationGuidance({
     required this.maneuver,
     required this.distanceMeters,
+    this.followingManeuver,
+    this.followingDistanceMeters,
   });
 
   final RouteManeuver maneuver;
   final double distanceMeters;
+  final RouteManeuver? followingManeuver;
+
+  /// Distance from the first manoeuvre to a closely following manoeuvre.
+  final double? followingDistanceMeters;
 
   String get roadLabel {
     final name = maneuver.name?.trim();
@@ -33,11 +39,13 @@ class NavigationGuidancePlanner {
     this.maximumDistanceFromRouteMeters = 150,
     this.passedToleranceMeters = 25,
     this.maximumAdvanceDistanceMeters = 5000,
+    this.closeManeuverSpacingMeters = 300,
   });
 
   final double maximumDistanceFromRouteMeters;
   final double passedToleranceMeters;
   final double maximumAdvanceDistanceMeters;
+  final double closeManeuverSpacingMeters;
 
   NavigationGuidance? plan({
     required ImportedRoute? route,
@@ -57,7 +65,7 @@ class NavigationGuidancePlanner {
       return null;
     }
 
-    ({RouteManeuver maneuver, double remaining})? next;
+    final candidates = <({RouteManeuver maneuver, double remaining})>[];
     for (final maneuver in route.maneuvers) {
       if (!_isGuidanceInstruction(maneuver.type)) continue;
       final projection = _project(maneuver.position, path);
@@ -67,14 +75,28 @@ class NavigationGuidancePlanner {
           remaining > maximumAdvanceDistanceMeters) {
         continue;
       }
-      if (next == null || remaining < next.remaining) {
-        next = (maneuver: maneuver, remaining: remaining);
-      }
+      candidates.add((maneuver: maneuver, remaining: remaining));
     }
-    if (next == null) return null;
+    if (candidates.isEmpty) return null;
+    candidates.sort(
+      (first, second) => first.remaining.compareTo(second.remaining),
+    );
+    final next = candidates.first;
+    final following = candidates.length < 2 ? null : candidates[1];
+    final followingSpacing = following == null
+        ? null
+        : following.remaining - next.remaining;
+    final showFollowing =
+        following != null &&
+        followingSpacing! >= 0 &&
+        followingSpacing <= closeManeuverSpacingMeters;
     return NavigationGuidance(
       maneuver: next.maneuver,
       distanceMeters: math.max(0, next.remaining),
+      followingManeuver: showFollowing ? following.maneuver : null,
+      followingDistanceMeters: showFollowing
+          ? math.max(0, followingSpacing)
+          : null,
     );
   }
 }

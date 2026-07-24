@@ -744,7 +744,7 @@ class HttpInternetRelayClient
   ) {
     final status = response.statusCode;
     final unauthorized = status == 401 || status == 403;
-    final retryable = status == 408 || status == 429 || status >= 500;
+    var retryable = status == 408 || status == 429 || status >= 500;
     String? code;
     String? serverMessage;
     Uri? actionUrl;
@@ -752,8 +752,13 @@ class HttpInternetRelayClient
       final decoded = jsonDecode(utf8.decode(responseBytes));
       if (decoded is Map) {
         code = decoded['code'] as String?;
-        serverMessage = decoded['message'] as String?;
+        serverMessage =
+            decoded['message'] as String? ?? decoded['error'] as String?;
         actionUrl = Uri.tryParse(decoded['updateUrl'] as String? ?? '');
+        if (status == 400 && serverMessage == 'Invalid cursor') {
+          code = 'invalid_cursor';
+          retryable = true;
+        }
       }
     } on Object {
       // A bounded but invalid error body falls back to the safe status text.

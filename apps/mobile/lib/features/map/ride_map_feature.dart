@@ -37,6 +37,7 @@ import '../../services/offline_tile_cache.dart';
 import '../../services/road_routing.dart';
 import '../../services/route_geometry_enricher.dart';
 import '../../services/route_importer.dart';
+import '../../services/route_marker_plan.dart';
 import '../../services/route_progress.dart';
 import '../../services/trail_direction_arrows.dart';
 import 'destination_route_sheet.dart';
@@ -86,6 +87,7 @@ class RideMapFeature extends StatefulWidget {
     this.onLeaveRide,
     this.onOpenRideMenu,
     this.onRouteChanged,
+    this.onRouteCommitted,
     this.changeRouteRequestToken,
     this.onChangeRouteRequestHandled,
     this.pendingSharedGpxFile,
@@ -119,6 +121,7 @@ class RideMapFeature extends StatefulWidget {
     Future<void> Function()? onLeaveRide,
     Future<void> Function()? onOpenRideMenu,
     ValueChanged<ImportedRoute?>? onRouteChanged,
+    ValueChanged<ImportedRoute?>? onRouteCommitted,
     Object? changeRouteRequestToken,
     VoidCallback? onChangeRouteRequestHandled,
     PickedGpxFile? pendingSharedGpxFile,
@@ -146,6 +149,7 @@ class RideMapFeature extends StatefulWidget {
     onLeaveRide: onLeaveRide,
     onOpenRideMenu: onOpenRideMenu,
     onRouteChanged: onRouteChanged,
+    onRouteCommitted: onRouteCommitted,
     changeRouteRequestToken: changeRouteRequestToken,
     onChangeRouteRequestHandled: onChangeRouteRequestHandled,
     pendingSharedGpxFile: pendingSharedGpxFile,
@@ -175,6 +179,7 @@ class RideMapFeature extends StatefulWidget {
   final Future<void> Function()? onLeaveRide;
   final Future<void> Function()? onOpenRideMenu;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
+  final ValueChanged<ImportedRoute?>? onRouteCommitted;
   final Object? changeRouteRequestToken;
   final VoidCallback? onChangeRouteRequestHandled;
   final PickedGpxFile? pendingSharedGpxFile;
@@ -283,6 +288,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         onOpenRideMenu: widget.onOpenRideMenu,
         canEditRoute: widget.canEditRoute,
         onRouteChanged: widget.onRouteChanged,
+        onRouteCommitted: widget.onRouteCommitted,
         changeRouteRequestToken: widget.changeRouteRequestToken,
         onChangeRouteRequestHandled: widget.onChangeRouteRequestHandled,
         pendingSharedGpxFile: widget.pendingSharedGpxFile,
@@ -336,6 +342,7 @@ class RideMapScreen extends StatefulWidget {
     this.onOpenRideMenu,
     this.canEditRoute = true,
     this.onRouteChanged,
+    this.onRouteCommitted,
     this.changeRouteRequestToken,
     this.onChangeRouteRequestHandled,
     this.pendingSharedGpxFile,
@@ -373,6 +380,7 @@ class RideMapScreen extends StatefulWidget {
   final Future<void> Function()? onOpenRideMenu;
   final bool canEditRoute;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
+  final ValueChanged<ImportedRoute?>? onRouteCommitted;
   final Object? changeRouteRequestToken;
   final VoidCallback? onChangeRouteRequestHandled;
   final PickedGpxFile? pendingSharedGpxFile;
@@ -399,6 +407,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   static const _waypointSource = 'ride-relay-waypoints';
   static const _positionSource = 'ride-relay-position';
   static const _overlaySource = 'ride-relay-overlays';
+  static const _markerPlanSource = 'ride-relay-marker-plan';
   static const _trailDirectionArrowImage = 'ride-relay-trail-direction-arrow';
   static const _trailDirectionArrowSampler = TrailDirectionArrowSampler();
   static const _navigationGuidancePlanner = NavigationGuidancePlanner();
@@ -429,6 +438,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   bool _navigationMode = false;
   bool _navigationCanvasActive = false;
   bool _markerOverviewVisible = false;
+  bool _markerPlanVisible = false;
   bool _autoFollowSuppressed = false;
   bool _emergencyAlertSending = false;
   bool _emergencyAlertSent = false;
@@ -460,6 +470,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
   final Set<MotorcycleDiscoveryCategory> _enabledDiscoveryCategories = {};
 
   BasemapConfiguration get _basemap => widget.offlineTileCache.configuration;
+
+  RouteMarkerPlan get _markerPlan => _route == null
+      ? const RouteMarkerPlan(points: [])
+      : const RouteMarkerPlanAnalyzer().analyze(_route!);
 
   DestinationRoutePlanner get _destinationRoutePlanner =>
       widget.destinationRoutePlanner ?? _defaultDestinationRoutePlanner;
@@ -639,7 +653,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
         : overlayRight + (landscape ? 68 : 12);
     final statusTop = overlayTop + (_downloadProgress == null ? 8 : 72);
     final hasGuidance = _route?.maneuvers.isNotEmpty ?? false;
-    final guidanceOffset = hasGuidance ? (landscape ? 62.0 : 74.0) : 0.0;
+    // Guidance can include lane arrows and a closely following turn. Reserve
+    // enough overlay space so the leader status and group mini-map never
+    // cover those safety-critical lines.
+    final guidanceOffset = hasGuidance ? (landscape ? 112.0 : 136.0) : 0.0;
     final leaderStatusTop = statusTop + guidanceOffset;
     final emergencyBottom =
         overlayBottom + (markerOverviewActive && !landscape ? 254.0 : 54.0);
@@ -726,6 +743,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       value: _MapAction.discoveryLayers,
                       child: Text('Motorcycle discovery layers'),
                     ),
+                    if (_route?.maneuvers.isNotEmpty ?? false)
+                      PopupMenuItem(
+                        value: _MapAction.markerPlan,
+                        child: Text(
+                          _markerPlanVisible
+                              ? 'Hide marker plan'
+                              : 'Show marker plan',
+                        ),
+                      ),
                     if (_route != null)
                       PopupMenuItem(
                         value: _MapAction.downloadOffline,
@@ -843,10 +869,17 @@ class _RideMapScreenState extends State<RideMapScreen> {
                         final groupRiders = overlays
                             .where((marker) => marker.id.startsWith('rider-'))
                             .toList(growable: false);
-                        final groupSize =
-                            widget.groupRiderCount ??
+                        final inferredGroupSize =
                             groupRiders.length +
-                                (_effectivePosition == null ? 0 : 1);
+                            (_effectivePosition == null ? 0 : 1);
+                        // The participant count is a snapshot supplied by the
+                        // ride shell, while rider overlays are live. Taking
+                        // only the snapshot left the iOS mini-map hidden when
+                        // it still said "1" after remote positions arrived.
+                        final groupSize = math.max(
+                          widget.groupRiderCount ?? 0,
+                          inferredGroupSize,
+                        );
                         if (groupSize <= 1) return const SizedBox.shrink();
                         return _GroupMiniMap(
                           width: groupMiniMapWidth,
@@ -1140,6 +1173,48 @@ class _RideMapScreenState extends State<RideMapScreen> {
                         Icons.location_on,
                         color: Color(0xFFFFC857),
                         size: 36,
+                      ),
+                    ),
+                  ),
+                )
+                .toList(growable: false),
+          ),
+        if (_markerPlanVisible && _markerPlan.points.isNotEmpty)
+          MarkerLayer(
+            key: const Key('ride-marker-plan-layer'),
+            markers: _markerPlan.points
+                .take(500)
+                .map(
+                  (point) => Marker(
+                    point: _latLng(point.position),
+                    width: 38,
+                    height: 38,
+                    child: Tooltip(
+                      message: point.label,
+                      child: Icon(
+                        switch (point.kind) {
+                          MarkerPlanPointKind.likelyMarker =>
+                            Icons.person_pin_circle_outlined,
+                          MarkerPlanPointKind.safetyReview =>
+                            Icons.warning_amber_rounded,
+                          MarkerPlanPointKind.musterPoint =>
+                            Icons.groups_2_outlined,
+                        },
+                        color: switch (point.kind) {
+                          MarkerPlanPointKind.likelyMarker => const Color(
+                            0xFF6ED89A,
+                          ),
+                          MarkerPlanPointKind.safetyReview => const Color(
+                            0xFFFF8A4C,
+                          ),
+                          MarkerPlanPointKind.musterPoint => const Color(
+                            0xFF68A9FF,
+                          ),
+                        },
+                        size: 32,
+                        shadows: const [
+                          Shadow(color: Color(0xFF10151C), blurRadius: 4),
+                        ],
                       ),
                     ),
                   ),
@@ -1893,6 +1968,29 @@ class _RideMapScreenState extends State<RideMapScreen> {
           circleStrokeColor: '#10151C',
         ),
       );
+      await controller.addGeoJsonSource(
+        _markerPlanSource,
+        _markerPlanGeoJson(),
+      );
+      await controller.addCircleLayer(
+        _markerPlanSource,
+        'ride-relay-marker-plan-points',
+        const ml.CircleLayerProperties(
+          circleRadius: [
+            'case',
+            [
+              '==',
+              ['get', 'kind'],
+              'safety',
+            ],
+            9,
+            7,
+          ],
+          circleColor: ['get', 'color'],
+          circleStrokeWidth: 3,
+          circleStrokeColor: '#10151C',
+        ),
+      );
       await controller.addGeoJsonSource(_positionSource, _positionGeoJson());
       await controller.addCircleLayer(
         _positionSource,
@@ -1988,6 +2086,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _trailDirectionArrowGeoJson(),
       );
       await controller.setGeoJsonSource(_waypointSource, _waypointGeoJson());
+      await controller.setGeoJsonSource(
+        _markerPlanSource,
+        _markerPlanGeoJson(),
+      );
       await controller.setGeoJsonSource(_positionSource, _positionGeoJson());
       await controller.setGeoJsonSource(_overlaySource, _overlayGeoJson());
     } on Object catch (error) {
@@ -2053,6 +2155,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
         await controller.setGeoJsonSource(
           _offRouteTraceSource,
           _offRouteTraceGeoJson(),
+        );
+        await controller.setGeoJsonSource(
+          _markerPlanSource,
+          _markerPlanGeoJson(),
         );
         await controller.setGeoJsonSource(_overlaySource, _overlayGeoJson());
       }
@@ -2217,6 +2323,30 @@ class _RideMapScreenState extends State<RideMapScreen> {
         const <MapGeoJsonPoint>[],
   );
 
+  Map<String, dynamic> _markerPlanGeoJson() => MapGeoJson.points(
+    _markerPlanVisible
+        ? _markerPlan.points.map(
+            (point) => MapGeoJsonPoint(
+              id: point.id,
+              point: point.position,
+              properties: {
+                'label': point.label,
+                'kind': switch (point.kind) {
+                  MarkerPlanPointKind.likelyMarker => 'marker',
+                  MarkerPlanPointKind.safetyReview => 'safety',
+                  MarkerPlanPointKind.musterPoint => 'muster',
+                },
+                'color': switch (point.kind) {
+                  MarkerPlanPointKind.likelyMarker => '#6ED89A',
+                  MarkerPlanPointKind.safetyReview => '#FF8A4C',
+                  MarkerPlanPointKind.musterPoint => '#68A9FF',
+                },
+              },
+            ),
+          )
+        : const <MapGeoJsonPoint>[],
+  );
+
   Map<String, dynamic> _positionGeoJson() {
     final point = _effectivePosition;
     return MapGeoJson.points(
@@ -2255,6 +2385,19 @@ class _RideMapScreenState extends State<RideMapScreen> {
           .where((feature) => feature.id == id)
           .firstOrNull;
       if (feature != null) _showDiscoveryFeature(feature);
+      return;
+    }
+    if (layerId == 'ride-relay-marker-plan-points') {
+      final point = _markerPlan.points
+          .where((item) => item.id == id)
+          .firstOrNull;
+      if (point != null) {
+        _showMessage(
+          point.detail == null
+              ? point.label
+              : '${point.label}: ${point.detail}',
+        );
+      }
       return;
     }
     if (layerId != 'ride-relay-overlay-icons' &&
@@ -2546,6 +2689,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _fitRoute();
     if (_navigationMode) unawaited(_followNavigationCamera());
     widget.onRouteChanged?.call(activeRoute);
+    widget.onRouteCommitted?.call(activeRoute);
     _showMessage(
       '${activeRoute.name}: confirmed and stored offline '
       '(${activeRoute.pathPointCount} points).',
@@ -3065,6 +3209,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
         await _loadDemoRoute();
       case _MapAction.discoveryLayers:
         await _showDiscoveryLayersSheet();
+      case _MapAction.markerPlan:
+        setState(() => _markerPlanVisible = !_markerPlanVisible);
+        _scheduleMapLibreSync(overlays: true);
       case _MapAction.downloadOffline:
         await _downloadOfflineMap();
       case _MapAction.removeRoute:
@@ -3077,11 +3224,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
             _progressGeometry = const RouteProgressGeometry.empty();
             _navigationMode = false;
             _navigationCanvasActive = false;
+            _markerPlanVisible = false;
             _initialCameraPositioned = false;
           });
           _navigationGuidance.value = null;
           await _syncMapLibreSources();
           widget.onRouteChanged?.call(null);
+          widget.onRouteCommitted?.call(null);
         }
       case _MapAction.clearOfflineTiles:
         await _mapLibreOfflineManager.clearAll();
@@ -3244,6 +3393,7 @@ enum _MapAction {
   importGpx,
   loadDemo,
   discoveryLayers,
+  markerPlan,
   downloadOffline,
   removeRoute,
   clearOfflineTiles,
@@ -4531,11 +4681,23 @@ class _NavigationGuidanceBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final distance = MeasurementFormatter(
-      distanceUnit,
-    ).distance(guidance.distanceMeters);
+    final formatter = MeasurementFormatter(distanceUnit);
+    final distance = formatter.distance(guidance.distanceMeters);
     final instruction = _maneuverInstruction(guidance.maneuver);
-    final semanticLabel = '$instruction in $distance. ${guidance.roadLabel}';
+    final following = guidance.followingManeuver;
+    final followingInstruction = following == null
+        ? null
+        : _maneuverInstruction(following);
+    final followingDistance = guidance.followingDistanceMeters == null
+        ? null
+        : formatter.distance(guidance.followingDistanceMeters!);
+    final semanticLabel = [
+      '$instruction in $distance.',
+      if (guidance.maneuver.lanes.isNotEmpty) 'Lane guidance is shown.',
+      if (followingInstruction != null)
+        'Then $followingInstruction${followingDistance == null ? '' : ' after $followingDistance'}.',
+      guidance.roadLabel,
+    ].join(' ');
     return Semantics(
       key: const Key('navigation-guidance-banner'),
       container: true,
@@ -4578,13 +4740,48 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                     children: [
                       Text(
                         '$distance · $instruction',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        maxLines: 2,
+                        softWrap: true,
                         style: TextStyle(
                           fontSize: compact ? 14 : 16,
                           fontWeight: FontWeight.w900,
                         ),
                       ),
+                      if (guidance.maneuver.lanes.isNotEmpty) ...[
+                        const SizedBox(height: 5),
+                        _LaneGuidance(
+                          lanes: guidance.maneuver.lanes,
+                          compact: compact,
+                        ),
+                      ],
+                      if (followingInstruction != null) ...[
+                        const SizedBox(height: 5),
+                        Row(
+                          key: const Key('following-maneuver'),
+                          children: [
+                            Icon(
+                              _maneuverIcon(following!),
+                              size: compact ? 17 : 19,
+                              color: const Color(0xFFFFC857),
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                'Then'
+                                '${followingDistance == null ? '' : ' in $followingDistance'} · '
+                                '$followingInstruction',
+                                maxLines: 2,
+                                softWrap: true,
+                                style: TextStyle(
+                                  fontSize: compact ? 12 : 13,
+                                  fontWeight: FontWeight.w800,
+                                  color: const Color(0xFFFFD77D),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                       Text(
                         guidance.roadLabel,
                         maxLines: 1,
@@ -4603,14 +4800,61 @@ class _NavigationGuidanceBanner extends StatelessWidget {
   }
 }
 
+class _LaneGuidance extends StatelessWidget {
+  const _LaneGuidance({required this.lanes, required this.compact});
+
+  final List<RouteLane> lanes;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    key: const Key('lane-guidance'),
+    label: _laneSemanticLabel(lanes),
+    excludeSemantics: true,
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final lane in lanes.take(6)) ...[
+          Container(
+            width: compact ? 25 : 29,
+            height: compact ? 25 : 29,
+            decoration: BoxDecoration(
+              color: lane.valid
+                  ? const Color(0xFF225C45)
+                  : const Color(0xFF303A46),
+              borderRadius: BorderRadius.circular(5),
+              border: Border.all(
+                color: lane.valid
+                    ? const Color(0xFF6ED89A)
+                    : const Color(0xFF596574),
+              ),
+            ),
+            child: Icon(
+              _laneIcon(lane.indications),
+              size: compact ? 17 : 20,
+              color: lane.valid
+                  ? const Color(0xFFE8FFF2)
+                  : const Color(0xFF818C99),
+            ),
+          ),
+          const SizedBox(width: 4),
+        ],
+      ],
+    ),
+  );
+}
+
 IconData _maneuverIcon(RouteManeuver maneuver) {
   final type = maneuver.type.toLowerCase();
   final modifier = maneuver.modifier?.toLowerCase() ?? '';
   if (type == 'arrive') return Icons.flag;
   if (type == 'roundabout' || type == 'rotary') {
-    return modifier.contains('right')
-        ? Icons.roundabout_right
-        : Icons.roundabout_left;
+    final drivingSide = maneuver.drivingSide?.toLowerCase();
+    if (drivingSide == 'left') return Icons.roundabout_left;
+    if (drivingSide == 'right') return Icons.roundabout_right;
+    return modifier.contains('left')
+        ? Icons.roundabout_left
+        : Icons.roundabout_right;
   }
   if (type == 'merge') return Icons.merge;
   if (type == 'fork') return Icons.call_split;
@@ -4629,6 +4873,11 @@ String _maneuverInstruction(RouteManeuver maneuver) {
   final modifier = maneuver.modifier?.toLowerCase() ?? '';
   if (type == 'arrive') return 'Arrive';
   if (type == 'roundabout' || type == 'rotary') {
+    final exit = maneuver.exitNumber;
+    final direction = modifier.isEmpty || modifier == 'straight'
+        ? ''
+        : ' $modifier';
+    if (exit != null && exit > 0) return 'Take exit $exit$direction';
     return modifier.isEmpty || modifier == 'straight'
         ? 'Continue at roundabout'
         : 'At roundabout, bear $modifier';
@@ -4644,6 +4893,45 @@ String _maneuverInstruction(RouteManeuver maneuver) {
   }
   if (modifier == 'straight' || modifier.isEmpty) return 'Continue straight';
   return 'Turn $modifier';
+}
+
+IconData _laneIcon(List<String> indications) {
+  final normalized = indications.map((value) => value.toLowerCase()).toSet();
+  if (normalized.any((value) => value.contains('uturn'))) {
+    return normalized.any((value) => value.contains('right'))
+        ? Icons.u_turn_right
+        : Icons.u_turn_left;
+  }
+  if (normalized.any((value) => value.contains('sharp left'))) {
+    return Icons.turn_sharp_left;
+  }
+  if (normalized.any((value) => value.contains('sharp right'))) {
+    return Icons.turn_sharp_right;
+  }
+  if (normalized.any((value) => value.contains('slight left'))) {
+    return Icons.turn_slight_left;
+  }
+  if (normalized.any((value) => value.contains('slight right'))) {
+    return Icons.turn_slight_right;
+  }
+  if (normalized.any((value) => value == 'left')) return Icons.turn_left;
+  if (normalized.any((value) => value == 'right')) return Icons.turn_right;
+  return Icons.straight;
+}
+
+String _laneSemanticLabel(List<RouteLane> lanes) {
+  final valid = <String>[];
+  for (var index = 0; index < lanes.length; index += 1) {
+    final lane = lanes[index];
+    if (!lane.valid) continue;
+    final direction = lane.indications.isEmpty
+        ? 'continue'
+        : lane.indications.join(' or ');
+    valid.add('lane ${index + 1}: $direction');
+  }
+  return valid.isEmpty
+      ? 'No recommended lane supplied'
+      : 'Use ${valid.join(', ')}';
 }
 
 class _LeaderMapStatus extends StatelessWidget {

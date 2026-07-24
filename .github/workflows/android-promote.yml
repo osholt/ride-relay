@@ -69,4 +69,5 @@ jobs:
             --track "$SOURCE_TRACK" \
             --track_promote_to "$TARGET_TRACK" \
             --track_promote_release_status completed \
+            --deactivate_on_promote false \
             --version_code "$VERSION_CODE"

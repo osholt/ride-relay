@@ -58,6 +58,11 @@ void main() {
           type: 'turn',
           modifier: 'left',
         ),
+        RouteManeuver(
+          position: GeoPoint(latitude: 52.005, longitude: -3.005),
+          type: 'off ramp',
+          modifier: 'left',
+        ),
       ],
     );
 
@@ -75,6 +80,9 @@ void main() {
     final layer = tester.widget<PolylineLayer>(find.byType(PolylineLayer));
     expect(layer.polylines, hasLength(2));
     expect(find.text('Visual turn-by-turn ready'), findsOneWidget);
+    expect(find.text('1 likely marker position'), findsOneWidget);
+    expect(find.text('1 junction safety review'), findsOneWidget);
+    expect(find.byKey(const Key('route-review-marker-plan')), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('Destination'),
       160,

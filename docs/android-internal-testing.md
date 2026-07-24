@@ -1,7 +1,7 @@
 # Android internal testing
 
-Tail End Charlie's Android beta channel is Google Play's `internal` testing
-track, fed by a manual `Android internal testing` GitHub Actions workflow -
+Tail End Charlie's immediate Android beta channel is Google Play's `internal`
+testing track, fed by a manual `Android internal testing` GitHub Actions workflow -
 the Android equivalent of [the TestFlight workflow](./server-runbook.md).
 
 ## One-time external setup
@@ -66,6 +66,13 @@ Version codes come from `inputs.build_number` or, by default,
 `github.run_number` - the same monotonic-by-construction source the
 TestFlight workflow uses for iOS build numbers, so they never collide or go
 backwards.
+
+The optional `Promote Android testing release` workflow copies an existing
+version from `internal` to a closed `alpha` or `beta` track. Promotion must
+leave the source release active: the existing internal cohort and a closed
+tester group can be configured independently, and removing the internal
+release can otherwise leave those testers with no available update even
+though the promotion workflow succeeded.
 
 ## Triggering a beta
 

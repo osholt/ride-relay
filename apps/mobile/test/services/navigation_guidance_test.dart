@@ -86,6 +86,49 @@ void main() {
     expect(guidance?.maneuver.type, 'turn');
     expect(guidance?.roadLabel, 'A420');
   });
+
+  test('includes a second manoeuvre when turns are close together', () {
+    final route = ImportedRoute(
+      id: 'close-turns',
+      name: 'Close turns',
+      importedAt: DateTime.utc(2026, 7, 24),
+      sourceFileName: 'close-turns.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 0, longitude: 0),
+            GeoPoint(latitude: 0, longitude: 0.003),
+          ],
+        ),
+      ],
+      waypoints: const [],
+      maneuvers: const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 0, longitude: 0.001),
+          type: 'turn',
+          modifier: 'left',
+          name: 'First turn',
+        ),
+        RouteManeuver(
+          position: GeoPoint(latitude: 0, longitude: 0.002),
+          type: 'turn',
+          modifier: 'right',
+          name: 'Second turn',
+        ),
+      ],
+    );
+
+    final guidance = planner.plan(
+      route: route,
+      position: const GeoPoint(latitude: 0, longitude: 0),
+      progressMeters: 0,
+    );
+
+    expect(guidance?.maneuver.name, 'First turn');
+    expect(guidance?.followingManeuver?.name, 'Second turn');
+    expect(guidance?.followingDistanceMeters, closeTo(111, 5));
+  });
 }
 
 ImportedRoute _route() => ImportedRoute(

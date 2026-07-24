@@ -230,6 +230,41 @@ void main() {
     expect(published.map((route) => route?.id), [original.id]);
   });
 
+  testWidgets('loading a saved route is not reported as a new route commit', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-loaded-route-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final original = _testRoute(id: 'original', name: 'Original route');
+    final store = _RecordingRouteStore(original);
+    final loaded = <ImportedRoute?>[];
+    final committed = <ImportedRoute?>[];
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: store,
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          onRouteChanged: loaded.add,
+          onRouteCommitted: committed.add,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(loaded.map((route) => route?.id), [original.id]);
+    expect(committed, isEmpty);
+  });
+
   testWidgets('editing recalculates before one confirmed route is saved', (
     tester,
   ) async {
@@ -556,9 +591,15 @@ void main() {
         maneuvers: const [
           RouteManeuver(
             position: GeoPoint(latitude: 53, longitude: -1.005),
-            type: 'turn',
+            type: 'roundabout',
             modifier: 'right',
             name: 'Station Road',
+            exitNumber: 3,
+            drivingSide: 'left',
+            lanes: [
+              RouteLane(indications: ['left'], valid: false),
+              RouteLane(indications: ['straight', 'right'], valid: true),
+            ],
           ),
         ],
       );
@@ -578,6 +619,7 @@ void main() {
             offlineTileCache: cache,
             navigationPosition: navigation,
             overlayMarkers: riders,
+            groupRiderCount: 1,
             offRouteTraces: traces,
             onOpenRideMenu: () async => menuOpens += 1,
           ),
@@ -597,7 +639,9 @@ void main() {
         find.byKey(const Key('navigation-guidance-banner')),
         findsOneWidget,
       );
-      expect(find.textContaining('Turn right'), findsOneWidget);
+      expect(find.textContaining('Take exit 3 right'), findsOneWidget);
+      expect(find.byIcon(Icons.roundabout_left), findsOneWidget);
+      expect(find.byKey(const Key('lane-guidance')), findsOneWidget);
       expect(find.text('Station Road'), findsOneWidget);
       final arrowLayer = tester.widget<MarkerLayer>(
         find.byKey(const Key('trail-direction-arrow-layer')),

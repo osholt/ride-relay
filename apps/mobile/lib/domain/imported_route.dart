@@ -129,6 +129,9 @@ class RouteManeuver {
     this.modifier,
     this.name,
     this.ref,
+    this.exitNumber,
+    this.drivingSide,
+    this.lanes = const [],
   });
 
   final GeoPoint position;
@@ -136,6 +139,14 @@ class RouteManeuver {
   final String? modifier;
   final String? name;
   final String? ref;
+  final int? exitNumber;
+
+  /// Route-engine traffic side (`left` or `right`) at this manoeuvre.
+  ///
+  /// This is deliberately stored with the route instead of inferred from the
+  /// phone locale: a rider can load a route for a different country.
+  final String? drivingSide;
+  final List<RouteLane> lanes;
 
   Map<String, Object?> toJson() => {
     'latitude': position.latitude,
@@ -144,6 +155,10 @@ class RouteManeuver {
     if (modifier != null) 'modifier': modifier,
     if (name != null) 'name': name,
     if (ref != null) 'ref': ref,
+    if (exitNumber != null) 'exitNumber': exitNumber,
+    if (drivingSide != null) 'drivingSide': drivingSide,
+    if (lanes.isNotEmpty)
+      'lanes': lanes.map((lane) => lane.toJson()).toList(growable: false),
   };
 
   factory RouteManeuver.fromJson(Map<String, Object?> json) => RouteManeuver(
@@ -155,6 +170,32 @@ class RouteManeuver {
     modifier: _optionalString(json['modifier']),
     name: _optionalString(json['name']),
     ref: _optionalString(json['ref']),
+    exitNumber: (json['exitNumber'] as num?)?.toInt(),
+    drivingSide: _optionalString(json['drivingSide']),
+    lanes:
+        (json['lanes'] as List?)
+            ?.whereType<Map>()
+            .map((lane) => RouteLane.fromJson(Map<String, Object?>.from(lane)))
+            .toList(growable: false) ??
+        const [],
+  );
+}
+
+class RouteLane {
+  const RouteLane({required this.indications, required this.valid});
+
+  final List<String> indications;
+  final bool valid;
+
+  Map<String, Object?> toJson() => {'indications': indications, 'valid': valid};
+
+  factory RouteLane.fromJson(Map<String, Object?> json) => RouteLane(
+    indications:
+        (json['indications'] as List?)?.whereType<String>().toList(
+          growable: false,
+        ) ??
+        const [],
+    valid: json['valid'] == true,
   );
 }
 

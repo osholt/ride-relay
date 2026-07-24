@@ -6,6 +6,7 @@ import '../../domain/distance_unit.dart';
 import '../../domain/imported_route.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/measurement_formatter.dart';
+import '../../services/route_marker_plan.dart';
 import 'resolved_route_map_preview.dart';
 
 enum RouteReviewAction { cancel, edit, confirm }
@@ -71,6 +72,7 @@ class RouteReviewScreen extends StatelessWidget {
         .where((points) => points.isNotEmpty)
         .toList(growable: false);
     final reviewWaypoints = _reviewWaypoints(route);
+    final markerPlan = const RouteMarkerPlanAnalyzer().analyze(route);
     final allPoints = [
       ...routeSegments.expand((points) => points),
       ...reviewWaypoints.map((waypoint) => _latLng(waypoint.point)),
@@ -115,6 +117,20 @@ class RouteReviewScreen extends StatelessWidget {
                               (entry) => RoutePreviewPin(
                                 point: entry.$2.point,
                                 kind: entry.$1 == 0 ? 'start' : 'waypoint',
+                              ),
+                            )
+                            .followedBy(
+                              markerPlan.points.map(
+                                (point) => RoutePreviewPin(
+                                  point: point.position,
+                                  kind: switch (point.kind) {
+                                    MarkerPlanPointKind.likelyMarker =>
+                                      'marker',
+                                    MarkerPlanPointKind.safetyReview =>
+                                      'safety',
+                                    MarkerPlanPointKind.musterPoint => 'muster',
+                                  },
+                                ),
                               ),
                             )
                             .toList(growable: false),
@@ -197,6 +213,48 @@ class RouteReviewScreen extends StatelessWidget {
                                   )
                                   .toList(growable: false),
                             ),
+                          if (markerPlan.points.isNotEmpty)
+                            MarkerLayer(
+                              key: const Key('route-review-marker-plan'),
+                              markers: markerPlan.points
+                                  .take(500)
+                                  .map(
+                                    (point) => Marker(
+                                      point: _latLng(point.position),
+                                      width: 38,
+                                      height: 38,
+                                      child: Tooltip(
+                                        message: point.label,
+                                        child: Icon(
+                                          switch (point.kind) {
+                                            MarkerPlanPointKind.likelyMarker =>
+                                              Icons.person_pin_circle_outlined,
+                                            MarkerPlanPointKind.safetyReview =>
+                                              Icons.warning_amber_rounded,
+                                            MarkerPlanPointKind.musterPoint =>
+                                              Icons.groups_2_outlined,
+                                          },
+                                          color: switch (point.kind) {
+                                            MarkerPlanPointKind.likelyMarker =>
+                                              const Color(0xFF6ED89A),
+                                            MarkerPlanPointKind.safetyReview =>
+                                              const Color(0xFFFF8A4C),
+                                            MarkerPlanPointKind.musterPoint =>
+                                              const Color(0xFF68A9FF),
+                                          },
+                                          size: 32,
+                                          shadows: const [
+                                            Shadow(
+                                              color: Color(0xFF10151C),
+                                              blurRadius: 4,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                  .toList(growable: false),
+                            ),
                         ],
                       ),
               ),
@@ -234,6 +292,27 @@ class RouteReviewScreen extends StatelessWidget {
                           icon: Icons.turn_slight_right,
                           label: 'Visual turn-by-turn ready',
                         ),
+                      if (route.maneuvers.isNotEmpty)
+                        _SummaryItem(
+                          icon: Icons.person_pin_circle_outlined,
+                          label:
+                              '${markerPlan.likelyMarkers.length} likely marker '
+                              'position${markerPlan.likelyMarkers.length == 1 ? '' : 's'}',
+                        ),
+                      if (markerPlan.safetyReviews.isNotEmpty)
+                        _SummaryItem(
+                          icon: Icons.warning_amber_rounded,
+                          label:
+                              '${markerPlan.safetyReviews.length} junction '
+                              'safety review${markerPlan.safetyReviews.length == 1 ? '' : 's'}',
+                        ),
+                      if (markerPlan.musterPoints.isNotEmpty)
+                        _SummaryItem(
+                          icon: Icons.groups_2_outlined,
+                          label:
+                              '${markerPlan.musterPoints.length} muster '
+                              'point${markerPlan.musterPoints.length == 1 ? '' : 's'}',
+                        ),
                     ],
                   ),
                   if (!basemapConfiguration.usesMapLibre &&
@@ -250,6 +329,51 @@ class RouteReviewScreen extends StatelessWidget {
                       Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: _WarningCard(warning: warning),
+                      ),
+                  ],
+                  if (markerPlan.points.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Marker plan',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Advisory only. The leader must choose a visible, legal '
+                      'place away from live traffic lanes.',
+                      style: TextStyle(color: Color(0xFF98A3B1)),
+                    ),
+                    const SizedBox(height: 6),
+                    for (final point in markerPlan.points)
+                      ListTile(
+                        key: Key('marker-plan-${point.id}'),
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                          switch (point.kind) {
+                            MarkerPlanPointKind.likelyMarker =>
+                              Icons.person_pin_circle_outlined,
+                            MarkerPlanPointKind.safetyReview =>
+                              Icons.warning_amber_rounded,
+                            MarkerPlanPointKind.musterPoint =>
+                              Icons.groups_2_outlined,
+                          },
+                          color: switch (point.kind) {
+                            MarkerPlanPointKind.likelyMarker => const Color(
+                              0xFF6ED89A,
+                            ),
+                            MarkerPlanPointKind.safetyReview => const Color(
+                              0xFFFF8A4C,
+                            ),
+                            MarkerPlanPointKind.musterPoint => const Color(
+                              0xFF68A9FF,
+                            ),
+                          },
+                        ),
+                        title: Text(point.label),
+                        subtitle: point.detail == null
+                            ? null
+                            : Text(point.detail!),
                       ),
                   ],
                   const SizedBox(height: 8),

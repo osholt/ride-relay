@@ -107,11 +107,39 @@ class GpxParser {
         );
       }
     }
-    for (final route in _children(root, 'rte')) {
-      final points = _children(
-        route,
-        'rtept',
-      ).map(parsePoint).toList(growable: false);
+    final routeElements = _routesForImport(root);
+    final routeWaypoints = <RouteWaypoint>[];
+    for (final route in routeElements) {
+      final points = <GeoPoint>[];
+      for (final routePoint in _children(route, 'rtept')) {
+        final point = parsePoint(routePoint);
+        points.add(point);
+        final pointKind = _routePointKind(routePoint);
+        if (pointKind != null) {
+          routeWaypoints.add(
+            RouteWaypoint(
+              point: point,
+              name: _childText(routePoint, 'name'),
+              description: pointKind == 'shaping'
+                  ? 'Soft route shaping point'
+                  : 'Route via point',
+              symbol: pointKind == 'shaping' ? 'Shaping point' : 'Via point',
+            ),
+          );
+        }
+        for (final shapingPoint in _routePointExtensionPoints(routePoint)) {
+          final shapingPosition = parsePoint(shapingPoint);
+          points.add(shapingPosition);
+          routeWaypoints.add(
+            RouteWaypoint(
+              point: shapingPosition,
+              name: 'Shaping point ${routeWaypoints.length + 1}',
+              description: 'Soft route shaping point',
+              symbol: 'Shaping point',
+            ),
+          );
+        }
+      }
       if (points.isEmpty) continue;
       paths.add(
         RoutePath(
@@ -132,7 +160,17 @@ class GpxParser {
             symbol: _childText(waypoint, 'sym'),
           ),
         )
-        .toList(growable: false);
+        .toList();
+    for (final routeWaypoint in routeWaypoints) {
+      final duplicate = waypoints.any(
+        (waypoint) =>
+            (waypoint.point.latitude - routeWaypoint.point.latitude).abs() <
+                0.000001 &&
+            (waypoint.point.longitude - routeWaypoint.point.longitude).abs() <
+                0.000001,
+      );
+      if (!duplicate) waypoints.add(routeWaypoint);
+    }
 
     if (paths.isEmpty && waypoints.isEmpty) {
       throw const GpxFormatException(
@@ -153,7 +191,7 @@ class GpxParser {
       importedAt: importedAt.toUtc(),
       sourceFileName: sourceFileName,
       paths: paths,
-      waypoints: waypoints,
+      waypoints: List.unmodifiable(waypoints),
     );
   }
 }
@@ -177,6 +215,54 @@ class GpxFormatException implements FormatException {
 Iterable<XmlElement> _children(XmlElement parent, String localName) => parent
     .childElements
     .where((element) => element.name.local.toLowerCase() == localName);
+
+List<XmlElement> _routesForImport(XmlElement root) {
+  final routes = _children(root, 'rte').toList(growable: false);
+  final creator = root.getAttribute('creator')?.toLowerCase() ?? '';
+  if (!creator.contains('scenic') || routes.length < 2) return routes;
+
+  // Scenic exports plain GPX, Garmin Trip and Garmin RoutePoint versions of
+  // the same route in one document. Importing all three creates overlapping,
+  // differently recalculated paths. Select the richest representation,
+  // preferring explicit shaping/via semantics when point coverage ties.
+  XmlElement selected = routes.first;
+  var selectedScore = _routeRepresentationScore(selected);
+  for (final route in routes.skip(1)) {
+    final score = _routeRepresentationScore(route);
+    if (score > selectedScore) {
+      selected = route;
+      selectedScore = score;
+    }
+  }
+  return [selected];
+}
+
+int _routeRepresentationScore(XmlElement route) {
+  var effectivePoints = 0;
+  var semanticPoints = 0;
+  for (final routePoint in _children(route, 'rtept')) {
+    effectivePoints += 1 + _routePointExtensionPoints(routePoint).length;
+    if (_routePointKind(routePoint) != null) semanticPoints += 1;
+  }
+  return effectivePoints * 1000 + semanticPoints;
+}
+
+String? _routePointKind(XmlElement routePoint) {
+  for (final element in routePoint.descendantElements) {
+    switch (element.name.local.toLowerCase()) {
+      case 'shapingpoint':
+        return 'shaping';
+      case 'viapoint':
+        return 'via';
+    }
+  }
+  return null;
+}
+
+List<XmlElement> _routePointExtensionPoints(XmlElement routePoint) => routePoint
+    .descendantElements
+    .where((element) => element.name.local.toLowerCase() == 'rpt')
+    .toList(growable: false);
 
 String? _childText(XmlElement parent, String localName) {
   final element = _children(parent, localName).firstOrNull;

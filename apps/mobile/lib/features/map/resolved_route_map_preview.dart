@@ -172,9 +172,9 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
             [
               '==',
               ['get', 'kind'],
-              'start',
+              'safety',
             ],
-            7,
+            8,
             6,
           ],
           circleColor: [
@@ -185,6 +185,24 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
               'start',
             ],
             '#FFFFFF',
+            [
+              '==',
+              ['get', 'kind'],
+              'marker',
+            ],
+            '#6ED89A',
+            [
+              '==',
+              ['get', 'kind'],
+              'safety',
+            ],
+            '#FF8A4C',
+            [
+              '==',
+              ['get', 'kind'],
+              'muster',
+            ],
+            '#68A9FF',
             '#FFC857',
           ],
           circleStrokeColor: '#10151C',

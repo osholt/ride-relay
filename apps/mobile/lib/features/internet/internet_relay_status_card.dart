@@ -50,6 +50,14 @@ class InternetRelayStatusCard extends StatelessWidget {
                   ),
                   icon: const Icon(Icons.system_update_alt),
                 )
+              else if (status.phase == InternetRelayPhase.failed ||
+                  status.phase == InternetRelayPhase.retrying)
+                IconButton(
+                  key: const Key('retry-internet-relay'),
+                  tooltip: 'Retry internet relay now',
+                  onPressed: controller.synchronizeNow,
+                  icon: const Icon(Icons.refresh),
+                )
               else if (status.pendingEventCount > 0)
                 Text(
                   '${status.pendingEventCount} queued',

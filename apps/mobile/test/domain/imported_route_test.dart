@@ -35,10 +35,16 @@ void main() {
       maneuvers: const [
         RouteManeuver(
           position: GeoPoint(latitude: 53.2, longitude: -1.5),
-          type: 'turn',
-          modifier: 'left',
+          type: 'roundabout',
+          modifier: 'right',
           name: 'High Street',
           ref: 'A1',
+          exitNumber: 3,
+          drivingSide: 'left',
+          lanes: [
+            RouteLane(indications: ['left'], valid: false),
+            RouteLane(indications: ['straight', 'right'], valid: true),
+          ],
         ),
       ],
     );
@@ -51,8 +57,12 @@ void main() {
     expect(restored.paths.single.kind, RoutePathKind.track);
     expect(restored.paths.single.points.first.elevationMeters, 210);
     expect(restored.waypoints.single.name, 'Fuel');
-    expect(restored.maneuvers.single.type, 'turn');
-    expect(restored.maneuvers.single.modifier, 'left');
+    expect(restored.maneuvers.single.type, 'roundabout');
+    expect(restored.maneuvers.single.modifier, 'right');
     expect(restored.maneuvers.single.name, 'High Street');
+    expect(restored.maneuvers.single.exitNumber, 3);
+    expect(restored.maneuvers.single.drivingSide, 'left');
+    expect(restored.maneuvers.single.lanes, hasLength(2));
+    expect(restored.maneuvers.single.lanes.last.valid, isTrue);
   });
 }
