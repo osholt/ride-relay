@@ -97,6 +97,22 @@ class ActiveRideShell extends StatefulWidget {
   State<ActiveRideShell> createState() => _ActiveRideShellState();
 }
 
+/// Prevents an active ride from mounting the map against its legacy global
+/// fallback while the ride-scoped route store is still opening.
+///
+/// Returning only the store for the current ride type also ensures a genuinely
+/// new ride cannot inherit another ride's selected route.
+@visibleForTesting
+RouteStore? activeRideMapStoreWhenReady({
+  required bool initializing,
+  required bool isSimulation,
+  required RouteStore? rideRouteStore,
+  required RouteStore? simulationRouteStore,
+}) {
+  if (initializing) return null;
+  return isSimulation ? simulationRouteStore : rideRouteStore;
+}
+
 /// Compact, always-available navigation for the full-screen map canvas.
 class _RideNavigationMenu extends StatelessWidget {
   const _RideNavigationMenu({
@@ -582,6 +598,10 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
           }
         }
       } on Object catch (error) {
+        // Never fall back to the legacy app-wide route file. A failed
+        // ride-scoped store should leave this ride empty instead of reviving
+        // a route chosen for an earlier ride.
+        _rideRouteStore ??= InMemoryRouteStore();
         _warnings.add('Route storage could not be opened: $error');
       }
     }
@@ -1745,14 +1765,20 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   }
 
   Widget _buildMap() {
-    if (_isSimulation && (_loading || _simulationRouteStore == null)) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
     if (!widget.enableNativeServices && !_isSimulation) {
       return Scaffold(
         appBar: AppBar(title: const Text('Navigation')),
         body: const Center(child: Text('Navigation map')),
       );
+    }
+    final routeStore = activeRideMapStoreWhenReady(
+      initializing: _loading,
+      isSimulation: _isSimulation,
+      rideRouteStore: _rideRouteStore,
+      simulationRouteStore: _simulationRouteStore,
+    );
+    if (routeStore == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     return RideMapFeature.fromEnvironment(
       key: ValueKey(
@@ -1780,7 +1806,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       acquireCurrentPosition: _isSimulation
           ? () async => _mapPosition.value
           : _acquireCurrentPosition,
-      routeStore: _isSimulation ? _simulationRouteStore : _rideRouteStore,
+      routeStore: routeStore,
       canEditRoute: _isSimulation || widget.rideController.isLocalRideLeader,
       distanceUnit: widget.distanceUnits.value,
       darkMapStyle: widget.mapStyleMode.resolveDark(

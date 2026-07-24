@@ -14,6 +14,7 @@ import 'package:ride_relay/features/map/ride_map.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/gpx_import_source.dart';
 import 'package:ride_relay/services/leader_ride_status.dart';
+import 'package:ride_relay/services/map_style_repository.dart';
 import 'package:ride_relay/services/offline_tile_cache.dart';
 import 'package:ride_relay/services/route_importer.dart';
 import 'package:ride_relay/services/road_routing.dart';
@@ -297,6 +298,51 @@ void main() {
 
     expect(find.textContaining('Check Location Services'), findsOneWidget);
     expect(find.textContaining('Allow location access'), findsNothing);
+  });
+
+  testWidgets('switching to a new ride store removes a legacy route', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-new-ride-store-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final previousRideStore = InMemoryRouteStore(
+      _testRoute(id: 'previous', name: 'Previous ride route'),
+    );
+    final newRideStore = InMemoryRouteStore();
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    RouteStore activeStore = previousRideStore;
+    late StateSetter rebuild;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: StatefulBuilder(
+          builder: (context, setState) {
+            rebuild = setState;
+            return RideMapFeature(
+              routeStore: activeStore,
+              offlineTileCache: cache,
+              mapStyleString: MapStyleRepository.fallbackStyle,
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Previous ride route'), findsOneWidget);
+
+    rebuild(() => activeStore = newRideStore);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Previous ride route'), findsNothing);
+    expect(find.text('Choose a route'), findsOneWidget);
+    expect(await newRideStore.loadActiveRoute(), isNull);
   });
 
   testWidgets('editing recalculates before one confirmed route is saved', (
